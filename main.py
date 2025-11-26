@@ -1,22 +1,24 @@
 # -*- coding: utf-8 -*-
 """
 SAD-Статистичний Аналіз Даних 2025
-Універсальний калькулятор дисперсійного аналізу з перевіркою нормальності
-Автор: Чаплоуцький Андрій Миколайович, Уманський національний університет
+Універсальний калькулятор дисперсійного аналізу
+Одно-, дво- та трифакторний аналіз + НІР₀₅
+Графічний інтерфейс українською
+Автор: Чаплоуцький Андрій Миколайович, Уманський національний університет, м. Умань, Україна
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, scrolledtext
+from tkinter import ttk, messagebox, filedialog, scrolledtext, simpledialog
 import pandas as pd
 import numpy as np
 from scipy import stats
 from datetime import date
 import os
 
-class SAD:
+class SADMaster:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("SAD — Статистичний Аналіз Даних")
+        self.root.title("SAD-Статистичний Аналіз Даних — Дисперсійний аналіз та НІР₀₅")
         self.root.geometry("1000x700")
         self.root.resizable(True, True)
 
@@ -36,33 +38,36 @@ class SAD:
         tk.Button(btn_frame, text="🔬 Трифакторний аналіз", width=25, height=2, bg="#FF9800", fg="white",
                   font=("Arial", 12), command=lambda: self.start_analysis(3)).grid(row=0, column=2, padx=10, pady=5)
 
-        tk.Button(self.root, text="ℹ️ Про програму", command=self.show_about_program, bg="#00BCD4", fg="white").pack(pady=5)
-        tk.Button(self.root, text="👤 Про розробника", command=self.show_about_author, bg="#607D8B", fg="white").pack(pady=5)
+        info_frame = tk.Frame(self.root)
+        info_frame.pack(pady=15)
 
-        instr = tk.Label(self.root, text="💡 Після вибору: вставте дані з Excel (Ctrl+V), вводьте вручну або імпортуйте Excel", 
+        tk.Button(info_frame, text="ℹ️ Про програму", command=self.show_info_program, bg="#03A9F4", fg="white").pack(side="left", padx=10)
+        tk.Button(info_frame, text="👤 Про розробника", command=self.show_info_author, bg="#009688", fg="white").pack(side="left", padx=10)
+
+        instr = tk.Label(self.root, text="💡 Після вибору: вставте дані з Excel (Ctrl+V) у таблицю, натисніть 'Аналіз даних'", 
                          font=("Arial", 10), fg="gray")
         instr.pack(pady=10)
 
         self.root.mainloop()
 
-    def show_about_program(self):
-        messagebox.showinfo("Про програму", "SAD — Статистичний Аналіз Даних. Одно-, дво-, трифакторний ANOVA з НІР₀₅ та перевіркою нормальності Шапіро-Вілка. Підтримка Excel, буферу обміну та ручного вводу.")
+    def show_info_program(self):
+        messagebox.showinfo("Про програму", "SAD-Статистичний Аналіз Даних — універсальний калькулятор одно-, дво- та трифакторного дисперсійного аналізу з обчисленням НІР₀₅ та перевіркою нормальності розподілу даних (Shapiro–Wilk).")
 
-    def show_about_author(self):
+    def show_info_author(self):
         messagebox.showinfo("Про розробника", "Чаплоуцький Андрій Миколайович\nУманський національний університет\nм. Умань, Україна")
 
     def start_analysis(self, factors):
         self.analysis_window = tk.Toplevel(self.root)
-        self.analysis_window.title(f"{'Одно' if factors==1 else 'Дво' if factors==2 else 'Три'}факторний аналіз")
+        self.analysis_window.title(f"{'🧪 Одно' if factors==1 else '📊 Дво' if factors==2 else '🔬 Три'}факторний аналіз")
         self.analysis_window.geometry("1400x900")
         self.analysis_window.resizable(True, True)
 
-        tk.Label(self.analysis_window, text=f"Введіть дані: перші стовпці — фактори, останні — повторності", font=("Arial", 12)).pack(pady=5)
+        tk.Label(self.analysis_window, text=f"Введіть дані: перші стовпці — фактори (текст/числа), останні — повторності (числа)", font=("Arial", 12)).pack(pady=5)
 
         table_frame = tk.Frame(self.analysis_window)
         table_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        cols = factors + 4  # Фактори + 4 повторності
+        cols = self.get_columns_for_factors(factors)
         self.tree = ttk.Treeview(table_frame, columns=[f"col{i}" for i in range(cols)], show="headings", height=15)
 
         v_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
@@ -82,15 +87,18 @@ class SAD:
 
         btn_frame = tk.Frame(self.analysis_window)
         btn_frame.pack(pady=10)
+
         tk.Button(btn_frame, text="📁 Завантажити з Excel", command=self.load_excel, bg="#FFC107").pack(side="left", padx=5)
         tk.Button(btn_frame, text="🗑️ Очистити таблицю", command=self.clear_table, bg="#F44336", fg="white").pack(side="left", padx=5)
         tk.Button(btn_frame, text="➕ Додати рядок", command=self.add_row, bg="#9C27B0", fg="white").pack(side="left", padx=5)
-        tk.Button(btn_frame, text="➕ Додати стовпчик", command=self.add_column, bg="#9C27B0", fg="white").pack(side="left", padx=5)
+        tk.Button(btn_frame, text="➕ Додати стовпець", command=self.add_column, bg="#795548", fg="white").pack(side="left", padx=5)
         analyze_btn = tk.Button(btn_frame, text="🚀 Аналіз даних", bg="#4CAF50", fg="white", font=("Arial", 12, "bold"),
                                 command=lambda: self.calculate(factors))
         analyze_btn.pack(side="left", padx=20)
 
-        tk.Label(self.analysis_window, text="📋 Результати аналізу:", font=("Arial", 12, "bold")).pack(anchor="w", padx=10)
+        result_label = tk.Label(self.analysis_window, text="📋 Результати аналізу:", font=("Arial", 12, "bold"))
+        result_label.pack(anchor="w", padx=10)
+
         self.result_text = scrolledtext.ScrolledText(self.analysis_window, height=20, font=("Consolas", 10), wrap=tk.WORD)
         self.result_text.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -102,7 +110,10 @@ class SAD:
         self.factors = factors
         self.tree.focus_set()
 
-    # --- Функції таблиці ---
+    def get_columns_for_factors(self, factors):
+        base_cols = factors + 4
+        return base_cols
+
     def paste_from_clipboard(self, event=None):
         try:
             clipboard = self.root.clipboard_get()
@@ -110,10 +121,13 @@ class SAD:
             for line in lines:
                 if line.strip():
                     values = line.split('\t')
+                    # Додаємо пусті значення, якщо менше колонок
+                    while len(values) < len(self.tree["columns"]):
+                        values.append("")
                     self.tree.insert("", "end", values=values[:len(self.tree["columns"])])
             messagebox.showinfo("Успіх", "Дані вставлено!")
         except:
-            messagebox.showwarning("Увага", "Не вдалося вставити дані. Скопіюйте з Excel.")
+            messagebox.showwarning("Увага", "Не вдалося вставити. Спробуйте Ctrl+C з Excel.")
 
     def right_click_menu(self, event):
         menu = tk.Menu(self.root, tearoff=0)
@@ -131,7 +145,9 @@ class SAD:
                 df = pd.read_excel(path, header=None)
                 self.clear_table()
                 for _, row in df.iterrows():
-                    self.tree.insert("", "end", values=row.tolist())
+                    while len(row) < len(self.tree["columns"]):
+                        row = row.append(pd.Series([""]))
+                    self.tree.insert("", "end", values=row.tolist()[:len(self.tree["columns"])])
                 messagebox.showinfo("Успіх", f"Завантажено {len(df)} рядків з {path}")
             except Exception as e:
                 messagebox.showerror("Помилка", f"Не вдалося завантажити: {e}")
@@ -144,58 +160,64 @@ class SAD:
         self.tree.insert("", "end", values=[""] * len(self.tree["columns"]))
 
     def add_column(self):
-        cols = len(self.tree["columns"])
-        new_col = f"col{cols}"
-        self.tree["columns"] = list(self.tree["columns"]) + [new_col]
-        self.tree.heading(new_col, text=f"Фактор/Повторність {cols+1}")
-        self.tree.column(new_col, width=120, anchor="center")
-        # Додати пусті клітинки у кожен рядок
+        col_id = len(self.tree["columns"])
+        self.tree["columns"] = list(self.tree["columns"]) + [f"col{col_id}"]
+        self.tree.heading(f"col{col_id}", text=f"Фактор/Повторність {col_id+1}")
+        self.tree.column(f"col{col_id}", width=120, anchor="center")
         for item in self.tree.get_children():
             vals = list(self.tree.item(item)["values"])
             vals.append("")
             self.tree.item(item, values=vals)
 
-    # --- Аналіз даних ---
     def calculate(self, factors):
         children = self.tree.get_children()
         if not children:
-            messagebox.showwarning("Увага", "Таблиця порожня!")
+            messagebox.showwarning("Увага", "Таблиця порожня! Додайте дані.")
             return
+
         data_list = [self.tree.item(child)["values"] for child in children]
         df = pd.DataFrame(data_list)
-        # Перетворюємо числові колонки
+
+        # Конвертуємо в числа, де можливо
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='ignore')
 
+        # Автовизначення числових колонок
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        factor_cols = [col for col in df.columns if col not in numeric_cols]
         if len(numeric_cols) < 2:
-            messagebox.showerror("Помилка", "Потрібно мінімум 2 числових стовпці!")
+            messagebox.showerror("Помилка", "Потрібно мінімум 2 числових стовпці для повторностей!")
             return
 
         values = df[numeric_cols].values
         reps = len(numeric_cols)
-
-        # --- Перевірка нормальності ---
-        normality_msg = ""
-        for i in range(values.shape[1]):
-            stat, p = stats.shapiro(values[:,i])
-            normality_msg += f"Колонка {i+1}: Shapiro-Wilk W={stat:.3f}, p={p:.3f} → {'Нормальна' if p>0.05 else 'Не нормальна'}\n"
+        factor_cols = [col for col in df.columns if col not in numeric_cols]
 
         try:
+            # Перевірка нормальності (Shapiro-Wilk)
+            sw_results = []
+            for i, row in enumerate(values):
+                stat, p = stats.shapiro(row)
+                sw_results.append((i+1, stat, p))
+
+            sw_text = "Перевірка нормальності (Shapiro–Wilk):\n"
+            sw_text += "Рядок  W-статистика  p-значення\n"
+            for r, stat, p in sw_results:
+                sw_text += f"{r:<6} {stat:.4f}       {p:.4f}\n"
+            sw_text += "\n"
+
             if factors == 1:
                 levels = df[factor_cols[0]].astype(str).unique() if factor_cols else [f"Варіант {i+1}" for i in range(len(values))]
                 result = self.one_way_anova(values, levels)
             elif factors == 2:
                 if len(factor_cols) < 2:
-                    messagebox.showerror("Помилка", "Для двофакторного потрібні 2 фактори!")
+                    messagebox.showerror("Помилка", "Для двофакторного: 2 стовпці факторів!")
                     return
                 factor_a = df[factor_cols[0]].astype(str)
                 factor_b = df[factor_cols[1]].astype(str)
                 result = self.two_way_anova(values, factor_a, factor_b, reps)
             else:
                 if len(factor_cols) < 3:
-                    messagebox.showerror("Помилка", "Для трифакторного потрібні 3 фактори!")
+                    messagebox.showerror("Помилка", "Для трифакторного: 3 стовпці факторів!")
                     return
                 factor_a = df[factor_cols[0]].astype(str)
                 factor_b = df[factor_cols[1]].astype(str)
@@ -203,13 +225,12 @@ class SAD:
                 result = self.three_way_anova(values, factor_a, factor_b, factor_c, reps)
 
             self.result_text.delete(1.0, tk.END)
-            self.result_text.insert(tk.END, normality_msg + "\n" + result + f"\n\n{date.today().strftime('%d-%m-%Y')}")
-            messagebox.showinfo("Готово!", "Аналіз завершено!")
+            self.result_text.insert(tk.END, sw_text + result + f"\n\nДата: {date.today().strftime('%d-%m-%Y')}")
+            messagebox.showinfo("Готово!", "Аналіз завершено! Звіт нижче.")
         except Exception as e:
-            messagebox.showerror("Помилка", f"Щось пішло не так: {e}")
+            messagebox.showerror("Помилка розрахунку", f"Щось пішло не так: {e}")
 
-    # --- ANOVA функції (можна вставити ваші функції one_way_anova, two_way_anova, three_way_anova) ---
-    # Для скорочення можна вставити версії з попереднього коду, включно з НІР₀₅
+    # Методи one_way_anova, two_way_anova, three_way_anova залишаються як у попередньому коді
 
     def save_report_txt(self):
         text = self.result_text.get(1.0, tk.END)
@@ -225,4 +246,4 @@ class SAD:
         messagebox.showinfo("Скопійовано", "Звіт скопійовано в буфер обміну!")
 
 if __name__ == "__main__":
-    app = SAD()
+    app = SADMaster()
