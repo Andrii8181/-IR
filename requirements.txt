@@ -1,5 +1,5 @@
 pandas
 numpy
 scipy
+tksheet
 openpyxl
-pyinstaller
