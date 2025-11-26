@@ -1,7 +1,27 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.xlsx
-*.txt
+*.env
+*.venv
+*.egg-info/
+dist/
+build/
+*.spec
+
+# PyInstaller
+*.manifest
+*.log
+*.exe
+*.dll
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
 .DS_Store
+Thumbs.db
