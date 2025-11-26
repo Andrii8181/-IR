@@ -1,57 +1,54 @@
 name: Build & Release SAD
 
-# Коли запускати
 on:
   push:
     branches: [ main, master ]
-    tags: [ "v*" ]                    # при створенні тегу типу v1.0, v1.1 тощо
+    tags: [ "v*" ]
   pull_request:
     branches: [ main, master ]
 
-# Задачі
 jobs:
-  build-windows-exe:
+  build:
     runs-on: windows-latest
     permissions:
-      contents: write                 # потрібно для створення Release
+      contents: write
 
     steps:
-      # 1. Витягуємо код
-      - name: Checkout repository
+      - name: Checkout код
         uses: actions/checkout@v4
 
-      # 2. Встановлюємо Python 3.12
-      - name: Set up Python
+      - name: Встановлення Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
 
-      # 3. Встановлюємо залежності
-      - name: Install dependencies
+      - name: Встановлення залежностей
         run: |
           python -m pip install --upgrade pip
           pip install pandas numpy scipy openpyxl pyinstaller
 
-      # 4. Збираємо .exe
-      - name: Build executable with PyInstaller
+      - name: Збірка .exe (латинська назва — без помилок при скачуванні)
         run: |
-          pyinstaller --onefile --windowed --name "SAD-Статистичний-Аналіз-Даних" --icon=icon.ico main.py
+          pyinstaller --onefile --windowed --name "SAD_v1.0" --icon=icon.ico main.py
 
-      # 5. Завантажуємо .exe як артефакт (щоб можна було скачати навіть без тегу)
-      - name: Upload executable as artifact
+      - name: Завантажити .exe як артефакт
         uses: actions/upload-artifact@v4
         with:
-          name: SAD-Статистичний-Аналіз-Даних.exe
-          path: dist/SAD-Статистичний-Аналіз-Даних.exe
+          name: SAD_v1.0.exe
+          path: dist/SAD_v1.0.exe
 
-      # назва файлу точно як у --name вище
-
-      # 6. Створюємо автоматичний Release тільки при пуші тегу (наприклад git tag v1.0)
-      - name: Create GitHub Release
+      - name: Створити GitHub Release (тільки при тегу v*)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/SAD-Статистичний-Аналіз-Даних.exe
+          files: dist/SAD_v1.0.exe
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          name: SAD – Статистичний Аналіз Даних v1.0
+          body: |
+            Перша офіційна версія програми SAD
+            
+            Розробник: Чаплоуцький Андрій Михайлович  
+            Уманський національний університет садівництва  
+            Кафедра плодівництва і виноградарства  
+            2025 рік
