@@ -26,7 +26,7 @@ jobs:
 
     - name: Build executable
       run: |
-        pyinstaller --onefile --windowed --name "SAD-Статистичний-Аналіз-Даних" --icon=icon.ico nir_master.py
+        pyinstaller --onefile --windowed --name "SAD-Статистичний-Аналіз-Даних" --icon=icon.ico main.py
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
