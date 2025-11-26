@@ -1,4 +1,5 @@
-name: Build SAD-Статистичний-Аналіз-Даних
+name: Build SAD_Statystychnyj_Analiz_Danykh.zip
+
 
 on:
   push:
