@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SAD — Статистичний Аналіз Даних v1.1 (ФІНАЛЬНА ВЕРСІЯ) - виправлена
+SAD — Статистичний Аналіз Даних v1.1 (ФІНАЛЬНА ВЕРСІЯ)
 Автор: Чаплоуцький Андрій Миколайович
 Уманський національний університет, 2025
 """
@@ -15,13 +15,13 @@ from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from datetime import date
 import os
+from itertools import combinations
 
-
-# ====================== Покращений EditableTreeview ======================
+# ---------------- Editable Treeview ----------------
 class EditableTreeview(ttk.Treeview):
     def __init__(self, master=None, **kw):
         style = ttk.Style()
-        style.configure("Treeview", rowheight=28, font=("Arial", 10))
+        style.configure("Treeview", rowheight=26, font=("Arial", 10))
         style.configure("Treeview.Heading", font=("Arial", 10, "bold"))
         style.map("Treeview", background=[("selected", "#1976D2")])
         super().__init__(master, style="Treeview", **kw)
@@ -80,7 +80,10 @@ class EditableTreeview(ttk.Treeview):
 
     def _start_edit(self, event):
         if self._entry:
-            self._entry.destroy()
+            try:
+                self._entry.destroy()
+            except:
+                pass
 
         rowid = self.identify_row(event.y)
         column = self.identify_column(event.x)
@@ -90,7 +93,6 @@ class EditableTreeview(ttk.Treeview):
         if not bbox:
             return
         x, y, width, height = bbox
-        # column comes like "#1"
         col_index = int(column[1:]) - 1
         values = list(self.item(rowid, 'values'))
         value = values[col_index] if col_index < len(values) else ""
@@ -104,7 +106,6 @@ class EditableTreeview(ttk.Treeview):
         self._current_cell = (rowid, column)
 
         def save(e=None):
-            # save current entry to the tree
             new_val = entry.get().strip()
             vals = list(self.item(rowid, 'values'))
             while len(vals) <= col_index:
@@ -134,7 +135,6 @@ class EditableTreeview(ttk.Treeview):
             self._start_edit(event)
 
     def _save_edit(self):
-        """Універсальна функція збереження при переході між клітинками/стрілками."""
         if not self._entry or not self._current_cell:
             return
         rowid, column = self._current_cell
@@ -206,7 +206,7 @@ class EditableTreeview(ttk.Treeview):
                 self._start_edit(event)
 
 
-# ====================== Основний клас ======================
+# ---------------- Main Application ----------------
 class SADApp:
     def __init__(self):
         self.root = tk.Tk()
@@ -218,16 +218,16 @@ class SADApp:
             except:
                 pass
 
-        tk.Label(self.root, text="SAD", font=("Arial", 40, "bold"), fg="#1a3c6e").pack(pady=25)
-        tk.Label(self.root, text="Універсальний калькулятор дисперсійного аналізу", font=("Arial", 14)).pack(pady=5)
+        tk.Label(self.root, text="SAD", font=("Arial", 40, "bold"), fg="#1a3c6e").pack(pady=20)
+        tk.Label(self.root, text="Універсальний калькулятор дисперсійного аналізу", font=("Arial", 14)).pack(pady=4)
 
         tk.Button(self.root, text="Почати аналіз", width=32, height=3, bg="#d32f2f", fg="white",
-                  font=("Arial", 16, "bold"), command=self.choose_factor_count).pack(pady=40)
+                  font=("Arial", 16, "bold"), command=self.choose_factor_count).pack(pady=30)
 
         info = tk.Frame(self.root)
         info.pack(pady=10)
-        tk.Button(info, text="Про програму", command=self.show_about).pack(side="left", padx=15)
-        tk.Button(info, text="Про розробника", command=self.show_author).pack(side="left", padx=15)
+        tk.Button(info, text="Про програму", command=self.show_about).pack(side="left", padx=10)
+        tk.Button(info, text="Про розробника", command=self.show_author).pack(side="left", padx=10)
 
         tk.Label(self.root, text="Редагування: подвійний клік • Enter • стрілки | Ctrl+V — вставка з Excel",
                  fg="gray", font=("Arial", 10)).pack(pady=10)
@@ -235,7 +235,7 @@ class SADApp:
         self.root.mainloop()
 
     def show_about(self):
-        messagebox.showinfo("Про програму", "SAD v1.1 — найкращий український інструмент для агростатистики\n"
+        messagebox.showinfo("Про програму", "SAD v1.1 — інструмент для дисперсійного аналізу\n"
                                           "Підтримка: одно-, дво-, трифакторний аналіз • LSD • Tukey • Shapiro-Wilk • Levene")
 
     def show_author(self):
@@ -257,26 +257,27 @@ class SADApp:
         self.win.title(f"SAD v1.1 — {factor_count}-факторний аналіз")
         self.win.geometry("1600x1000")
 
-        # Панель інструментів
+        # Toolbar
         tools = tk.Frame(self.win)
         tools.pack(fill="x", pady=10, padx=15)
         tk.Button(tools, text="Додати стовпець", command=self.add_column).pack(side="left", padx=5)
         tk.Button(tools, text="Додати рядок", command=self.add_row).pack(side="left", padx=5)
         tk.Button(tools, text="Очистити", bg="#f44336", fg="white", command=self.clear_table).pack(side="left", padx=5)
         tk.Button(tools, text="З Excel", command=self.load_excel).pack(side="left", padx=5)
-        tk.Button(tools, text="АНАЛІЗ", bg="#d32f2f", fg="white", font=("Arial", 18, "bold"), width=22,
-                  command=self.calculate).pack(side="left", padx=50)
+        tk.Button(tools, text="АНАЛІЗ", bg="#d32f2f", fg="white", font=("Arial", 18, "bold"), width=20,
+                  command=self.calculate).pack(side="left", padx=20)
         tk.Button(tools, text="Зберегти звіт", command=self.save_report).pack(side="left", padx=5)
 
-        # Таблиця
+        # Table frame
         table_frame = tk.Frame(self.win)
         table_frame.pack(fill="both", expand=True, padx=15, pady=5)
-        self.tree = EditableTreeview(table_frame, columns=[f"c{i}" for i in range(20)], show="headings")
-        for i in range(20):
+        initial_cols = 20
+        self.tree = EditableTreeview(table_frame, columns=[f"c{i}" for i in range(initial_cols)], show="headings")
+        for i in range(initial_cols):
             self.tree.heading(f"c{i}", text=str(i+1))
             self.tree.column(f"c{i}", width=110, anchor="c")
         for _ in range(25):
-            self.tree.insert("", "end", values=[""] * 20)
+            self.tree.insert("", "end", values=[""] * initial_cols)
 
         self.tree.pack(side="left", fill="both", expand=True)
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
@@ -286,15 +287,15 @@ class SADApp:
         hsb.pack(side="bottom", fill="x")
 
         tk.Label(self.win, text="Редагування: подвійний клік • Enter • стрілки | Ctrl+V — вставка з Excel",
-                 fg="red", font=("Arial", 11, "bold")).pack(pady=8)
+                 fg="red", font=("Arial", 11, "bold")).pack(pady=6)
 
-        # Результати
+        # Results
         res_frame = tk.LabelFrame(self.win, text=" Результати дисперсійного аналізу ", font=("Arial", 12, "bold"))
         res_frame.pack(fill="both", expand=True, padx=15, pady=10)
         self.result_box = scrolledtext.ScrolledText(res_frame, height=28, font=("Consolas", 10))
         self.result_box.pack(fill="both", expand=True)
 
-        # Підв'язка Ctrl+V
+        # Bind paste
         self.win.bind_all("<Control-v>", lambda e: self.on_paste_clipboard(e))
 
     def add_column(self):
@@ -320,7 +321,6 @@ class SADApp:
 
     def on_paste_clipboard(self, event=None):
         try:
-            # let pandas infer separator
             df = pd.read_clipboard(sep=None, engine='python', header=None, dtype=str)
         except Exception:
             try:
@@ -334,7 +334,6 @@ class SADApp:
             messagebox.showinfo("Вставка", "Буфер порожній")
             return
 
-        # ensure enough columns in tree
         while len(self.tree["columns"]) < df.shape[1]:
             self.add_column()
 
@@ -371,7 +370,6 @@ class SADApp:
             data.append(row)
         if not data:
             return pd.DataFrame()
-        # Use safe column names (strings) so patsy/statsmodels parses formulas correctly
         col_names = [f"col{i+1}" for i in range(cols)]
         return pd.DataFrame(data, columns=col_names)
 
@@ -397,16 +395,18 @@ class SADApp:
                 return
 
             n_factor_cols = self.factor_count
+            if n_factor_cols is None or n_factor_cols < 1:
+                messagebox.showerror("Помилка", "Невірна кількість факторів")
+                return
+
             long = self.wide_to_long(df_wide, n_factor_cols)
             if long.empty:
                 messagebox.showerror("Помилка", "Немає числових даних для аналізу")
                 return
 
             factor_cols = df_wide.columns[:n_factor_cols].tolist()
-
-            # Формула з усіма ефектами
+            # Build formula with main effects and interactions
             terms = [f"C({f})" for f in factor_cols]
-            from itertools import combinations
             for r in range(2, len(factor_cols) + 1):
                 for comb in combinations(factor_cols, r):
                     terms.append(":".join(f"C({c})" for c in comb))
@@ -415,32 +415,96 @@ class SADApp:
             model = smf.ols(formula, data=long).fit()
             anova_table = anova_lm(model, typ=2)
 
-            # Звіт
-            report = [
-                "SAD v1.1 — ДИСПЕРСІЙНИЙ АНАЛІЗ",
-                f"Дата: {date.today():%d.%m.%Y}",
-                f"Факторів: {len(factor_cols)} | Повторностей: {long['repeat'].nunique()} | Спостережень: {len(long)}",
-                "",
-                "ANOVA (Type II)",
-                anova_table.round(6).to_string(),
-                "",
-                f"MS_error = {model.mse_resid:.6f} | df_error = {int(model.df_resid)}",
-                "",
-                "Розробник: Чаплоуцький Андрій Миколайович",
-                "Уманський національний університет садівництва"
-            ]
+            # Tests: Shapiro on residuals, Levene for homogeneity, Shapiro per group
+            resid = model.resid.dropna()
+            sw_resid = (None, None)
+            try:
+                if len(resid) >= 3:
+                    sw_resid = stats.shapiro(resid)
+            except Exception:
+                sw_resid = (None, None)
+
+            # Levene on groups defined by combinations of factor levels
+            group_keys = list(long.groupby(list(factor_cols)).groups.keys())
+            group_values = [long.groupby(list(factor_cols)).get_group(k)['value'].values for k in group_keys if len(long.groupby(list(factor_cols)).get_group(k)['value']) >= 2]
+            levene_p = None
+            try:
+                if len(group_values) >= 2:
+                    levene_stat, levene_p = stats.levene(*group_values)
+            except Exception:
+                levene_p = None
+
+            # Shapiro per group (only for groups with >=3)
+            group_shapiro = {}
+            for k, g in long.groupby(list(factor_cols)):
+                arr = g['value'].values
+                if len(arr) >= 3:
+                    try:
+                        w, p = stats.shapiro(arr)
+                        group_shapiro[str(k)] = (w, p)
+                    except Exception:
+                        group_shapiro[str(k)] = (None, None)
+                else:
+                    group_shapiro[str(k)] = (None, None)
+
+            # Tukey HSD for first factor (if exists and enough levels)
+            tukey_text = None
+            try:
+                if len(factor_cols) >= 1 and long[factor_cols[0]].nunique() >= 2:
+                    tukey = pairwise_tukeyhsd(endog=long['value'], groups=long[factor_cols[0]], alpha=0.05)
+                    tukey_text = tukey.summary().as_text()
+            except Exception:
+                tukey_text = None
+
+            # Compose report
+            report = []
+            report.append("SAD v1.1 — ДИСПЕРСІЙНИЙ АНАЛІЗ (Type II)")
+            report.append(f"Дата: {date.today():%d.%m.%Y}")
+            report.append(f"Факторів: {len(factor_cols)} | Повторностей (повтор-id): {long['repeat'].nunique()} | Спостережень (long): {len(long)}")
+            report.append("")
+            report.append("ANOVA (Type II):")
+            report.append(anova_table.round(6).to_string())
+            report.append("")
+            report.append(f"MS_error = {model.mse_resid:.6f} | df_error = {int(model.df_resid)}")
+            report.append("")
+
+            if sw_resid[0] is not None:
+                report.append(f"Shapiro-Wilk (залишки): W={sw_resid[0]:.4f}, p={sw_resid[1]:.5f} -> {'нормальні' if sw_resid[1]>0.05 else 'НЕ нормальні'}")
+            else:
+                report.append("Shapiro-Wilk (залишки): недостатньо даних або тест не застосований")
+
+            if levene_p is not None:
+                report.append(f"Levene (однорідність дисперсій): p={levene_p:.5f} -> {'однорідні' if levene_p>0.05 else 'НЕ однорідні'}")
+            else:
+                report.append("Levene: неможливо обчислити (недостатньо даних)")
+
+            report.append("")
+            report.append("Shapiro-Wilk по групах:")
+            for k, v in group_shapiro.items():
+                if v[0] is None:
+                    report.append(f" {k}: недостатньо даних (n<3)")
+                else:
+                    report.append(f" {k}: W={v[0]:.4f}, p={v[1]:.5f} -> {'норм.' if v[1]>0.05 else 'НЕ норм.'}")
+
+            if tukey_text:
+                report.append("")
+                report.append("Tukey HSD (перший фактор):")
+                report.append(tukey_text)
+
+            report.append("")
+            report.append("Розробник: Чаплоуцький Андрій Миколайович")
+            report.append("Уманський національний університет садівництва")
 
             self.result_box.delete(1.0, tk.END)
             self.result_box.insert(tk.END, "\n".join(report))
 
-            # Автокопіювання
             try:
                 self.result_box.clipboard_clear()
                 self.result_box.clipboard_append("\n".join(report))
             except Exception:
                 pass
 
-            messagebox.showinfo("Готово!", "Аналіз завершено!\nЗвіт скопійовано в буфер обміну (Ctrl+V у Word/диплом)")
+            messagebox.showinfo("Готово!", "Аналіз завершено! Звіт готовий і скопійований в буфер обміну (за можливості).")
 
         except Exception as e:
             messagebox.showerror("Помилка аналізу", f"Сталася помилка:\n{str(e)}")
