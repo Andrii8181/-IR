@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SAD — Статистичний Аналіз Даних v1.3
+SAD — Статистичний Аналіз Даних v1.1 (ФІНАЛЬНА ВЕРСІЯ)
 Автор: Чаплоуцький Андрій Миколайович
 Уманський національний університет, 2025
 """
@@ -16,9 +16,7 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from datetime import date
 import os
 from itertools import combinations
-import matplotlib.pyplot as plt
-import seaborn as sns
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
 
 # ====================== EditableTreeview ======================
 class EditableTreeview(ttk.Treeview):
@@ -39,59 +37,43 @@ class EditableTreeview(ttk.Treeview):
         self._entry = None
         self._current_cell = None
 
-    def _on_double_click(self, event):
-        self._start_edit(event)
-
+    # --- Методи редагування ---
+    def _on_double_click(self, event): self._start_edit(event)
     def _on_enter(self, event=None):
         if self._entry:
             self._save_edit()
             self._move_down()
         else:
             item = self.focus()
-            if item:
-                self._start_edit_at_item(item)
-
+            if item: self._start_edit_at_item(item)
     def _on_arrow_down(self, event):
-        if self._entry:
-            self._save_edit()
+        if self._entry: self._save_edit()
         self._move_down()
-
     def _on_arrow_up(self, event):
-        if self._entry:
-            self._save_edit()
+        if self._entry: self._save_edit()
         self._move_up()
-
     def _on_arrow_left(self, event):
         if self._entry:
-            try:
-                sel = self._entry.selection_get()
-            except tk.TclError:
-                sel = ""
+            try: sel = self._entry.selection_get()
+            except tk.TclError: sel = ""
             if not sel:
                 self._save_edit()
                 self._move_left()
-
     def _on_arrow_right(self, event):
         if self._entry:
-            try:
-                sel = self._entry.selection_get()
-            except tk.TclError:
-                sel = ""
+            try: sel = self._entry.selection_get()
+            except tk.TclError: sel = ""
             if not sel:
                 self._save_edit()
                 self._move_right()
 
     def _start_edit(self, event):
-        if self._entry:
-            self._entry.destroy()
-
+        if self._entry: self._entry.destroy()
         rowid = self.identify_row(event.y)
         column = self.identify_column(event.x)
-        if not rowid or not column:
-            return
+        if not rowid or not column: return
         bbox = self.bbox(rowid, column)
-        if not bbox:
-            return
+        if not bbox: return
         x, y, width, height = bbox
         col_index = int(column[1:]) - 1
         values = list(self.item(rowid, 'values'))
@@ -102,30 +84,27 @@ class EditableTreeview(ttk.Treeview):
         entry.select_range(0, tk.END)
         entry.focus()
         entry.place(x=x, y=y, width=width, height=height)
-
         self._current_cell = (rowid, column)
 
         def save(e=None):
             new_val = entry.get().strip()
             vals = list(self.item(rowid, 'values'))
-            while len(vals) <= col_index:
-                vals.append("")
+            while len(vals) <= col_index: vals.append("")
             vals[col_index] = new_val
             self.item(rowid, values=vals)
-            try:
-                entry.destroy()
-            except:
-                pass
+            try: entry.destroy()
+            except: pass
             self._entry = None
             self._current_cell = None
 
         entry.bind('<Return>', lambda e: (save(), self._move_down()))
         entry.bind('<FocusOut>', save)
-        entry.bind('<Escape>', lambda e: (entry.destroy(), setattr(self, "_entry", None), setattr(self, "_current_cell", None)))
+        entry.bind('<Escape>', lambda e: (entry.destroy(),
+                                         setattr(self, "_entry", None),
+                                         setattr(self, "_current_cell", None)))
 
     def _start_edit_at_item(self, rowid):
-        if not rowid:
-            return
+        if not rowid: return
         column = "#1"
         bbox = self.bbox(rowid, column)
         if bbox:
@@ -135,30 +114,23 @@ class EditableTreeview(ttk.Treeview):
             self._start_edit(event)
 
     def _save_edit(self):
-        if not self._entry or not self._current_cell:
-            return
+        if not self._entry or not self._current_cell: return
         rowid, column = self._current_cell
-        try:
-            val = self._entry.get().strip()
-        except Exception:
-            val = ""
+        try: val = self._entry.get().strip()
+        except Exception: val = ""
         col_index = int(column[1:]) - 1
         vals = list(self.item(rowid, 'values'))
-        while len(vals) <= col_index:
-            vals.append(val)
+        while len(vals) <= col_index: vals.append("")
         vals[col_index] = val
         self.item(rowid, values=vals)
-        try:
-            self._entry.destroy()
-        except:
-            pass
+        try: self._entry.destroy()
+        except: pass
         self._entry = None
         self._current_cell = None
 
     def _move_down(self):
         item = self.focus()
-        if not item:
-            return
+        if not item: return
         next_item = self.next(item)
         if next_item:
             self.focus(next_item)
@@ -168,8 +140,7 @@ class EditableTreeview(ttk.Treeview):
 
     def _move_up(self):
         item = self.focus()
-        if not item:
-            return
+        if not item: return
         prev_item = self.prev(item)
         if prev_item:
             self.focus(prev_item)
@@ -178,8 +149,7 @@ class EditableTreeview(ttk.Treeview):
             self._start_edit_at_item(prev_item)
 
     def _move_left(self):
-        if not self._current_cell:
-            return
+        if not self._current_cell: return
         rowid, col = self._current_cell
         col_idx = int(col[1:])
         if col_idx > 1:
@@ -192,8 +162,7 @@ class EditableTreeview(ttk.Treeview):
                 self._start_edit(event)
 
     def _move_right(self):
-        if not self._current_cell:
-            return
+        if not self._current_cell: return
         rowid, col = self._current_cell
         col_idx = int(col[1:])
         if col_idx < len(self["columns"]):
@@ -205,21 +174,19 @@ class EditableTreeview(ttk.Treeview):
                 event.y = bbox[1] + 10
                 self._start_edit(event)
 
+
 # ====================== Основний клас ======================
 class SADApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("SAD — Статистичний Аналіз Даних v1.3")
+        self.root.title("SAD — Статистичний Аналіз Даних v1.1")
         self.root.geometry("1350x820")
         if os.path.exists("icon.ico"):
-            try:
-                self.root.iconbitmap("icon.ico")
-            except:
-                pass
+            try: self.root.iconbitmap("icon.ico")
+            except: pass
 
         tk.Label(self.root, text="SAD", font=("Arial", 40, "bold"), fg="#1a3c6e").pack(pady=25)
         tk.Label(self.root, text="Універсальний калькулятор дисперсійного аналізу", font=("Arial", 14)).pack(pady=5)
-
         tk.Button(self.root, text="Почати аналіз", width=32, height=3, bg="#d32f2f", fg="white",
                   font=("Arial", 16, "bold"), command=self.choose_factor_count).pack(pady=40)
 
@@ -230,33 +197,31 @@ class SADApp:
 
         tk.Label(self.root, text="Редагування: подвійний клік • Enter • стрілки | Ctrl+V — вставка з Excel",
                  fg="gray", font=("Arial", 10)).pack(pady=10)
-
         self.root.mainloop()
 
     def show_about(self):
-        messagebox.showinfo("Про програму", "SAD v1.3 — найкращий український інструмент для агростатистики\n"
-                                          "Підтримка: одно-, дво-, трифакторний аналіз • LSD • Tukey • Shapiro-Wilk • Levene")
+        messagebox.showinfo("Про програму",
+                            "SAD v1.1 — найкращий український інструмент для агростатистики\n"
+                            "Підтримка: одно-, дво-, трифакторний аналіз • LSD • Tukey • Shapiro-Wilk • Levene")
 
     def show_author(self):
         messagebox.showinfo("Про розробника",
-            "Чаплоуцький Андрій Миколайович\n"
-            "Кафедра плодівництва і виноградарства\n"
-            "Уманський національний університет\n"
-            "м. Умань, Україна\n"
-            "Листопад 2025")
+                            "Чаплоуцький Андрій Миколайович\n"
+                            "Кафедра плодівництва і виноградарства\n"
+                            "Уманський національний університет\n"
+                            "м. Умань, Україна\n"
+                            "Листопад 2025")
 
     def choose_factor_count(self):
         fc = simpledialog.askinteger("Факторність", "Введіть кількість факторів (1, 2 або 3):", minvalue=1, maxvalue=3)
-        if fc:
-            self.factor_count = fc
-            self.open_analysis_window(fc)
+        if fc: self.open_analysis_window(fc)
 
     def open_analysis_window(self, factor_count):
+        self.factor_count = factor_count
         self.win = tk.Toplevel(self.root)
-        self.win.title(f"SAD v1.3 — {factor_count}-факторний аналіз")
+        self.win.title(f"SAD v1.1 — {factor_count}-факторний аналіз")
         self.win.geometry("1600x1000")
 
-        # Панель інструментів
         tools = tk.Frame(self.win)
         tools.pack(fill="x", pady=10, padx=15)
         tk.Button(tools, text="Додати стовпець", command=self.add_column).pack(side="left", padx=5)
@@ -267,16 +232,14 @@ class SADApp:
                   command=self.calculate).pack(side="left", padx=50)
         tk.Button(tools, text="Зберегти звіт", command=self.save_report).pack(side="left", padx=5)
 
-        # Таблиця
         table_frame = tk.Frame(self.win)
         table_frame.pack(fill="both", expand=True, padx=15, pady=5)
         self.tree = EditableTreeview(table_frame, columns=[f"c{i}" for i in range(20)], show="headings")
         for i in range(20):
-            self.tree.heading(f"c{i}", text=str(i+1))
+            self.tree.heading(f"c{i}", text=str(i + 1))
             self.tree.column(f"c{i}", width=110, anchor="c")
         for _ in range(25):
             self.tree.insert("", "end", values=[""] * 20)
-
         self.tree.pack(side="left", fill="both", expand=True)
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
@@ -287,15 +250,14 @@ class SADApp:
         tk.Label(self.win, text="Редагування: подвійний клік • Enter • стрілки | Ctrl+V — вставка з Excel",
                  fg="red", font=("Arial", 11, "bold")).pack(pady=8)
 
-        # Результати
         res_frame = tk.LabelFrame(self.win, text=" Результати дисперсійного аналізу ", font=("Arial", 12, "bold"))
         res_frame.pack(fill="both", expand=True, padx=15, pady=10)
         self.result_box = scrolledtext.ScrolledText(res_frame, height=28, font=("Consolas", 10))
         self.result_box.pack(fill="both", expand=True)
 
-        # Підв'язка Ctrl+V
         self.win.bind_all("<Control-v>", lambda e: self.on_paste_clipboard(e))
 
+    # ====================== Методи роботи з таблицею ======================
     def add_column(self):
         cols = list(self.tree["columns"])
         new_col = f"c{len(cols)}"
@@ -312,18 +274,16 @@ class SADApp:
         self.tree.insert("", "end", values=[""] * len(self.tree["columns"]))
 
     def clear_table(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-        for _ in range(25):
-            self.tree.insert("", "end", values=[""] * len(self.tree["columns"]))
+        for i in self.tree.get_children(): self.tree.delete(i)
+        for _ in range(25): self.tree.insert("", "end", values=[""] * len(self.tree["columns"]))
 
     def on_paste_clipboard(self, event=None):
         try:
-            df = pd.read_clipboard(sep='\t', header=None, dtype=str)
+            df = pd.read_clipboard(sep="\t", header=None, dtype=str)
         except Exception:
             try:
                 txt = self.win.clipboard_get()
-                df = pd.read_csv(pd.io.common.StringIO(txt), sep=None, engine='python', header=None, dtype=str)
+                df = pd.read_csv(pd.io.common.StringIO(txt), sep="\t", engine='python', header=None, dtype=str)
             except Exception:
                 messagebox.showwarning("Помилка", "Не вдалося вставити дані з буфера")
                 return
@@ -335,7 +295,6 @@ class SADApp:
         while len(self.tree["columns"]) < df.shape[1]:
             self.add_column()
 
-        self.clear_table()
         for _, row in df.iterrows():
             vals = [str(x).strip() for x in row.tolist()]
             vals += [""] * (len(self.tree["columns"]) - len(vals))
@@ -351,8 +310,7 @@ class SADApp:
             except Exception as e:
                 messagebox.showerror("Помилка імпорту", str(e))
                 return
-            while len(self.tree["columns"]) < df.shape[1]:
-                self.add_column()
+            while len(self.tree["columns"]) < df.shape[1]: self.add_column()
             self.clear_table()
             for _, row in df.iterrows():
                 vals = [str(x).strip() for x in row.tolist()]
@@ -367,14 +325,12 @@ class SADApp:
             vals += [""] * (cols - len(vals))
             row = [str(v).strip() for v in vals[:cols]]
             data.append(row)
-        if not data:
-            return pd.DataFrame()
+        if not data: return pd.DataFrame()
         col_names = [f"col{i+1}" for i in range(cols)]
         return pd.DataFrame(data, columns=col_names)
 
     def wide_to_long(self, df, n_factor_cols):
-        if df.empty or n_factor_cols >= df.shape[1]:
-            return pd.DataFrame()
+        if df.empty or n_factor_cols >= df.shape[1]: return pd.DataFrame()
         factor_cols = df.columns[:n_factor_cols]
         value_cols = df.columns[n_factor_cols:]
         long = pd.melt(df, id_vars=factor_cols, value_vars=value_cols,
@@ -386,10 +342,11 @@ class SADApp:
             long[col] = long[col].astype('category')
         return long.reset_index(drop=True)
 
+    # ====================== Аналіз ======================
     def calculate(self):
         try:
             if not hasattr(self, "factor_count") or self.factor_count is None:
-                messagebox.showerror("Помилка", "Кількість факторів не визначена")
+                messagebox.showerror("Помилка", "Спочатку виберіть кількість факторів")
                 return
 
             df_wide = self.tree_to_dataframe()
@@ -405,6 +362,7 @@ class SADApp:
 
             factor_cols = df_wide.columns[:n_factor_cols].tolist()
 
+            # Формула з усіма ефектами
             terms = [f"C({f})" for f in factor_cols]
             for r in range(2, len(factor_cols) + 1):
                 for comb in combinations(factor_cols, r):
@@ -415,11 +373,6 @@ class SADApp:
             anova_table = anova_lm(model, typ=2)
 
             # Розрахунок LSD
-            mse_error = model.mse_resid
+            MS_error = model.mse_resid
             df_error = int(model.df_resid)
-            n_per_group = long.groupby(factor_cols[0]).size().min()
-            t_val = stats.t.ppf(1-0.05/2, df_error)
-            lsd = t_val * np.sqrt(2*mse_error/n_per_group)
-
-            # Tukey HSD
-            long_t
+            LSD = stats.t.ppf(1 - 0.05 / 2, df_error) * np.sqrt(2 * MS_error / long.groupby(factor_cols).size().mean())
