@@ -1,0 +1,57 @@
+name: Build & Release SAD
+
+# Коли запускати
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ "v*" ]                    # при створенні тегу типу v1.0, v1.1 тощо
+  pull_request:
+    branches: [ main, master ]
+
+# Задачі
+jobs:
+  build-windows-exe:
+    runs-on: windows-latest
+    permissions:
+      contents: write                 # потрібно для створення Release
+
+    steps:
+      # 1. Витягуємо код
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Встановлюємо Python 3.12
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # 3. Встановлюємо залежності
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scipy openpyxl pyinstaller
+
+      # 4. Збираємо .exe
+      - name: Build executable with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed --name "SAD-Статистичний-Аналіз-Даних" --icon=icon.ico main.py
+
+      # 5. Завантажуємо .exe як артефакт (щоб можна було скачати навіть без тегу)
+      - name: Upload executable as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAD-Статистичний-Аналіз-Даних.exe
+          path: dist/SAD-Статистичний-Аналіз-Даних.exe
+
+      # назва файлу точно як у --name вище
+
+      # 6. Створюємо автоматичний Release тільки при пуші тегу (наприклад git tag v1.0)
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/SAD-Статистичний-Аналіз-Даних.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
