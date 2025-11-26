@@ -28,14 +28,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scipy openpyxl pyinstaller
 
-      - name: Збірка .exe (латинська назва — без помилок при скачуванні)
+      - name: Збірка .exe
         run: |
           pyinstaller --onefile --windowed --name "SAD_v1.0" --icon=icon.ico main.py
 
       - name: Завантажити як артефакт
         uses: actions/upload-artifact@v4
         with:
-          name: SAD_v1.0.exe
+          name: SAD_v1.0.exe          # ← латинська назва = без помилок
           path: dist/SAD_v1.0.exe
 
       - name: Створити офіційний реліз (тільки при тегу v*)
