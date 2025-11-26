@@ -14,7 +14,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout код
+      - name: Checkout репозиторію
         uses: actions/checkout@v4
 
       - name: Встановлення Python 3.12
@@ -32,13 +32,13 @@ jobs:
         run: |
           pyinstaller --onefile --windowed --name "SAD_v1.0" --icon=icon.ico main.py
 
-      - name: Завантажити .exe як артефакт
+      - name: Завантажити як артефакт
         uses: actions/upload-artifact@v4
         with:
           name: SAD_v1.0.exe
           path: dist/SAD_v1.0.exe
 
-      - name: Створити GitHub Release (тільки при тегу v*)
+      - name: Створити офіційний реліз (тільки при тегу v*)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
@@ -46,9 +46,9 @@ jobs:
           generate_release_notes: true
           name: SAD – Статистичний Аналіз Даних v1.0
           body: |
-            Перша офіційна версія програми SAD
-            
-            Розробник: Чаплоуцький Андрій Михайлович  
-            Уманський національний університет садівництва  
-            Кафедра плодівництва і виноградарства  
-            2025 рік
+            Офіційна версія 1.0
+
+            Розробник: Чаплоуцький Андрій Миколайович
+            Кафедра плодівництва і виноградарства
+            Уманський національний університет
+            Листопад 2025
