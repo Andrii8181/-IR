@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SAD — Статистичний Аналіз Даних v1.2 (ФІНАЛЬНА ВЕРСІЯ) - виправлена
+SAD — Статистичний Аналіз Даних v1.1 (ФІНАЛЬНА ВЕРСІЯ)
 Автор: Чаплоуцький Андрій Миколайович
 Уманський національний університет, 2025
 """
@@ -16,7 +16,7 @@ from datetime import date
 import os
 from itertools import combinations
 
-# ====================== Покращений EditableTreeview ======================
+# ====================== EditableTreeview ======================
 class EditableTreeview(ttk.Treeview):
     def __init__(self, master=None, **kw):
         style = ttk.Style()
@@ -25,7 +25,7 @@ class EditableTreeview(ttk.Treeview):
         style.map("Treeview", background=[("selected", "#1976D2")])
         super().__init__(master, style="Treeview", **kw)
 
-        self.bind('<Double-1>', self._on_double_click)
+        self.bind('<Double-1>', self._start_edit)
         self.bind('<Return>', self._on_enter)
         self.bind('<Down>', self._on_arrow_down)
         self.bind('<Up>', self._on_arrow_up)
@@ -35,52 +35,9 @@ class EditableTreeview(ttk.Treeview):
         self._entry = None
         self._current_cell = None
 
-    def _on_double_click(self, event):
-        self._start_edit(event)
-
-    def _on_enter(self, event=None):
-        if self._entry:
-            self._save_edit()
-            self._move_down()
-        else:
-            item = self.focus()
-            if item:
-                self._start_edit_at_item(item)
-
-    def _on_arrow_down(self, event):
-        if self._entry:
-            self._save_edit()
-        self._move_down()
-
-    def _on_arrow_up(self, event):
-        if self._entry:
-            self._save_edit()
-        self._move_up()
-
-    def _on_arrow_left(self, event):
-        if self._entry:
-            try:
-                sel = self._entry.selection_get()
-            except tk.TclError:
-                sel = ""
-            if not sel:
-                self._save_edit()
-                self._move_left()
-
-    def _on_arrow_right(self, event):
-        if self._entry:
-            try:
-                sel = self._entry.selection_get()
-            except tk.TclError:
-                sel = ""
-            if not sel:
-                self._save_edit()
-                self._move_right()
-
     def _start_edit(self, event):
         if self._entry:
             self._entry.destroy()
-
         rowid = self.identify_row(event.y)
         column = self.identify_column(event.x)
         if not rowid or not column:
@@ -92,56 +49,25 @@ class EditableTreeview(ttk.Treeview):
         col_index = int(column[1:]) - 1
         values = list(self.item(rowid, 'values'))
         value = values[col_index] if col_index < len(values) else ""
-
         self._entry = entry = tk.Entry(self, font=("Arial", 10), relief="solid", bd=1)
         entry.insert(0, "" if value is None else str(value))
         entry.select_range(0, tk.END)
         entry.focus()
         entry.place(x=x, y=y, width=width, height=height)
-
         self._current_cell = (rowid, column)
-
-        def save(e=None):
-            new_val = entry.get().strip()
-            vals = list(self.item(rowid, 'values'))
-            while len(vals) <= col_index:
-                vals.append("")
-            vals[col_index] = new_val
-            self.item(rowid, values=vals)
-            try:
-                entry.destroy()
-            except:
-                pass
-            self._entry = None
-            self._current_cell = None
-
-        entry.bind('<Return>', lambda e: (save(), self._move_down()))
-        entry.bind('<FocusOut>', save)
+        entry.bind('<Return>', lambda e: self._save_edit_and_move("down"))
+        entry.bind('<FocusOut>', lambda e: self._save_edit())
         entry.bind('<Escape>', lambda e: (entry.destroy(), setattr(self, "_entry", None), setattr(self, "_current_cell", None)))
-
-    def _start_edit_at_item(self, rowid):
-        if not rowid:
-            return
-        column = "#1"
-        bbox = self.bbox(rowid, column)
-        if bbox:
-            event = tk.Event()
-            event.x = bbox[0] + 10
-            event.y = bbox[1] + 10
-            self._start_edit(event)
 
     def _save_edit(self):
         if not self._entry or not self._current_cell:
             return
         rowid, column = self._current_cell
-        try:
-            val = self._entry.get().strip()
-        except Exception:
-            val = ""
+        val = self._entry.get().strip()
         col_index = int(column[1:]) - 1
         vals = list(self.item(rowid, 'values'))
         while len(vals) <= col_index:
-            vals.append(val)
+            vals.append("")
         vals[col_index] = val
         self.item(rowid, values=vals)
         try:
@@ -150,6 +76,17 @@ class EditableTreeview(ttk.Treeview):
             pass
         self._entry = None
         self._current_cell = None
+
+    def _save_edit_and_move(self, direction):
+        self._save_edit()
+        if direction == "down":
+            self._move_down()
+        elif direction == "up":
+            self._move_up()
+        elif direction == "left":
+            self._move_left()
+        elif direction == "right":
+            self._move_right()
 
     def _move_down(self):
         item = self.focus()
@@ -179,12 +116,12 @@ class EditableTreeview(ttk.Treeview):
         rowid, col = self._current_cell
         col_idx = int(col[1:])
         if col_idx > 1:
-            new_col = f"#{col_idx - 1}"
+            new_col = f"#{col_idx-1}"
             bbox = self.bbox(rowid, new_col)
             if bbox:
                 event = tk.Event()
-                event.x = bbox[0] + 10
-                event.y = bbox[1] + 10
+                event.x = bbox[0]+10
+                event.y = bbox[1]+10
                 self._start_edit(event)
 
     def _move_right(self):
@@ -193,20 +130,30 @@ class EditableTreeview(ttk.Treeview):
         rowid, col = self._current_cell
         col_idx = int(col[1:])
         if col_idx < len(self["columns"]):
-            new_col = f"#{col_idx + 1}"
+            new_col = f"#{col_idx+1}"
             bbox = self.bbox(rowid, new_col)
             if bbox:
                 event = tk.Event()
-                event.x = bbox[0] + 10
-                event.y = bbox[1] + 10
+                event.x = bbox[0]+10
+                event.y = bbox[1]+10
                 self._start_edit(event)
 
+    def _start_edit_at_item(self, rowid):
+        if not rowid:
+            return
+        column = "#1"
+        bbox = self.bbox(rowid, column)
+        if bbox:
+            event = tk.Event()
+            event.x = bbox[0]+10
+            event.y = bbox[1]+10
+            self._start_edit(event)
 
 # ====================== Основний клас ======================
 class SADApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("SAD — Статистичний Аналіз Даних v1.2")
+        self.root.title("SAD — Статистичний Аналіз Даних v1.1")
         self.root.geometry("1350x820")
         if os.path.exists("icon.ico"):
             try:
@@ -231,8 +178,8 @@ class SADApp:
         self.root.mainloop()
 
     def show_about(self):
-        messagebox.showinfo("Про програму", "SAD v1.2 — найкращий український інструмент для агростатистики\n"
-                                          "Підтримка: одно-, дво-, трифакторний аналіз • LSD • Shapiro-Wilk • Levene")
+        messagebox.showinfo("Про програму", "SAD v1.1 — інструмент для агростатистики\n"
+                                            "Підтримка: одно-, дво-, трифакторний аналіз • LSD • Shapiro-Wilk • Levene")
 
     def show_author(self):
         messagebox.showinfo("Про розробника",
@@ -249,14 +196,11 @@ class SADApp:
             self.open_analysis_window(fc)
 
     def open_analysis_window(self, factor_count):
-        if not hasattr(self, "factor_count") or self.factor_count is None:
-            self.factor_count = factor_count
-
+        self.factor_count = factor_count
         self.win = tk.Toplevel(self.root)
-        self.win.title(f"SAD v1.2 — {factor_count}-факторний аналіз")
+        self.win.title(f"SAD v1.1 — {factor_count}-факторний аналіз")
         self.win.geometry("1600x1000")
 
-        # Панель інструментів
         tools = tk.Frame(self.win)
         tools.pack(fill="x", pady=10, padx=15)
         tk.Button(tools, text="Додати стовпець", command=self.add_column).pack(side="left", padx=5)
@@ -267,7 +211,6 @@ class SADApp:
                   command=self.calculate).pack(side="left", padx=50)
         tk.Button(tools, text="Зберегти звіт", command=self.save_report).pack(side="left", padx=5)
 
-        # Таблиця
         table_frame = tk.Frame(self.win)
         table_frame.pack(fill="both", expand=True, padx=15, pady=5)
         self.tree = EditableTreeview(table_frame, columns=[f"c{i}" for i in range(20)], show="headings")
@@ -287,15 +230,14 @@ class SADApp:
         tk.Label(self.win, text="Редагування: подвійний клік • Enter • стрілки | Ctrl+V — вставка з Excel",
                  fg="red", font=("Arial", 11, "bold")).pack(pady=8)
 
-        # Результати
         res_frame = tk.LabelFrame(self.win, text=" Результати дисперсійного аналізу ", font=("Arial", 12, "bold"))
         res_frame.pack(fill="both", expand=True, padx=15, pady=10)
         self.result_box = scrolledtext.ScrolledText(res_frame, height=28, font=("Consolas", 10))
         self.result_box.pack(fill="both", expand=True)
 
-        # Підв'язка Ctrl+V
         self.win.bind_all("<Control-v>", lambda e: self.on_paste_clipboard(e))
 
+    # ====================== Таблиця ======================
     def add_column(self):
         cols = list(self.tree["columns"])
         new_col = f"c{len(cols)}"
@@ -319,28 +261,20 @@ class SADApp:
 
     def on_paste_clipboard(self, event=None):
         try:
-            df = pd.read_clipboard(sep="\t", engine='python', header=None, dtype=str)
+            df = pd.read_clipboard(header=None, dtype=str)
         except Exception:
-            try:
-                txt = self.win.clipboard_get()
-                df = pd.read_csv(pd.io.common.StringIO(txt), sep="\t", engine='python', header=None, dtype=str)
-            except Exception:
-                messagebox.showwarning("Помилка", "Не вдалося вставити дані з буфера")
-                return
-
+            messagebox.showwarning("Помилка", "Не вдалося вставити дані з буфера")
+            return
         if df.empty:
             messagebox.showinfo("Вставка", "Буфер порожній")
             return
-
         while len(self.tree["columns"]) < df.shape[1]:
             self.add_column()
-
+        self.clear_table()
         for _, row in df.iterrows():
             vals = [str(x).strip() for x in row.tolist()]
             vals += [""] * (len(self.tree["columns"]) - len(vals))
             self.tree.insert("", "end", values=vals[:len(self.tree["columns"])])
-
-        messagebox.showinfo("Вставка", f"Вставлено {len(df)} рядків")
 
     def load_excel(self):
         path = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx *.xls")])
@@ -385,14 +319,18 @@ class SADApp:
             long[col] = long[col].astype('category')
         return long.reset_index(drop=True)
 
+    # ====================== АНАЛІЗ ======================
     def calculate(self):
         try:
             df_wide = self.tree_to_dataframe()
             if df_wide.empty:
                 messagebox.showerror("Помилка", "Таблиця порожня")
                 return
+            if not hasattr(self, "factor_count") or self.factor_count is None:
+                messagebox.showerror("Помилка", "Не вказана кількість факторів")
+                return
 
-            n_factor_cols = getattr(self, "factor_count", 1)
+            n_factor_cols = self.factor_count
             long = self.wide_to_long(df_wide, n_factor_cols)
             if long.empty:
                 messagebox.showerror("Помилка", "Немає числових даних для аналізу")
@@ -400,7 +338,7 @@ class SADApp:
 
             factor_cols = df_wide.columns[:n_factor_cols].tolist()
             terms = [f"C({f})" for f in factor_cols]
-            for r in range(2, len(factor_cols) + 1):
+            for r in range(2, len(factor_cols)+1):
                 for comb in combinations(factor_cols, r):
                     terms.append(":".join(f"C({c})" for c in comb))
             formula = "value ~ " + " + ".join(terms)
@@ -409,36 +347,49 @@ class SADApp:
             anova_table = anova_lm(model, typ=2)
 
             MS_error = model.mse_resid
-            df_error = int(model.df_resid)
+            df_error = model.df_resid
             LSD = stats.t.ppf(1 - 0.05 / 2, df_error) * np.sqrt(2 * MS_error / long.groupby(factor_cols).size().mean())
 
             report = [
-                "SAD v1.2 — ДИСПЕРСІЙНИЙ АНАЛІЗ",
+                "SAD v1.1 — ДИСПЕРСІЙНИЙ АНАЛІЗ",
                 f"Дата: {date.today():%d.%m.%Y}",
                 f"Факторів: {len(factor_cols)} | Повторностей: {long['repeat'].nunique()} | Спостережень: {len(long)}",
                 "",
-                "ANOVA (Type II):",
-                anova_table.to_string(),
+                "ANOVA (Type II)",
+                anova_table.round(6).to_string(),
                 "",
-                f"LSD₀.₅ = {LSD:.4f}"
+                f"MS_error = {MS_error:.6f} | df_error = {int(df_error)}",
+                f"LSD (НІР₀.₅) = {LSD:.6f}",
+                "",
+                "Розробник: Чаплоуцький Андрій Миколайович",
+                "Уманський національний університет садівництва"
             ]
+
             self.result_box.delete(1.0, tk.END)
             self.result_box.insert(tk.END, "\n".join(report))
 
+            try:
+                self.result_box.clipboard_clear()
+                self.result_box.clipboard_append("\n".join(report))
+            except Exception:
+                pass
+
+            messagebox.showinfo("Готово!", "Аналіз завершено!\nЗвіт скопійовано в буфер обміну (Ctrl+V у Word/диплом)")
+
         except Exception as e:
-            messagebox.showerror("Помилка", str(e))
+            messagebox.showerror("Помилка аналізу", f"Сталася помилка:\n{str(e)}")
 
     def save_report(self):
-        path = filedialog.asksaveasfilename(defaultextension=".txt",
-                                            filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        txt = self.result_box.get(1.0, tk.END).strip()
+        if not txt:
+            messagebox.showwarning("Немає звіту", "Спочатку виконайте аналіз")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Текстовий файл", "*.txt")])
         if path:
-            try:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(self.result_box.get(1.0, tk.END))
-                messagebox.showinfo("Збережено", f"Звіт збережено в {path}")
-            except Exception as e:
-                messagebox.showerror("Помилка збереження", str(e))
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(txt)
+            messagebox.showinfo("Збережено", f"Звіт збережено: {path}")
 
-
+# ====================== Запуск ======================
 if __name__ == "__main__":
-    app = SADApp()
+    SADApp()
