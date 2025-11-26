@@ -29,7 +29,7 @@ jobs:
         pyinstaller --onefile --windowed --name "SAD-Статистичний-Аналіз-Даних" --icon=icon.ico nir_master.py
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: SAD-Статистичний-Аналіз-Даних
         path: dist/SAD-Статистичний-Аналіз-Даних.exe
