@@ -1,0 +1,35 @@
+name: Build SAD-Статистичний-Аналіз-Даних
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller pandas numpy scipy tksheet openpyxl
+
+    - name: Build executable
+      run: |
+        pyinstaller --onefile --windowed --name "SAD-Статистичний-Аналіз-Даних" --icon=icon.ico nir_master.py
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: SAD-Статистичний-Аналіз-Даних
+        path: dist/SAD-Статистичний-Аналіз-Даних.exe
