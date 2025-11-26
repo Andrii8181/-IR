@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-SAD — Статистичний Аналіз Даних v1.1
-ОФІЦІЙНИЙ РЕЛІЗ
+SAD — Статистичний Аналіз Даних v1.1 (ФІНАЛЬНА ВЕРСІЯ)
 Автор: Чаплоуцький Андрій Миколайович
-Уманський національний університет садівництва, 2025
+Уманський національний університет, 2025
 """
 
 import tkinter as tk
@@ -17,10 +16,8 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from datetime import date
 import os
 from itertools import combinations
-import io
 
-
-# ==================== EditableTreeview з сіткою і навігацією ====================
+# ---------------- Editable Treeview ----------------
 class EditableTreeview(ttk.Treeview):
     def __init__(self, master=None, **kw):
         style = ttk.Style()
@@ -35,70 +32,102 @@ class EditableTreeview(ttk.Treeview):
         self.bind('<Up>', self._on_arrow_up)
         self.bind('<Left>', self._on_arrow_left)
         self.bind('<Right>', self._on_arrow_right)
+
         self._entry = None
         self._current_cell = None
 
-    def _on_double_click(self, event): self._start_edit(event)
+    def _on_double_click(self, event):
+        self._start_edit(event)
+
     def _on_enter(self, event=None):
         if self._entry:
             self._save_edit()
             self._move_down()
         else:
             item = self.focus()
-            if item: self._start_edit_at_item(item)
+            if item:
+                self._start_edit_at_item(item)
 
     def _on_arrow_down(self, event):
-        if self._entry: self._save_edit()
+        if self._entry:
+            self._save_edit()
         self._move_down()
+
     def _on_arrow_up(self, event):
-        if self._entry: self._save_edit()
+        if self._entry:
+            self._save_edit()
         self._move_up()
+
     def _on_arrow_left(self, event):
-        if self._entry and not self._entry.selection_get():
-            self._save_edit()
-            self._move_left()
+        if self._entry:
+            try:
+                sel = self._entry.selection_get()
+            except tk.TclError:
+                sel = ""
+            if not sel:
+                self._save_edit()
+                self._move_left()
+
     def _on_arrow_right(self, event):
-        if self._entry and not self._entry.selection_get():
-            self._save_edit()
-            self._move_right()
+        if self._entry:
+            try:
+                sel = self._entry.selection_get()
+            except tk.TclError:
+                sel = ""
+            if not sel:
+                self._save_edit()
+                self._move_right()
 
     def _start_edit(self, event):
         if self._entry:
-            try: self._entry.destroy()
-            except: pass
+            try:
+                self._entry.destroy()
+            except:
+                pass
+
         rowid = self.identify_row(event.y)
         column = self.identify_column(event.x)
-        if not rowid or not column: return
+        if not rowid or not column:
+            return
         bbox = self.bbox(rowid, column)
-        if not bbox: return
+        if not bbox:
+            return
         x, y, width, height = bbox
         col_index = int(column[1:]) - 1
         values = list(self.item(rowid, 'values'))
         value = values[col_index] if col_index < len(values) else ""
+
         self._entry = entry = tk.Entry(self, font=("Arial", 10), relief="solid", bd=1)
         entry.insert(0, "" if value is None else str(value))
         entry.select_range(0, tk.END)
         entry.focus()
         entry.place(x=x, y=y, width=width, height=height)
+
         self._current_cell = (rowid, column)
 
         def save(e=None):
             new_val = entry.get().strip()
             vals = list(self.item(rowid, 'values'))
-            while len(vals) <= col_index: vals.append("")
+            while len(vals) <= col_index:
+                vals.append("")
             vals[col_index] = new_val
             self.item(rowid, values=vals)
-            entry.destroy()
+            try:
+                entry.destroy()
+            except:
+                pass
             self._entry = None
             self._current_cell = None
 
         entry.bind('<Return>', lambda e: (save(), self._move_down()))
         entry.bind('<FocusOut>', save)
-        entry.bind('<Escape>', lambda e: entry.destroy())
+        entry.bind('<Escape>', lambda e: (entry.destroy(), setattr(self, "_entry", None), setattr(self, "_current_cell", None)))
 
     def _start_edit_at_item(self, rowid):
-        if not rowid: return
-        bbox = self.bbox(rowid, "#1")
+        if not rowid:
+            return
+        column = "#1"
+        bbox = self.bbox(rowid, column)
         if bbox:
             event = tk.Event()
             event.x = bbox[0] + 10
@@ -106,21 +135,30 @@ class EditableTreeview(ttk.Treeview):
             self._start_edit(event)
 
     def _save_edit(self):
-        if not self._entry or not self._current_cell: return
+        if not self._entry or not self._current_cell:
+            return
         rowid, column = self._current_cell
-        val = self._entry.get().strip()
+        try:
+            val = self._entry.get().strip()
+        except Exception:
+            val = ""
         col_index = int(column[1:]) - 1
         vals = list(self.item(rowid, 'values'))
-        while len(vals) <= col_index: vals.append("")
+        while len(vals) <= col_index:
+            vals.append("")
         vals[col_index] = val
         self.item(rowid, values=vals)
-        self._entry.destroy()
+        try:
+            self._entry.destroy()
+        except:
+            pass
         self._entry = None
         self._current_cell = None
 
     def _move_down(self):
         item = self.focus()
-        if not item: return
+        if not item:
+            return
         next_item = self.next(item)
         if next_item:
             self.focus(next_item)
@@ -130,7 +168,8 @@ class EditableTreeview(ttk.Treeview):
 
     def _move_up(self):
         item = self.focus()
-        if not item: return
+        if not item:
+            return
         prev_item = self.prev(item)
         if prev_item:
             self.focus(prev_item)
@@ -139,7 +178,8 @@ class EditableTreeview(ttk.Treeview):
             self._start_edit_at_item(prev_item)
 
     def _move_left(self):
-        if not self._current_cell: return
+        if not self._current_cell:
+            return
         rowid, col = self._current_cell
         col_idx = int(col[1:])
         if col_idx > 1:
@@ -152,7 +192,8 @@ class EditableTreeview(ttk.Treeview):
                 self._start_edit(event)
 
     def _move_right(self):
-        if not self._current_cell: return
+        if not self._current_cell:
+            return
         rowid, col = self._current_cell
         col_idx = int(col[1:])
         if col_idx < len(self["columns"]):
@@ -165,18 +206,21 @@ class EditableTreeview(ttk.Treeview):
                 self._start_edit(event)
 
 
-# ==================== Основний клас ====================
+# ---------------- Main Application ----------------
 class SADApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SAD — Статистичний Аналіз Даних v1.1")
         self.root.geometry("1350x820")
         if os.path.exists("icon.ico"):
-            try: self.root.iconbitmap("icon.ico")
-            except: pass
+            try:
+                self.root.iconbitmap("icon.ico")
+            except:
+                pass
 
         tk.Label(self.root, text="SAD", font=("Arial", 40, "bold"), fg="#1a3c6e").pack(pady=20)
         tk.Label(self.root, text="Універсальний калькулятор дисперсійного аналізу", font=("Arial", 14)).pack(pady=4)
+
         tk.Button(self.root, text="Почати аналіз", width=32, height=3, bg="#d32f2f", fg="white",
                   font=("Arial", 16, "bold"), command=self.choose_factor_count).pack(pady=30)
 
@@ -187,21 +231,23 @@ class SADApp:
 
         tk.Label(self.root, text="Редагування: подвійний клік • Enter • стрілки | Ctrl+V — вставка з Excel",
                  fg="gray", font=("Arial", 10)).pack(pady=10)
+
         self.root.mainloop()
 
     def show_about(self):
-        messagebox.showinfo("Про програму", "SAD v1.1 — найкращий український інструмент для агростатистики\n"
-                                          "Повний Type II ANOVA • НІР₀.₅ • Tukey • Shapiro-Wilk • Levene")
+        messagebox.showinfo("Про програму", "SAD v1.1 — інструмент для дисперсійного аналізу\n"
+                                          "Підтримка: одно-, дво-, трифакторний аналіз • LSD • Tukey • Shapiro-Wilk • Levene")
 
     def show_author(self):
         messagebox.showinfo("Про розробника",
             "Чаплоуцький Андрій Миколайович\n"
             "Кафедра плодівництва і виноградарства\n"
-            "Уманський національний університет садівництва\n"
-            "м. Умань, Україна • Листопад 2025")
+            "Уманський національний університет\n"
+            "м. Умань, Україна\n"
+            "Листопад 2025")
 
     def choose_factor_count(self):
-        fc = simpledialog.askinteger("Кількість факторів", "Введіть кількість факторів (1, 2 або 3):", minvalue=1, maxvalue=3)
+        fc = simpledialog.askinteger("Факторність", "Введіть кількість факторів (1, 2 або 3):", minvalue=1, maxvalue=3)
         if fc:
             self.open_analysis_window(fc)
 
@@ -211,6 +257,7 @@ class SADApp:
         self.win.title(f"SAD v1.1 — {factor_count}-факторний аналіз")
         self.win.geometry("1600x1000")
 
+        # Toolbar
         tools = tk.Frame(self.win)
         tools.pack(fill="x", pady=10, padx=15)
         tk.Button(tools, text="Додати стовпець", command=self.add_column).pack(side="left", padx=5)
@@ -218,17 +265,20 @@ class SADApp:
         tk.Button(tools, text="Очистити", bg="#f44336", fg="white", command=self.clear_table).pack(side="left", padx=5)
         tk.Button(tools, text="З Excel", command=self.load_excel).pack(side="left", padx=5)
         tk.Button(tools, text="АНАЛІЗ", bg="#d32f2f", fg="white", font=("Arial", 18, "bold"), width=20,
-                  command=self.calculate).pack(side="left", padx=30)
+                  command=self.calculate).pack(side="left", padx=20)
         tk.Button(tools, text="Зберегти звіт", command=self.save_report).pack(side="left", padx=5)
 
+        # Table frame
         table_frame = tk.Frame(self.win)
         table_frame.pack(fill="both", expand=True, padx=15, pady=5)
-        self.tree = EditableTreeview(table_frame, columns=[f"c{i}" for i in range(20)], show="headings")
-        for i in range(20):
+        initial_cols = 20
+        self.tree = EditableTreeview(table_frame, columns=[f"c{i}" for i in range(initial_cols)], show="headings")
+        for i in range(initial_cols):
             self.tree.heading(f"c{i}", text=str(i+1))
             self.tree.column(f"c{i}", width=110, anchor="c")
         for _ in range(25):
-            self.tree.insert("", "end", values=[""] * 20)
+            self.tree.insert("", "end", values=[""] * initial_cols)
+
         self.tree.pack(side="left", fill="both", expand=True)
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
@@ -239,24 +289,26 @@ class SADApp:
         tk.Label(self.win, text="Редагування: подвійний клік • Enter • стрілки | Ctrl+V — вставка з Excel",
                  fg="red", font=("Arial", 11, "bold")).pack(pady=6)
 
-        res_frame = tk.LabelFrame(self.win, text=" Результати аналізу ", font=("Arial", 12, "bold"))
+        # Results
+        res_frame = tk.LabelFrame(self.win, text=" Результати дисперсійного аналізу ", font=("Arial", 12, "bold"))
         res_frame.pack(fill="both", expand=True, padx=15, pady=10)
         self.result_box = scrolledtext.ScrolledText(res_frame, height=28, font=("Consolas", 10))
         self.result_box.pack(fill="both", expand=True)
 
-        self.win.bind_all("<Control-v>", lambda e: self.on_paste_clipboard())
+        # Bind paste
+        self.win.bind_all("<Control-v>", lambda e: self.on_paste_clipboard(e))
 
     def add_column(self):
         cols = list(self.tree["columns"])
-        new = f"c{len(cols)}"
-        cols.append(new)
+        new_col = f"c{len(cols)}"
+        cols.append(new_col)
         self.tree["columns"] = cols
-        self.tree.heading(new, text=str(len(cols)))
-        self.tree.column(new, width=110, anchor="c")
+        self.tree.heading(new_col, text=str(len(cols)))
+        self.tree.column(new_col, width=110, anchor="c")
         for iid in self.tree.get_children():
-            v = list(self.tree.item(iid, 'values'))
-            v.append("")
-            self.tree.item(iid, values=v)
+            vals = list(self.tree.item(iid, 'values'))
+            vals.append("")
+            self.tree.item(iid, values=vals)
 
     def add_row(self):
         self.tree.insert("", "end", values=[""] * len(self.tree["columns"]))
@@ -267,54 +319,73 @@ class SADApp:
         for _ in range(25):
             self.tree.insert("", "end", values=[""] * len(self.tree["columns"]))
 
-    def on_paste_clipboard(self):
+    def on_paste_clipboard(self, event=None):
         try:
-            df = pd.read_clipboard(sep=r'\s+', engine='python', header=None, dtype=str, on_bad_lines='skip')
-        except:
+            df = pd.read_clipboard(sep=None, engine='python', header=None, dtype=str)
+        except Exception:
             try:
                 txt = self.win.clipboard_get()
-                df = pd.read_csv(io.StringIO(txt), sep=r'\s+', engine='python', header=None, dtype=str, on_bad_lines='skip')
-            except:
-                messagebox.showwarning("Помилка", "Не вдалося вставити дані")
+                df = pd.read_csv(pd.io.common.StringIO(txt), sep=None, engine='python', header=None, dtype=str)
+            except Exception:
+                messagebox.showwarning("Помилка", "Не вдалося вставити дані з буфера")
                 return
-        if df.empty: return
+
+        if df.empty:
+            messagebox.showinfo("Вставка", "Буфер порожній")
+            return
+
         while len(self.tree["columns"]) < df.shape[1]:
             self.add_column()
+
         for _, row in df.iterrows():
-            vals = [str(x).strip() for x in row.tolist()] + [""] * (len(self.tree["columns"]) - df.shape[1])
+            vals = [str(x).strip() for x in row.tolist()]
+            vals += [""] * (len(self.tree["columns"]) - len(vals))
             self.tree.insert("", "end", values=vals[:len(self.tree["columns"])])
-        messagebox.showinfo("Успіх", f"Вставлено {len(df)} рядків")
+
+        messagebox.showinfo("Вставка", f"Вставлено {len(df)} рядків")
 
     def load_excel(self):
         path = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx *.xls")])
         if path:
-            df = pd.read_excel(path, header=None, dtype=str).fillna("")
+            try:
+                df = pd.read_excel(path, header=None, dtype=str).fillna("")
+            except Exception as e:
+                messagebox.showerror("Помилка імпорту", str(e))
+                return
             while len(self.tree["columns"]) < df.shape[1]:
                 self.add_column()
             self.clear_table()
             for _, row in df.iterrows():
-                vals = [str(x).strip() for x in row.tolist()] + [""] * (len(self.tree["columns"]) - df.shape[1])
-                self.tree.insert("", "end", values=vals)
+                vals = [str(x).strip() for x in row.tolist()]
+                vals += [""] * (len(self.tree["columns"]) - len(vals))
+                self.tree.insert("", "end", values=vals[:len(self.tree["columns"])])
 
     def tree_to_dataframe(self):
         cols = len(self.tree["columns"])
         data = []
         for iid in self.tree.get_children():
-            v = list(self.tree.item(iid, 'values'))
-            v += [""] * (cols - len(v))
-            data.append([str(x).strip() for x in v[:cols]])
-        return pd.DataFrame(data) if data else pd.DataFrame()
+            vals = list(self.tree.item(iid, 'values'))
+            vals += [""] * (cols - len(vals))
+            row = [str(v).strip() for v in vals[:cols]]
+            data.append(row)
+        if not data:
+            return pd.DataFrame()
+        col_names = [f"col{i+1}" for i in range(cols)]
+        return pd.DataFrame(data, columns=col_names)
 
     def wide_to_long(self, df, n_factor_cols):
-        if df.empty or n_factor_cols >= df.shape[1]: return pd.DataFrame()
+        if df.empty or n_factor_cols >= df.shape[1]:
+            return pd.DataFrame()
         factor_cols = df.columns[:n_factor_cols]
         value_cols = df.columns[n_factor_cols:]
-        long = pd.melt(df, id_vars=factor_cols, value_vars=value_cols, var_name='repeat', value_name='value')
+        long = pd.melt(df, id_vars=factor_cols, value_vars=value_cols,
+                       var_name='repeat', value_name='value')
+        long = long.dropna(subset=['value']).copy()
         long['value'] = pd.to_numeric(long['value'], errors='coerce')
-        long = long.dropna(subset=['value']).reset_index(drop=True)
-        for c in factor_cols:
-            long[c] = long[c].astype('category')
-        return long
+        long = long.dropna(subset=['value'])
+        for col in factor_cols:
+            long[col] = long[col].astype('category')
+        return long.reset_index(drop=True)
 
     def calculate(self):
         try:
@@ -323,16 +394,132 @@ class SADApp:
                 messagebox.showerror("Помилка", "Таблиця порожня")
                 return
 
-            long = self.wide_to_long(df_wide, self.factor_count)
+            n_factor_cols = self.factor_count
+            if n_factor_cols is None or n_factor_cols < 1:
+                messagebox.showerror("Помилка", "Невірна кількість факторів")
+                return
+
+            long = self.wide_to_long(df_wide, n_factor_cols)
             if long.empty:
                 messagebox.showerror("Помилка", "Немає числових даних для аналізу")
                 return
 
-            factor_cols = df_wide.columns[:self.factor_count].tolist()
+            factor_cols = df_wide.columns[:n_factor_cols].tolist()
+            # Build formula with main effects and interactions
             terms = [f"C({f})" for f in factor_cols]
-            for r in range(2, len(factor_cols)+1):
+            for r in range(2, len(factor_cols) + 1):
                 for comb in combinations(factor_cols, r):
                     terms.append(":".join(f"C({c})" for c in comb))
             formula = "value ~ " + " + ".join(terms)
 
-            model = smf.ols(formula
+            model = smf.ols(formula, data=long).fit()
+            anova_table = anova_lm(model, typ=2)
+
+            # Tests: Shapiro on residuals, Levene for homogeneity, Shapiro per group
+            resid = model.resid.dropna()
+            sw_resid = (None, None)
+            try:
+                if len(resid) >= 3:
+                    sw_resid = stats.shapiro(resid)
+            except Exception:
+                sw_resid = (None, None)
+
+            # Levene on groups defined by combinations of factor levels
+            group_keys = list(long.groupby(list(factor_cols)).groups.keys())
+            group_values = [long.groupby(list(factor_cols)).get_group(k)['value'].values for k in group_keys if len(long.groupby(list(factor_cols)).get_group(k)['value']) >= 2]
+            levene_p = None
+            try:
+                if len(group_values) >= 2:
+                    levene_stat, levene_p = stats.levene(*group_values)
+            except Exception:
+                levene_p = None
+
+            # Shapiro per group (only for groups with >=3)
+            group_shapiro = {}
+            for k, g in long.groupby(list(factor_cols)):
+                arr = g['value'].values
+                if len(arr) >= 3:
+                    try:
+                        w, p = stats.shapiro(arr)
+                        group_shapiro[str(k)] = (w, p)
+                    except Exception:
+                        group_shapiro[str(k)] = (None, None)
+                else:
+                    group_shapiro[str(k)] = (None, None)
+
+            # Tukey HSD for first factor (if exists and enough levels)
+            tukey_text = None
+            try:
+                if len(factor_cols) >= 1 and long[factor_cols[0]].nunique() >= 2:
+                    tukey = pairwise_tukeyhsd(endog=long['value'], groups=long[factor_cols[0]], alpha=0.05)
+                    tukey_text = tukey.summary().as_text()
+            except Exception:
+                tukey_text = None
+
+            # Compose report
+            report = []
+            report.append("SAD v1.1 — ДИСПЕРСІЙНИЙ АНАЛІЗ (Type II)")
+            report.append(f"Дата: {date.today():%d.%m.%Y}")
+            report.append(f"Факторів: {len(factor_cols)} | Повторностей (повтор-id): {long['repeat'].nunique()} | Спостережень (long): {len(long)}")
+            report.append("")
+            report.append("ANOVA (Type II):")
+            report.append(anova_table.round(6).to_string())
+            report.append("")
+            report.append(f"MS_error = {model.mse_resid:.6f} | df_error = {int(model.df_resid)}")
+            report.append("")
+
+            if sw_resid[0] is not None:
+                report.append(f"Shapiro-Wilk (залишки): W={sw_resid[0]:.4f}, p={sw_resid[1]:.5f} -> {'нормальні' if sw_resid[1]>0.05 else 'НЕ нормальні'}")
+            else:
+                report.append("Shapiro-Wilk (залишки): недостатньо даних або тест не застосований")
+
+            if levene_p is not None:
+                report.append(f"Levene (однорідність дисперсій): p={levene_p:.5f} -> {'однорідні' if levene_p>0.05 else 'НЕ однорідні'}")
+            else:
+                report.append("Levene: неможливо обчислити (недостатньо даних)")
+
+            report.append("")
+            report.append("Shapiro-Wilk по групах:")
+            for k, v in group_shapiro.items():
+                if v[0] is None:
+                    report.append(f" {k}: недостатньо даних (n<3)")
+                else:
+                    report.append(f" {k}: W={v[0]:.4f}, p={v[1]:.5f} -> {'норм.' if v[1]>0.05 else 'НЕ норм.'}")
+
+            if tukey_text:
+                report.append("")
+                report.append("Tukey HSD (перший фактор):")
+                report.append(tukey_text)
+
+            report.append("")
+            report.append("Розробник: Чаплоуцький Андрій Миколайович")
+            report.append("Уманський національний університет садівництва")
+
+            self.result_box.delete(1.0, tk.END)
+            self.result_box.insert(tk.END, "\n".join(report))
+
+            try:
+                self.result_box.clipboard_clear()
+                self.result_box.clipboard_append("\n".join(report))
+            except Exception:
+                pass
+
+            messagebox.showinfo("Готово!", "Аналіз завершено! Звіт готовий і скопійований в буфер обміну (за можливості).")
+
+        except Exception as e:
+            messagebox.showerror("Помилка аналізу", f"Сталася помилка:\n{str(e)}")
+
+    def save_report(self):
+        txt = self.result_box.get(1.0, tk.END).strip()
+        if not txt:
+            messagebox.showwarning("Немає звіту", "Спочатку виконайте аналіз")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Текстовий файл", "*.txt")])
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(txt)
+            messagebox.showinfo("Збережено", f"Звіт збережено:\n{path}")
+
+
+if __name__ == "__main__":
+    SADApp()
