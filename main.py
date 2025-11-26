@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 import pandas as pd
 import numpy as np
-from scipy import stats
+from scipy import stats 
 from datetime import date
 import os
 
