@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-SAD v1.0 GOLD — Фінальна версія
-Класичний український калькулятор польового досліду + Shapiro-Wilk + таблиця як в Excel
+SAD v1.0 GOLD — ОСТАТОЧНА ВЕРСІЯ
+Повна видимість сітки + повний звіт + поведінка як у Excel
 Автор: Чаплоуцький Андрій Миколайович, Уманський НУС, 2025
 """
 
@@ -10,137 +10,119 @@ from tkinter import ttk, messagebox, filedialog, scrolledtext, simpledialog
 import pandas as pd
 import numpy as np
 from scipy.stats import f, t, shapiro
-import os
 
 
-# ——————————————————————— Excel-подібна таблиця з сіткою і навігацією ———————————————————————
-class ExcelLikeTreeview(ttk.Treeview):
-    def __init__(self, master, **kw):
+class ExcelTable(ttk.Treeview):
+    def __init__(self, parent):
+        # Стиль — чітка сітка як у Excel
         style = ttk.Style()
-        style.theme_use('clam')
+        style.theme_use('default')
         style.configure("Excel.Treeview",
-                        background="white", foreground="black", rowheight=28,
-                        fieldbackground="white", borderwidth=1, relief="solid",
-                        font=("Arial", 11))
+                        background="white",
+                        foreground="black",
+                        rowheight=26,
+                        fieldbackground="white",
+                        borderwidth=1,
+                        relief="solid",
+                        font=("Calibri", 11))
         style.configure("Excel.Treeview.Heading",
-                        background="#d9d9d9", font=("Arial", 11, "bold"))
-        style.map('Excel.Treeview', background=[('selected', '#4472C4')])
+                        background="#f0f0f0",
+                        foreground="black",
+                        font=("Calibri", 11, "bold"))
+        style.map("Excel.Treeview",
+                  background=[("selected", "#4472C4")],
+                  foreground=[("selected", "white")])
 
-        super().__init__(master, style="Excel.Treeview", **kw)
+        super().__init__(parent, style="Excel.Treeview", selectmode="browse")
 
-        self._entry = None
-        self._current_item = None
-        self._current_col = None
+        self.entry = None
+        self._edit_item = None
+        self._edit_col = None
 
+        # Події
         self.bind("<Double-1>", self._start_edit)
         self.bind("<Return>", self._on_enter)
-        self.bind("<Down>", self._on_down)
-        self.bind("<Up>", self._on_up)
-        self.bind("<Left>", self._on_left)
-        self.bind("<Right>", self._on_right)
+        self.bind("<Down>", self._on_arrow)
+        self.bind("<Up>", self._on_arrow)
+        self.bind("<Left>", self._on_arrow)
+        self.bind("<Right>", self._on_arrow)
 
     def _start_edit(self, event=None):
-        if event:
-            row = self.identify_row(event.y)
-            col = self.identify_column(event.x)
-        else:
-            row = self.focus()
-            col = "#1"
-
-        if not row or not col:
+        if self.entry:
             return
 
-        bbox = self.bbox(row, col)
+        item = self.focus()
+        if not item:
+            return
+
+        column = self.identify_column(event.x) if event else "#1"
+        bbox = self.bbox(item, column)
         if not bbox:
             return
 
-        x, y, w, h = bbox
-        col_idx = int(col[1:]) - 1
-        values = self.item(row, "values")
-        text = values[col_idx] if col_idx < len(values) else ""
+        col_idx = int(column[1:]) - 1
+        value = self.item(item, "values")[col_idx]
 
-        entry = tk.Entry(self, font=("Arial", 11), bd=0, highlightthickness=2,
-                         highlightcolor="#4472C4", relief="flat")
-        entry.insert(0, text)
+        # Створюємо Entry з чіткою рамкою
+        entry = tk.Entry(self, font=("Calibri", 11), bd=2, relief="solid", bg="#ffffe0")
+        entry.insert(0, value)
         entry.select_range(0, tk.END)
         entry.focus()
-        entry.place(x=x, y=y, width=w, height=h)
 
-        self._entry = entry
-        self._current_item = row
-        self._current_col = col_idx
+        x, y, width, height = bbox
+        entry.place(x=x, y=y, width=width+2, height=height+2)
+
+        self.entry = entry
+        self._edit_item = item
+        self._edit_col = col_idx
 
         def save():
-            if self._entry:
+            if self.entry:
                 new_val = entry.get()
-                vals = list(self.item(row, "values"))
-                while len(vals) <= col_idx:
-                    vals.append("")
-                vals[col_idx] = new_val
-                self.item(row, values=vals)
-                self._entry.destroy()
-                self._entry = None
+                values = list(self.item(item, "values"))
+                values[col_idx] = new_val
+                self.item(item, values=values)
+                entry.destroy()
+                self.entry = None
 
         entry.bind("<Return>", lambda e: (save(), self._move_down_edit()))
         entry.bind("<FocusOut>", lambda e: save())
         entry.bind("<Escape>", lambda e: entry.destroy())
 
     def _on_enter(self, event):
-        if self._entry:
-            self._entry.event_generate("<Return>")
+        if self.entry:
+            self.entry.event_generate("<Return>")
         else:
             self._start_edit()
 
     def _move_down_edit(self):
-        cur = self.focus()
-        nxt = self.next(cur)
-        if nxt:
-            self.focus(nxt)
-            self.selection_set(nxt)
-            self.see(nxt)
+        item = self.focus()
+        next_item = self.next(item)
+        if next_item:
+            self.focus(next_item)
+            self.selection_set(next_item)
+            self.see(next_item)
             self.after(50, self._start_edit)
 
-    def _on_down(self, event):
-        if self._entry:
-            self._entry.event_generate("<Return>")
-        else:
+    def _on_arrow(self, event):
+        if self.entry:
+            self.entry.event_generate("<Return>")
+        if event.keysym == "Down":
             self._move_down_edit()
         return "break"
 
-    def _on_up(self, event):
-        if self._entry:
-            self._entry.event_generate("<Return>")
-        cur = self.focus()
-        prv = self.prev(cur)
-        if prv:
-            self.focus(prv)
-            self.selection_set(prv)
-            self.see(prv)
-            self.after(50, self._start_edit)
-        return "break"
 
-    def _on_left(self, event):
-        if self._entry and not self._entry.selection_get():
-            self._entry.event_generate("<Return>")
-        return "break"
-
-    def _on_right(self, event):
-        if self._entry and not self._entry.selection_get():
-            self._entry.event_generate("<Return>")
-        return "break"
-
-
-# ——————————————————————— Основний додаток ———————————————————————
 class SADApp:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("SAD v1.0 GOLD")
-        self.root.geometry("1500x950")
+        self.root.title("SAD v1.0 GOLD — Статистичний аналіз даних")
+        self.root.geometry("1600x1000")
         self.root.configure(bg="#f5f5f5")
 
-        tk.Label(self.root, text="SAD v1.0 GOLD", font=("Arial", 42, "bold"),
+        # Заголовок
+        tk.Label(self.root, text="SAD v1.0 GOLD", font=("Arial", 44, "bold"),
                  fg="#1a3c6e", bg="#f5f5f5").pack(pady=30)
-        tk.Label(self.root, text="Класичний аналіз + Shapiro-Wilk + таблиця як Excel",
+        tk.Label(self.root, text="Повний класичний аналіз + таблиця як в Excel",
                  font=("Arial", 16), bg="#f5f5f5").pack(pady=5)
 
         tk.Button(self.root, text="РОЗПОЧАТИ АНАЛІЗ", font=("Arial", 20, "bold"),
@@ -155,168 +137,173 @@ class SADApp:
     def start(self):
         self.win = tk.Toplevel(self.root)
         self.win.title("SAD v1.0 GOLD — Ввід даних")
-        self.win.geometry("1750x1000")
+        self.win.geometry("1800x1050")
 
-        # Панель інструментів
-        tools = tk.Frame(self.win, bg="#e3f2fd")
-        tools.pack(fill="x", padx=15, pady=12)
-        tk.Button(tools, text="З Excel", command=self.from_excel).pack(side="left", padx=8)
-        tk.Button(tools, text="Очистити", bg="#ff5252", fg="white",
-                  command=self.clear).pack(side="left", padx=8)
-        tk.Button(tools, text="АНАЛІЗ", font=("Arial", 20, "bold"),
-                  bg="#d32f2f", fg="white", width=18,
-                  command=self.analyze).pack(side="right", padx=30)
+        # Панель
+        top = tk.Frame(self.win, bg="#e8f5e8")
+        top.pack(fill="x", padx=15, pady=10)
+        tk.Button(top, text="З Excel", font=("Arial", 12), command=self.load_excel).pack(side="left", padx=5)
+        tk.Button(top, text="Очистити", bg="#ff5252", fg="white", command=self.clear).pack(side="left", padx=5)
+        tk.Button(top, text="АНАЛІЗ", bg="#d32f2f", fg="white", font=("Arial", 20, "bold"),
+                  width=20, command=self.analyze).pack(side="right", padx=30)
 
-        # Таблиця
+        # Таблиця з чіткою сіткою
         frame = tk.Frame(self.win)
-        frame.pack(fill="both", expand=True, padx=15, pady=5)
+        frame.pack(fill="both", expand=True, padx=15, pady=10)
 
-        self.tree = ExcelLikeTreeview(frame, columns=[f"c{i}" for i in range(20)], show="headings")
-        for i in range(20):
-            self.tree.heading(f"c{i}", text=str(i+1))
-            self.tree.column(f"c{i}", width=115, anchor="center")
-        for _ in range(40):
-            self.tree.insert("", "end", values=[""] * 20)
-        self.tree.pack(side="left", fill="both", expand=True)
+        self.table = ExcelTable(frame)
+        self.table["columns"] = [str(i) for i in range(1, 21)]
+        for col in self.table["columns"]:
+            self.table.heading(col, text=col)
+            self.table.column(col, width=110, anchor="center")
+        for _ in range(50):
+            self.table.insert("", "end", values=[""] * 20)
 
-        vsb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(self.win, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        # Сітка — найголовніше!
+        self.table.configure(show="headings")
+        self.table.pack(side="left", fill="both", expand=True)
+
+        # Скроллбари
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=self.table.yview)
+        hsb = ttk.Scrollbar(self.win, orient="horizontal", command=self.table.xview)
+        self.table.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         vsb.pack(side="right", fill="y")
         hsb.pack(side="bottom", fill="x")
 
-        tk.Label(self.win, text="Подвійний клік / Enter — редагувати • Стрілки • Ctrl+V",
-                 font=("Arial", 12, "bold"), fg="#d32f2f").pack(pady=8)
+        tk.Label(self.win, text="Подвійний клік / Enter — редагувати • Стрілки — навігація • Ctrl+V — з Excel",
+                 font=("Arial", 12, "bold"), fg="#d32f2f").pack(pady=5)
 
         # Результати
-        res = tk.LabelFrame(self.win, text=" РЕЗУЛЬТАТИ ", font=("Arial", 14, "bold"))
+        res = tk.LabelFrame(self.win, text=" РЕЗУЛЬТАТИ АНАЛІЗУ ", font=("Arial", 14, "bold"))
         res.pack(fill="both", expand=True, padx=15, pady=10)
-        self.result = scrolledtext.ScrolledText(res, font=("Consolas", 11))
+        self.result = scrolledtext.ScrolledText(res, font=("Consolas", 11), bg="#fffdf0")
         self.result.pack(fill="both", expand=True)
 
         self.win.bind_all("<Control-v>", lambda e: self.paste())
 
-    # ——— Вставка / завантаження ———
     def paste(self):
         try:
-            df = pd.read_clipboard(sep=r"\s+", header=None, dtype=str, engine="python")
-            if df.empty: return
+            df = pd.read_clipboard(sep=r"\s+", header=None, dtype=str)
             self.clear()
             for _, row in df.iterrows():
                 vals = row.astype(str).tolist() + [""] * (20 - len(row))
-                self.tree.insert("", "end", values=vals[:20])
+                self.table.insert("", "end", values=vals[:20])
         except:
             pass
 
-    def from_excel(self):
-        path = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx *.xls")])
+    def load_excel(self):
+        path = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx")])
         if path:
             df = pd.read_excel(path, header=None).astype(str).fillna("")
             self.clear()
             for _, row in df.iterrows():
                 vals = row.tolist() + [""] * (20 - len(row))
-                self.tree.insert("", "end", values=vals[:20])
+                self.table.insert("", "end", values=vals[:20])
 
     def clear(self):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-        for _ in range(40):
-            self.tree.insert("", "end", values=[""] * 20)
+        for i in self.table.get_children():
+            self.table.delete(i)
+        for _ in range(50):
+            self.table.insert("", "end", values=[""] * 20)
 
-    def get_data(self):
+    def get_df(self):
         data = []
-        for iid in self.tree.get_children():
-            row = [str(x).strip() for x in self.tree.item(iid, "values")]
+        for iid in self.table.get_children():
+            row = [str(x).strip() for x in self.table.item(iid, "values")]
             if any(row):
                 data.append(row)
-        return pd.DataFrame(data) if data else pd.DataFrame()
+        return pd.DataFrame(data)
 
-    # ——— АНАЛІЗ ———
     def analyze(self):
         try:
-            df = self.get_data()
-            if df.empty or df.shape[1] < 3:
-                messagebox.showerror("Помилка", "Мінімум 3 стовпці (фактори + повторності)")
+            df = self.get_df()
+            if df.shape[1] < 3:
+                messagebox.showerror("Помилка", "Мінімум 3 стовпці")
                 return
 
-            n_factors = simpledialog.askinteger("Фактори", "Кількість стовпців-факторів (1-3):", minvalue=1, maxvalue=3)
-            if not n_factors:
-                return
+            n_factors = simpledialog.askinteger("Фактори", "Кількість факторів (1-3):", minvalue=1, maxvalue=3)
+            if not n_factors: return
 
             factors = df.iloc[:, :n_factors]
-            repeats = df.iloc[:, n_factors:].apply(pd.to_numeric, errors='coerce').dropna(axis=1, how='all')
-            if repeats.shape[1] < 2:
-                messagebox.showerror("Помилка", "Мінімум 2 повторності!")
+            reps = df.iloc[:, n_factors:].apply(pd.to_numeric, errors='coerce').dropna(axis=1, how='all')
+            if reps.shape[1] < 2:
+                messagebox.showerror("Помилка", "Мінімум 2 повторності")
                 return
 
-            n_rep = repeats.shape[1]
-            values = repeats.stack().dropna().values
+            n_rep = reps.shape[1]
+            values = reps.stack().dropna().values
             grand_mean = values.mean()
 
-            # Залишки для Shapiro-Wilk
-            row_means = repeats.mean(axis=1)
-            residuals = (repeats - row_means.values.reshape(-1, 1)).stack().dropna().values
-
-            normality_text = "недостатньо даних"
+            # Shapiro-Wilk
+            row_means = reps.mean(axis=1)
+            residuals = (reps - row_means.values.reshape(-1, 1)).stack().dropna().values
+            normality = "недостатньо даних"
             if len(residuals) >= 8:
                 stat, p = shapiro(residuals)
-                normality_text = f"W = {stat:.4f}, p = {p:.4f} → {'нормальний' if p > 0.05 else 'НЕ нормальний'}"
+                normality = "нормальний" if p > 0.05 else "НЕ нормальний"
 
-            # Класичний однофакторний аналіз
-            group_means = repeats.mean(axis=1)
-            total_ss = ((values - grand_mean) ** 2).sum()
-            factor_ss = n_rep * ((group_means - grand_mean) ** 2).sum()
+            # Дисперсійний аналіз
+            group_means = reps.mean(axis=1)
+            total_ss = ((values - grand_mean)**2).sum()
+            factor_ss = n_rep * ((group_means - grand_mean)**2).sum()
             error_ss = total_ss - factor_ss
 
             df_factor = len(group_means) - 1
             df_error = len(values) - len(group_means)
-            ms_factor = factor_ss / df_factor if df_factor else 0
-            ms_error = error_ss / df_error if df_error else 0
-            F_calc = ms_factor / ms_error if ms_error else 0
-            F_crit = f.ppf(0.95, df_factor, df_error) if df_error else 0
-            p_val = 1 - f.cdf(F_calc, df_factor, df_error) if F_calc else 1
+            ms_factor = factor_ss / df_factor
+            ms_error = error_ss / df_error
+            F_calc = ms_factor / ms_error
+            F_crit = f.ppf(0.95, df_factor, df_error)
+            p_val = 1 - f.cdf(F_calc, df_factor, df_error)
 
             t_crit = t.ppf(0.975, df_error)
             LSD = t_crit * np.sqrt(2 * ms_error / n_rep)
+            eta = factor_ss / total_ss * 100
 
-            eta_sq = factor_ss / total_ss * 100 if total_ss else 0
-
-            # Букви істотності
-            sorted_means = group_means.sort_values(ascending=False)
-            letters = []
-            letter = 'a'
-            prev = sorted_means.iloc[0] + LSD + 1
-            for idx, m in sorted_means.items():
-                if m < prev - LSD:
-                    letter = chr(ord(letter) + 1)
-                variant = " | ".join(str(x) for x in factors.iloc[idx])
-                letters.append(f"{variant:35} → {m:.3f} {letter}")
-                prev = m
+            # Букви
+            sorted_idx = group_means.sort_values(ascending=False).index
+            letters = {}
+            current_letter = 'a'
+            prev_mean = group_means[sorted_idx[0]] + LSD
+            for idx in sorted_idx:
+                if group_means[idx] < prev_mean - LSD:
+                    current_letter = chr(ord(current_letter) + 1)
+                letters[idx] = current_letter
+                prev_mean = group_means[idx]
 
             # Звіт
             report = [
-                "═" * 80,
-                "           РЕЗУЛЬТАТИ ДИСПЕРСІЙНОГО АНАЛІЗУ (класичний метод)",
-                "═" * 80,
+                "╔" + "═" * 78 + "╗",
+                "║            РЕЗУЛЬТАТИ ДИСПЕРСІЙНОГО АНАЛІЗУ (2025)            ║",
+                "╚" + "═" * 78 + "╝",
                 f"Варіантів: {len(group_means)}   Повторностей: {n_rep}   n = {len(values)}",
                 f"Середнє по досліду: {grand_mean:.3f}",
                 "",
-                "Перевірка нормальності залишків (Shapiro-Wilk):",
-                f"   {normality_text}",
+                f"Shapiro-Wilk (залишки): {normality}",
                 "",
-                f"Fрозр = {F_calc:.3f}   F05 = {F_crit:.3f}",
-                f"Вплив фактора — {'ІСТОТНИЙ' if F_calc > F_crit else 'НЕІСТОТНИЙ'} (p ≈ {p_val:.4f})",
-                f"НІР₀.₅ = {LSD:.4f}    Вилучення впливу: {eta_sq:.1f}%",
+                f"Fрозр = {F_calc:.3f}   F05 = {F_crit:.3f} → {'ІСТОТНИЙ' if F_calc > F_crit else 'НЕІСТОТНИЙ'}",
+                f"НІР₀.₅ = {LSD:.4f}",
+                f"Вилучення впливу фактора: {eta:.1f}%",
                 "",
-                "СЕРЕДНІ ПО ВАРІАНТАХ:",
-            ] + letters
+                "СЕРЕДНІ ПО ВАРІАНТАХ (з буквами істотності):",
+            ]
 
+            for idx in sorted_idx:
+                variant = " | ".join(str(x) for x in factors.iloc[idx])
+                mean = group_means[idx]
+                let = letters[idx]
+                report.append(f"  {variant:30} → {mean:7.3f} {let}")
+
+            report.append("\nРозробник: Чаплоуцький Андрій Миколайович")
+            report.append("Уманський національний університет садівництва")
+
+            text = "\n".join(report)
             self.result.delete(1.0, tk.END)
-            self.result.insert(tk.END, "\n".join(report))
+            self.result.insert(tk.END, text)
             self.result.clipboard_clear()
-            self.result.clipboard_append("\n".join(report))
+            self.result.clipboard_append(text)
 
-            messagebox.showinfo("ГОТОВО!", f"Аналіз завершено!\nНормальність: {normality_text.split('→')[-1].strip()}\nНІР₀.₅ = {LSD:.4f}")
+            messagebox.showinfo("ГОТОВО!", "Аналіз завершено!\nЗвіт скопійовано в буфер!")
 
         except Exception as e:
             messagebox.showerror("ПОМИЛКА", str(e))
