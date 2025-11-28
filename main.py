@@ -179,7 +179,7 @@ class MainWindow(QMainWindow):
     def show_about(self):
         QMessageBox.information(self, "Про програму",
                                 "SAD - Статистичний аналіз даних\n"
-                                "Розробник: ....\n"
+                                "Розробник: Чаплоуцький Андрій Миколайович\n"
                                 "Кафедра плодівництва і виноградарства УНУ")
 
 
