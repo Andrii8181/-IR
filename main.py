@@ -784,3 +784,240 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = SADTk(root)
     root.mainloop()
+    # -------------------
+# Table operations and navigation
+# -------------------
+def add_row(self):
+    inner = self.entries[0][0].master  # frame
+    i = len(self.entries)
+    row_entries = []
+    for j in range(self.cols):
+        e = tk.Entry(inner, width=12)
+        e.grid(row=i+1, column=j, padx=1, pady=1)
+        e.bind("<Return>", self.on_enter)
+        e.bind("<Control-v>", self.on_paste)
+        e.bind("<Control-V>", self.on_paste)
+        e.bind("<Control-c>", self.on_copy)
+        e.bind("<Up>", self.on_arrow)
+        e.bind("<Down>", self.on_arrow)
+        e.bind("<Left>", self.on_arrow)
+        e.bind("<Right>", self.on_arrow)
+        row_entries.append(e)
+    self.entries.append(row_entries)
+    self.rows += 1
+
+def delete_row(self):
+    if len(self.entries) == 0:
+        return
+    last = self.entries.pop()
+    for e in last:
+        e.destroy()
+    self.rows -= 1
+
+# -------------------
+# Add/remove column
+# -------------------
+def add_column(self):
+    inner = self.entries[0][0].master
+    self.cols += 1
+    col_idx = self.cols - 1
+    lbl = tk.Label(inner, text=f"Повт.{col_idx+1}", relief=tk.RIDGE, width=12, bg="#f0f0f0")
+    lbl.grid(row=0, column=col_idx, padx=1, pady=1)
+    for i, row in enumerate(self.entries):
+        e = tk.Entry(inner, width=12)
+        e.grid(row=i+1, column=col_idx, padx=1, pady=1)
+        e.bind("<Return>", self.on_enter)
+        e.bind("<Control-v>", self.on_paste)
+        e.bind("<Control-V>", self.on_paste)
+        e.bind("<Control-c>", self.on_copy)
+        e.bind("<Up>", self.on_arrow)
+        e.bind("<Down>", self.on_arrow)
+        e.bind("<Left>", self.on_arrow)
+        e.bind("<Right>", self.on_arrow)
+        row.append(e)
+
+def delete_column(self):
+    if self.cols <= self.factors_count + 1:
+        return  # мінімум фактори + 1 повторення
+    inner = self.entries[0][0].master
+    col_idx = self.cols - 1
+    # delete header
+    for widget in inner.grid_slaves(row=0, column=col_idx):
+        widget.destroy()
+    # delete entries
+    for row in self.entries:
+        row[col_idx].destroy()
+        row.pop()
+    self.cols -= 1
+
+# -------------------
+# Clipboard helpers: copy/paste block from/to clipboard
+# -------------------
+def on_copy(self, event=None):
+    w = event.widget
+    try:
+        sel = w.selection_get()
+    except Exception:
+        sel = w.get()
+    self.table_win.clipboard_clear()
+    self.table_win.clipboard_append(sel)
+    return "break"
+
+def on_paste(self, event=None):
+    widget = event.widget
+    try:
+        data = widget.selection_get(selection='CLIPBOARD')
+    except Exception:
+        data = self.table_win.clipboard_get()
+    rows = [r for r in data.splitlines() if r!='']
+    pos = None
+    for i, row in enumerate(self.entries):
+        for j, cell in enumerate(row):
+            if cell is widget:
+                pos = (i, j)
+                break
+        if pos: break
+    if not pos:
+        return "break"
+    r0, c0 = pos
+    for i_r, row_text in enumerate(rows):
+        cols = row_text.split("\t")
+        for j_c, val in enumerate(cols):
+            rr = r0 + i_r
+            cc = c0 + j_c
+            while rr >= len(self.entries):
+                self.add_row()
+            if cc >= self.cols:
+                continue
+            self.entries[rr][cc].delete(0, tk.END)
+            self.entries[rr][cc].insert(0, val)
+    return "break"
+
+# -------------------
+# Enter key navigation
+# -------------------
+def on_enter(self, event=None):
+    widget = event.widget
+    pos = None
+    for i, row in enumerate(self.entries):
+        for j, cell in enumerate(row):
+            if cell is widget:
+                pos = (i, j)
+                break
+        if pos: break
+    if not pos:
+        return "break"
+    i, j = pos
+    ni = i + 1
+    if ni >= len(self.entries):
+        self.add_row()
+    self.entries[ni][j].focus_set()
+    self.entries[ni][j].delete(0, tk.END)
+    return "break"
+
+# -------------------
+# Arrow key navigation
+# -------------------
+def on_arrow(self, event=None):
+    widget = event.widget
+    pos = None
+    for i, row in enumerate(self.entries):
+        for j, cell in enumerate(row):
+            if cell is widget:
+                pos = (i, j)
+                break
+        if pos: break
+    if not pos:
+        return "break"
+    i, j = pos
+    if event.keysym == "Up":
+        ni = max(i-1, 0)
+        self.entries[ni][j].focus_set()
+    elif event.keysym == "Down":
+        ni = min(i+1, len(self.entries)-1)
+        self.entries[ni][j].focus_set()
+    elif event.keysym == "Left":
+        nj = max(j-1, 0)
+        self.entries[i][nj].focus_set()
+    elif event.keysym == "Right":
+        nj = min(j+1, len(self.entries[i])-1)
+        self.entries[i][nj].focus_set()
+    return "break"
+
+# -------------------
+# Collect data and analyze
+# -------------------
+def collect_long(self):
+    long = []
+    for i, row in enumerate(self.entries):
+        factors = []
+        for k in range(self.factors_count):
+            val = row[k].get().strip()
+            if val == "":
+                val = f"lev_row{i}_col{k}"
+            factors.append(val)
+        for rep_col in range(self.factors_count, self.factors_count + self.repeat_count):
+            val = row[rep_col].get().strip()
+            if val == "":
+                continue
+            try:
+                v = float(val)
+            except:
+                continue
+            rec = {'value': v}
+            if self.factors_count >= 1:
+                rec['A'] = factors[0]
+            if self.factors_count >= 2:
+                rec['B'] = factors[1]
+            if self.factors_count >= 3:
+                rec['C'] = factors[2]
+            long.append(rec)
+    return long
+
+def analyze(self):
+    long = self.collect_long()
+    if len(long) == 0:
+        messagebox.showwarning("Помилка", "Немає числових даних для аналізу")
+        return
+    values = np.array([r['value'] for r in long])
+    if len(values) < 3:
+        messagebox.showinfo("Результат", "Надто мало даних для тесту Шапіро-Вілк")
+        return
+    factors = ['A','B','C'][:self.factors_count]
+    res = anova_n_way(long, factors)
+    cell_mean_map = res.get('cell_means', None)
+    residuals = []
+    if cell_mean_map is None:
+        if res['type']=='one':
+            mean_map = res['means']
+            for rec in long:
+                m = mean_map.get(rec['A'], np.nan)
+                residuals.append(rec['value'] - m)
+        elif res['type']=='two':
+            mean_map = res['cell_means']
+            for rec in long:
+                m = mean_map.get((rec['A'], rec['B']), np.nan)
+                residuals.append(rec['value'] - m)
+    else:
+        for rec in long:
+            key = (rec.get('A'), rec.get('B'), rec.get('C'))[:self.factors_count]
+            if self.factors_count==1:
+                key = key[0]
+                m = res['means_A'].get(key, np.nan)
+            elif self.factors_count==2:
+                m = res['cell_means'].get((rec['A'], rec['B']), np.nan)
+            else:
+                m = res['cell_means'].get((rec['A'], rec['B'], rec['C']), np.nan)
+            residuals.append(rec['value'] - m)
+    residuals = np.array([r for r in residuals if not math.isnan(r)])
+    try:
+        W, p = shapiro(residuals) if len(residuals)>=3 else (np.nan, np.nan)
+    except Exception:
+        W, p = (np.nan, np.nan)
+
+# -------------------
+# About developer
+# -------------------
+def show_about(self):
+    messagebox.showinfo("Про розробника", "Цей додаток створено [Твоє ім'я/компанія]\nВерсія 1.0")
+
