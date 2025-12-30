@@ -64,10 +64,7 @@ def fmt_int(x):
 
 
 def ask_indicator_units(parent, title="Параметри показника"):
-    """
-    Одночасний запит назви показника та одиниць виміру.
-    Повертає (indicator, units) або None.
-    """
+    """Одночасний запит назви показника та одиниць виміру."""
     dlg = tk.Toplevel(parent)
     dlg.title(title)
     dlg.transient(parent)
@@ -211,12 +208,11 @@ def anova_ols(long_records, factor_keys):
         mats = [dummies[k] for k in eff]
         if len(eff) == 1:
             block = mats[0]
-            eff_name = f"Фактор {eff[0]}"
+            df_eff = block.shape[1]
         else:
             block = _interaction_columns(*mats)
-            eff_name = " × ".join([f"Фактор {k}" for k in eff])
+            df_eff = block.shape[1]
 
-        df_eff = block.shape[1]
         if df_eff <= 0:
             continue
 
@@ -227,7 +223,8 @@ def anova_ols(long_records, factor_keys):
         MS_eff = SS_eff / df_eff if df_eff > 0 else np.nan
 
         rows.append({
-            "name": eff_name,
+            "eff": eff,              # <-- важливо: зберігаємо структуру ефекту
+            "name": "",              # <-- ім'я сформуємо у звіті під укр. літери
             "SS": SS_eff,
             "df": df_eff,
             "MS": MS_eff,
@@ -255,6 +252,7 @@ def anova_ols(long_records, factor_keys):
 
     rows_with_totals = rows.copy()
     rows_with_totals.append({
+        "eff": None,
         "name": "Залишок",
         "SS": sse_full,
         "df": df_error,
@@ -265,6 +263,7 @@ def anova_ols(long_records, factor_keys):
         "conclusion": ""
     })
     rows_with_totals.append({
+        "eff": None,
         "name": "Загальна",
         "SS": SS_total,
         "df": df_total,
@@ -288,13 +287,62 @@ def anova_ols(long_records, factor_keys):
 
 
 # -------------------------
-# НІР₀₅ (без згадки LSD)
+# НІР₀₅
 # -------------------------
 def nir05(MS_error, df_error, n_eff):
-    if df_error <= 0 or MS_error <= 0 or n_eff <= 0:
+    if df_error <= 0 or MS_error <= 0 or n_eff is None or (isinstance(n_eff, float) and math.isnan(n_eff)) or n_eff <= 0:
         return np.nan
     tval = t_dist.ppf(0.975, df_error)
     return float(tval * math.sqrt(2.0 * MS_error / n_eff))
+
+
+def compact_letters(levels_in_order, means_map, threshold):
+    """
+    Просте буквене групування (CLD) за НІР₀₅.
+    - Порядок букв формується за спаданням середніх (класично для CLD),
+      але повертаємо мапу для відображення у початковому порядку введення.
+    """
+    if threshold is None or (isinstance(threshold, float) and math.isnan(threshold)):
+        return {lv: "" for lv in levels_in_order}
+
+    # значущість: True якщо істотно різняться
+    def sig(a, b):
+        ma = means_map.get(a, np.nan)
+        mb = means_map.get(b, np.nan)
+        if (isinstance(ma, float) and math.isnan(ma)) or (isinstance(mb, float) and math.isnan(mb)):
+            return False
+        return abs(ma - mb) > threshold
+
+    # сортуємо для формування літер
+    levels_sorted = sorted(levels_in_order, key=lambda lv: means_map.get(lv, -1e18), reverse=True)
+
+    # генератор літер
+    alphabet = [chr(i) for i in range(ord('a'), ord('z') + 1)]
+    def letter_name(idx):
+        if idx < 26:
+            return alphabet[idx]
+        # aa, ab...
+        idx -= 26
+        return "a" + alphabet[idx % 26]
+
+    groups = []  # list of dict: {"letter": "a", "members":[...]}
+    assigned = {lv: "" for lv in levels_in_order}
+
+    for lv in levels_sorted:
+        placed_any = False
+        for g in groups:
+            # можна додати в групу, якщо НЕ істотно з усіма членами групи
+            if all(not sig(lv, m) for m in g["members"]):
+                assigned[lv] += g["letter"]
+                g["members"].append(lv)
+                placed_any = True
+                break
+        if not placed_any:
+            new_letter = letter_name(len(groups))
+            groups.append({"letter": new_letter, "members": [lv]})
+            assigned[lv] += new_letter
+
+    return assigned
 
 
 # -------------------------
@@ -307,7 +355,6 @@ class SADApp:
         self.root.geometry("980x520")
         self.root.configure(bg="white")
 
-        # Масштаб для чіткості/читабельності (Windows)
         try:
             self.root.tk.call("tk", "scaling", 1.25)
         except Exception:
@@ -414,7 +461,6 @@ class SADApp:
         self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
-        # заголовки
         factor_labels = ["А", "В", "С", "D"]
         factor_cols = [f"Фактор {factor_labels[i]}" for i in range(factors_count)]
         self.repeat_count = 4
@@ -427,7 +473,6 @@ class SADApp:
         for _ in range(10):
             self._append_row()
 
-        # Глобальні гарячі клавіші для Windows (Ctrl+V/ Ctrl+C)
         self.table_win.bind_all("<Control-v>", self.on_paste_global, add="+")
         self.table_win.bind_all("<Control-V>", self.on_paste_global, add="+")
         self.table_win.bind_all("<Control-c>", self.on_copy_global, add="+")
@@ -692,7 +737,7 @@ class SADApp:
             messagebox.showerror("Помилка", str(e))
             return
 
-        # Залишки (Shapiro-Wilk): y - mean по комірці (комбінації всіх факторів)
+        # Залишки для Shapiro-Wilk: y - mean по комірці (комбінації всіх факторів)
         cell_vals = {}
         for r in long:
             key = tuple(r[k] for k in factor_keys)
@@ -711,13 +756,13 @@ class SADApp:
         N_obs = len(long)
         rep_count_active = len(active_rep_cols)
 
-        # Сила впливу (η², %)
+        # Сила впливу (η², %) — по факторах, взаємодіях і ЗАЛИШОК
         strength = []
         for r in anova_rows:
-            if r["name"] in ("Залишок", "Загальна"):
+            if r.get("name") == "Загальна":
                 continue
             eta2 = (r["SS"] / SS_total) if SS_total > 0 else np.nan
-            strength.append((r["name"], eta2))
+            strength.append((r.get("eff"), r.get("name"), eta2))
 
         # НІР₀₅: загальна + по факторах
         nir_rows = []
@@ -725,19 +770,29 @@ class SADApp:
         n_cell_mean = float(np.mean(cell_counts)) if cell_counts else np.nan
         nir_rows.append(("Загальна (по досліду)", nir05(MS_error, df_error, n_cell_mean if n_cell_mean > 0 else np.nan)))
 
+        nir_factor = {}
         for fk in factor_keys:
             k_levels = len(level_orders[fk])
             n_eff = (N_obs / k_levels) if k_levels > 0 else np.nan
-            nir_rows.append((f"Фактор {fk}", nir05(MS_error, df_error, n_eff if n_eff > 0 else np.nan)))
+            v = nir05(MS_error, df_error, n_eff if n_eff > 0 else np.nan)
+            nir_rows.append((f"Фактор {fk}", v))
+            nir_factor[fk] = v
 
-        # Формування звіту (без графіків)
+        # Буквені позначення істотної різниці біля середніх
+        letters_by_factor = {}
+        for fk in factor_keys:
+            lvls = level_orders[fk]
+            means_map = {lv: m for (lv, m, n) in means[fk]}
+            letters_by_factor[fk] = compact_letters(lvls, means_map, nir_factor.get(fk, np.nan))
+
         report_text = self.build_report(
             indicator, units, factor_keys,
             level_orders, rep_count_active, N_obs,
             W, p_norm,
             anova_rows, strength,
             nir_rows,
-            means
+            means,
+            letters_by_factor
         )
 
         self.show_report(report_text)
@@ -749,10 +804,28 @@ class SADApp:
         W, p_norm,
         anova_rows, strength,
         nir_rows,
-        means
+        means,
+        letters_by_factor
     ):
+        uk = {"A": "А", "B": "В", "C": "С", "D": "D"}
+
+        # нормальність: чітке формулювання
+        if not (isinstance(W, float) and math.isnan(W)):
+            norm_text = "нормальний розподіл" if (not math.isnan(p_norm) and p_norm > 0.05) else "не нормальний розподіл"
+            norm_line = f"Перевірка нормальності розподілу залишків (Shapiro-Wilk): {norm_text} (W = {W:.4f}, p = {p_norm:.4f})"
+        else:
+            norm_line = "Перевірка нормальності розподілу залишків (Shapiro-Wilk): недостатньо даних"
+
         title_map = {1: "ОДНОФАКТОРНОГО", 2: "ДВОФАКТОРНОГО", 3: "ТРИФАКТОРНОГО", 4: "ЧОТИРИФАКТОРНОГО"}
         header = f"Р Е З У Л Ь Т А Т И   {title_map.get(len(factor_keys), '')}   Д И С П Е Р С І Й Н О Г О   А Н А Л І З У"
+
+        # функція: ім'я ефекту (Фактор А, Фактор А*В, ...)
+        def eff_name(eff):
+            if eff is None:
+                return ""
+            if len(eff) == 1:
+                return f"Фактор {uk[eff[0]]}"
+            return "Фактор " + "*".join(uk[x] for x in eff)
 
         lines = []
         lines.append(header)
@@ -761,7 +834,6 @@ class SADApp:
         lines.append(f"Одиниці виміру: {units}")
         lines.append("")
 
-        uk = {"A": "А", "B": "В", "C": "С", "D": "D"}
         for fk in factor_keys:
             levels = level_orders[fk]
             lines.append(f"Фактор {uk[fk]}: {', '.join(levels)}")
@@ -769,19 +841,14 @@ class SADApp:
         lines.append(f"Кількість активних повторень: {rep_count_active}")
         lines.append(f"Загальна кількість облікових значень: {N_obs}")
         lines.append("")
-
-        if not (isinstance(W, float) and math.isnan(W)):
-            norm_text = "нормальний" if (not math.isnan(p_norm) and p_norm > 0.05) else "НЕ нормальний"
-            lines.append(f"Перевірка нормальності залишків (Shapiro-Wilk): {norm_text} (W = {W:.4f}, p = {p_norm:.4f})")
-        else:
-            lines.append("Перевірка нормальності залишків (Shapiro-Wilk): недостатньо даних")
+        lines.append(norm_line)
         lines.append("")
         lines.append("Позначення у таблиці: * — p < 0.05; ** — p < 0.01")
         lines.append("")
 
-        # Таблиця ANOVA (вирівняна)
+        # Таблиця дисперсійного аналізу (вирівняна)
         cols = ["Джерело варіації", "Сума квадратів", "Ступені свободи", "Середній квадрат", "Fрозрах.", "p", "Fтабл.", "Висновок"]
-        widths = [32, 16, 16, 18, 12, 10, 10, 18]
+        widths = [34, 16, 16, 18, 12, 10, 10, 18]
 
         def row_fmt(vals):
             s = ""
@@ -798,10 +865,15 @@ class SADApp:
         lines.append(sep)
 
         for r in anova_rows:
+            if r.get("name") in ("Залишок", "Загальна"):
+                name = r["name"]
+            else:
+                name = eff_name(r.get("eff"))
+
             mark = p_mark(r.get("p"))
             f_with_mark = (fmt_num(r.get("F"), 3) + mark) if not (isinstance(r.get("F"), float) and math.isnan(r.get("F"))) else ""
             vals = [
-                r.get("name", ""),
+                name,
                 fmt_num(r.get("SS"), 2),
                 fmt_int(r.get("df")),
                 fmt_num(r.get("MS"), 4),
@@ -815,12 +887,16 @@ class SADApp:
         lines.append(sep)
         lines.append("")
 
-        # Сила впливу
+        # Сила впливу (η², %): фактори + взаємодії + ЗАЛИШОК
         lines.append("Сила впливу (η², %):")
-        for name, eta2 in strength:
+        for eff, nm, eta2 in strength:
             if isinstance(eta2, float) and math.isnan(eta2):
                 continue
-            lines.append(f"  • {name} — {eta2 * 100:5.1f}%")
+            if nm == "Залишок":
+                label = "Залишок"
+            else:
+                label = eff_name(eff)
+            lines.append(f"  • {label} — {eta2 * 100:5.1f}%")
         lines.append("")
 
         # Таблиця НІР₀₅
@@ -830,19 +906,22 @@ class SADApp:
         lines.append("-" * 46)
         for name, v in nir_rows:
             vv = "" if (isinstance(v, float) and math.isnan(v)) else f"{v:.4f}"
-            lines.append(name.ljust(30) + vv.rjust(14))
+            # виводимо українськими літерами
+            name2 = name.replace("Фактор A", "Фактор А").replace("Фактор B", "Фактор В").replace("Фактор C", "Фактор С")
+            lines.append(name2.ljust(30) + vv.rjust(14))
         lines.append("-" * 46)
         lines.append("")
 
-        # Середні (у порядку введення)
+        # Середні по факторах: значення + букви
         for fk in factor_keys:
             lines.append(f"Середні по фактору {uk[fk]}:")
             for (lv, m, n) in means[fk]:
                 mtxt = "" if (isinstance(m, float) and math.isnan(m)) else f"{m:.4f}"
-                lines.append(f"  {lv:<24} {mtxt:>12}   (n={n})")
+                letters = letters_by_factor.get(fk, {}).get(lv, "")
+                lines.append(f"  {lv:<24} {mtxt:>12}  {letters:<6} (n={n})")
             lines.append("")
 
-        # Рядок про "Залишок"
+        # Параметри залишку
         for r in anova_rows:
             if r.get("name") == "Залишок":
                 lines.append(f"Залишок: сума квадратів = {r['SS']:.4f}; ступені свободи = {int(r['df'])}; середній квадрат = {r['MS']:.6f}")
@@ -905,7 +984,7 @@ class SADApp:
             "Про розробника",
             "S.A.D. — Статистичний аналіз даних\n"
             "Версія: 1.0\n"
-            "Розробник: Чаплоуцький А.М."
+            "Розробник: (вкажіть за потреби)"
         )
 
 
