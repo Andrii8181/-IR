@@ -26,10 +26,10 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 # =========================
 APP_NAME = "S.A.D."
 
-# Більш "чіткі" шрифти + більший розмір
-UI_FONT = ("Segoe UI", 12)
-UI_FONT_BOLD = ("Segoe UI", 12, "bold")
-TITLE_FONT = ("Segoe UI", 20, "bold")
+# ЗБІЛЬШЕНІ шрифти по всій програмі
+UI_FONT = ("Segoe UI", 14)
+UI_FONT_BOLD = ("Segoe UI", 14, "bold")
+TITLE_FONT = ("Segoe UI", 24, "bold")
 
 # Звіт: Times New Roman 14 (як ти просив)
 REPORT_FONT = ("Times New Roman", 14)
@@ -37,6 +37,44 @@ REPORT_FONT = ("Times New Roman", 14)
 BLACK = "#000000"
 WHITE = "#ffffff"
 HEADER_BG = "#f3f4f6"
+
+
+# =========================
+# Windows clipboard: 100% вставка з Excel (без встановлень)
+# =========================
+def clipboard_text_windows():
+    """
+    Повертає Unicode-текст з буфера обміну Windows (CF_UNICODETEXT).
+    Це найнадійніший спосіб прочитати скопійоване з Excel.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        CF_UNICODETEXT = 13
+
+        if not user32.OpenClipboard(None):
+            return ""
+
+        try:
+            h = user32.GetClipboardData(CF_UNICODETEXT)
+            if not h:
+                return ""
+            p = kernel32.GlobalLock(h)
+            if not p:
+                return ""
+            try:
+                text = ctypes.wstring_at(p)
+            finally:
+                kernel32.GlobalUnlock(h)
+            return text
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return ""
 
 
 # =========================
@@ -79,10 +117,6 @@ def order_unique_preserve(seq):
 
 
 def nir05_value(MS_error, df_error, n_eff):
-    """
-    Загальна НІР₀₅: t(0.975;df)*sqrt(2*MS_error/n_eff)
-    n_eff — ефективна кількість обліків на комірку (середня).
-    """
     if df_error <= 0 or n_eff is None or math.isnan(n_eff) or n_eff <= 0:
         return np.nan
     tval = t.ppf(0.975, df_error)
@@ -92,10 +126,6 @@ def nir05_value(MS_error, df_error, n_eff):
 
 
 def nir05_for_main_factor(MS_error, df_error, r_mean, other_levels_product):
-    """
-    НІР₀₅ для головного фактора:
-    t*sqrt(2*MS_error/(r_mean * Π(кількість рівнів інших факторів)))
-    """
     if df_error <= 0 or r_mean is None or math.isnan(r_mean) or r_mean <= 0:
         return np.nan
     if other_levels_product <= 0:
@@ -108,16 +138,10 @@ def nir05_for_main_factor(MS_error, df_error, r_mean, other_levels_product):
 
 
 def assign_letters_by_nir(means_in_order, nir05):
-    """
-    Буквені позначення істотності біля середніх значень.
-    means_in_order: list[(level, mean)] у потрібному порядку (як у таблиці)
-    nir05: загальна НІР₀₅
-    """
     items = [(k, v) for k, v in means_in_order if v is not None and not math.isnan(v)]
     if not items:
         return {}
 
-    # Якщо НІР₀₅ відсутня — просто a,b,c...
     if nir05 is None or math.isnan(nir05) or nir05 <= 0:
         letters = {}
         for i, (lev, _) in enumerate(items):
@@ -166,7 +190,6 @@ def anova_n_way(long, factors):
 
     grand_mean = float(np.mean(values))
 
-    # Рівні факторів у порядку появи
     levels = {}
     for fk in factors:
         seq = [rec[fk] for rec in long if fk in rec and rec.get("value") is not None and not math.isnan(rec["value"])]
@@ -177,7 +200,6 @@ def anova_n_way(long, factors):
     def key_of(rec, keys):
         return tuple(rec[k] for k in keys) if keys else ()
 
-    # Суми/кількості для всіх підмножин
     sums = {(): 0.0}
     counts = {(): 0}
     sums[()] = float(np.nansum([rec["value"] for rec in long if rec.get("value") is not None and not math.isnan(rec["value"])]))
@@ -198,7 +220,6 @@ def anova_n_way(long, factors):
                 sums[subset][kk] += float(v)
                 counts[subset][kk] += 1
 
-    # Середні
     means = {(): {(): grand_mean}}
     for r in range(1, k + 1):
         for subset in combinations(factors, r):
@@ -207,7 +228,6 @@ def anova_n_way(long, factors):
                 n = counts[subset][kk]
                 means[subset][kk] = (s / n) if n > 0 else np.nan
 
-    # Möbius-ефект
     def effect_value(subset, kk):
         subset = tuple(subset)
         if not subset:
@@ -228,7 +248,6 @@ def anova_n_way(long, factors):
                 total += sign * float(mu)
         return total
 
-    # СК (суми квадратів) для кожного ефекту
     SS = {}
     for r in range(1, k + 1):
         for subset in combinations(factors, r):
@@ -242,7 +261,6 @@ def anova_n_way(long, factors):
 
     SS_total = float(np.sum((values - grand_mean) ** 2))
 
-    # Коміркові середні для залишку
     cell_counts = defaultdict(int)
     cell_sums = defaultdict(float)
     for rec in long:
@@ -269,7 +287,6 @@ def anova_n_way(long, factors):
         SS_error += (float(v) - float(mu)) ** 2
     SS_error = float(SS_error)
 
-    # ступені вільності
     L = {fk: len(levels[fk]) for fk in factors}
     df = {}
     for r in range(1, k + 1):
@@ -284,7 +301,6 @@ def anova_n_way(long, factors):
 
     MS_error = SS_error / df_error if df_error > 0 else np.nan
 
-    # Таблиця: СК, ст.в., СКср, Fф, p, Fтабл
     table_rows = []
     for r in range(1, k + 1):
         for subset in combinations(factors, r):
@@ -297,11 +313,9 @@ def anova_n_way(long, factors):
             concl = "істотна різниця" if (not math.isnan(pe) and pe < 0.05) else "різниця неістотна"
             table_rows.append((subset, sse, dfe, mse, Fe, pe, Fcrit, concl))
 
-    # сила впливу (η²)
     eta2 = {subset: (SS[subset] / SS_total if SS_total > 0 else np.nan) for subset in SS}
     eta2_res = SS_error / SS_total if SS_total > 0 else np.nan
 
-    # середні по головних факторах
     means_main = {}
     for fk in factors:
         subset = (fk,)
@@ -310,7 +324,6 @@ def anova_n_way(long, factors):
             mu = means[subset].get((lev,), np.nan)
             means_main[fk][lev] = float(mu) if not math.isnan(mu) else np.nan
 
-    # середня повторність на комірку
     r_list = [n for n in cell_counts.values() if n > 0]
     r_mean = float(np.mean(r_list)) if len(r_list) else np.nan
 
@@ -349,29 +362,28 @@ class MetaDialog(tk.Toplevel):
         self.resizable(False, False)
         self.result = None
 
-        self.configure(padx=14, pady=12, bg=WHITE)
+        self.configure(padx=16, pady=14, bg=WHITE)
         self.grab_set()
 
         lbl1 = tk.Label(self, text="Назва показника:", font=UI_FONT_BOLD, fg=BLACK, bg=WHITE)
         lbl1.grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.e1 = tk.Entry(self, width=44, font=UI_FONT, fg=BLACK, bg=WHITE, relief=tk.SOLID, bd=1)
-        self.e1.grid(row=1, column=0, sticky="we", pady=(0, 10))
+        self.e1.grid(row=1, column=0, sticky="we", pady=(0, 12))
 
         lbl2 = tk.Label(self, text="Одиниці виміру:", font=UI_FONT_BOLD, fg=BLACK, bg=WHITE)
         lbl2.grid(row=2, column=0, sticky="w", pady=(0, 6))
         self.e2 = tk.Entry(self, width=44, font=UI_FONT, fg=BLACK, bg=WHITE, relief=tk.SOLID, bd=1)
-        self.e2.grid(row=3, column=0, sticky="we", pady=(0, 12))
+        self.e2.grid(row=3, column=0, sticky="we", pady=(0, 14))
 
         btns = tk.Frame(self, bg=WHITE)
         btns.grid(row=4, column=0, sticky="e")
-        tk.Button(btns, text="Скасувати", font=UI_FONT, command=self._cancel).pack(side=tk.RIGHT, padx=(8, 0))
+        tk.Button(btns, text="Скасувати", font=UI_FONT, command=self._cancel).pack(side=tk.RIGHT, padx=(10, 0))
         tk.Button(btns, text="OK", font=UI_FONT_BOLD, command=self._ok).pack(side=tk.RIGHT)
 
         self.columnconfigure(0, weight=1)
 
         self.bind("<Return>", lambda e: self._ok())
         self.bind("<Escape>", lambda e: self._cancel())
-
         self.e1.focus_set()
 
     def _ok(self):
@@ -398,7 +410,7 @@ class SADTk:
     def __init__(self, root):
         self.root = root
 
-        # Спроба зробити текст чіткішим на Windows (DPI awareness)
+        # DPI-awareness (Windows) — зменшує “розмиття”
         try:
             import ctypes
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
@@ -406,10 +418,9 @@ class SADTk:
             pass
 
         self.root.title(f"{APP_NAME} — Статистичний аналіз даних")
-        self.root.geometry("1050x560")
+        self.root.geometry("1100x600")
         self.root.configure(bg=WHITE)
 
-        # Важливо: не підкручувати scaling, щоб не було “розмиття”
         try:
             self.root.tk.call("tk", "scaling", 1.0)
         except Exception:
@@ -421,7 +432,7 @@ class SADTk:
         self.main_frame.pack(expand=True, fill=tk.BOTH, padx=18, pady=16)
 
         title = tk.Label(self.main_frame, text=f"{APP_NAME} — Статистичний аналіз даних", font=TITLE_FONT, fg=BLACK, bg=WHITE)
-        title.pack(pady=(0, 14))
+        title.pack(pady=(0, 16))
 
         btn_frame = tk.Frame(self.main_frame, bg=WHITE)
         btn_frame.pack(pady=10)
@@ -433,7 +444,7 @@ class SADTk:
 
         hint = tk.Label(
             self.main_frame,
-            text="Виберіть тип аналізу → вставте/введіть дані в таблицю (Ctrl+V) → натисніть «Аналіз даних».",
+            text="Вставка з Excel: виділіть комірку → Ctrl+V. Вставляється блок даних.",
             font=UI_FONT,
             fg=BLACK,
             bg=WHITE,
@@ -469,7 +480,7 @@ class SADTk:
 
         self.table_win = tk.Toplevel(self.root)
         self.table_win.title(f"{APP_NAME} — {factors_count}-факторний аналіз")
-        self.table_win.geometry("1300x760")
+        self.table_win.geometry("1400x820")
         self.table_win.configure(bg=WHITE)
 
         outer = tk.Frame(self.table_win, bg=WHITE)
@@ -484,14 +495,17 @@ class SADTk:
         tk.Button(ctl, text="Додати стовпчик", font=UI_FONT_BOLD, fg=BLACK, command=self.add_column).pack(side=tk.LEFT, padx=(16, 4))
         tk.Button(ctl, text="Видалити стовпчик", font=UI_FONT_BOLD, fg=BLACK, command=self.delete_column).pack(side=tk.LEFT, padx=4)
 
-        tk.Button(ctl, text="Аналіз даних", font=UI_FONT_BOLD, fg=WHITE, bg="#c62828", activebackground="#b71c1c",
-                  command=self.ask_meta_and_analyze).pack(side=tk.LEFT, padx=(18, 6))
+        tk.Button(ctl, text="Аналіз даних", font=UI_FONT_BOLD, fg=WHITE, bg="#c62828",
+                  activebackground="#b71c1c", command=self.ask_meta_and_analyze).pack(side=tk.LEFT, padx=(18, 6))
 
         tk.Button(ctl, text="Про розробника", font=UI_FONT_BOLD, fg=BLACK, command=self.show_about).pack(side=tk.RIGHT, padx=4)
 
+        # Додаткова кнопка на випадок, якщо Ctrl+V перехоплюється системою/Excel
+        tk.Button(ctl, text="Вставити з буфера", font=UI_FONT_BOLD, fg=BLACK, command=self.paste_from_clipboard_button).pack(side=tk.RIGHT, padx=(4, 8))
+
         tip = tk.Label(
             outer,
-            text="Вставка з Excel: виділіть комірку → Ctrl+V (або Shift+Insert). Вставляється табличний блок.",
+            text="Порада: якщо Ctrl+V не спрацьовує — натисніть «Вставити з буфера».",
             font=UI_FONT,
             fg=BLACK,
             bg=WHITE,
@@ -512,11 +526,9 @@ class SADTk:
         self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
-        # ВАЖЛИВО: гарячі клавіші на рівні вікна теж
-        self.table_win.bind_all("<Control-v>", self.on_paste_global)
-        self.table_win.bind_all("<Control-V>", self.on_paste_global)
-        self.table_win.bind_all("<<Paste>>", self.on_paste_global)
-        self.table_win.bind_all("<Shift-Insert>", self.on_paste_global)
+        # Гарячі клавіші на рівні вікна: Ctrl+V
+        self.table_win.bind("<Control-v>", self.on_paste_global)
+        self.table_win.bind("<Control-V>", self.on_paste_global)
 
         # колонки: фактори + повтори (початково 4)
         self.repeat_cols = 4
@@ -526,21 +538,20 @@ class SADTk:
         self.column_names = factor_labels + [f"Повт.{i+1}" for i in range(self.repeat_cols)]
         self.cols = len(self.column_names)
 
-        # заголовки
         self.header_widgets = []
         for j, name in enumerate(self.column_names):
             lbl = ttk.Label(self.inner, text=name, style="Header.TLabel", anchor="center")
-            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew", ipadx=10, ipady=6)
+            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew", ipadx=12, ipady=8)
             self.header_widgets.append(lbl)
             self.inner.columnconfigure(j, weight=1)
 
-        # клітинки
         self.entries = []
         for i in range(self.rows):
             row_entries = []
             for j in range(self.cols):
-                e = tk.Entry(self.inner, width=16, font=UI_FONT, fg=BLACK, bg=WHITE, relief=tk.SOLID, bd=1, insertbackground=BLACK)
-                e.grid(row=i + 1, column=j, padx=1, pady=1, sticky="nsew", ipady=7)
+                e = tk.Entry(self.inner, width=16, font=UI_FONT, fg=BLACK, bg=WHITE,
+                             relief=tk.SOLID, bd=1, insertbackground=BLACK)
+                e.grid(row=i + 1, column=j, padx=1, pady=1, sticky="nsew", ipady=8)
                 self._bind_cell(e)
                 row_entries.append(e)
             self.entries.append(row_entries)
@@ -554,15 +565,11 @@ class SADTk:
         e.bind("<Left>", self.on_arrow)
         e.bind("<Right>", self.on_arrow)
 
-        # вставка/копіювання
         e.bind("<Control-v>", self.on_paste)
         e.bind("<Control-V>", self.on_paste)
-        e.bind("<<Paste>>", self.on_paste)
-        e.bind("<Shift-Insert>", self.on_paste)
 
         e.bind("<Control-c>", self.on_copy)
         e.bind("<Control-C>", self.on_copy)
-        e.bind("<Control-Insert>", self.on_copy)
 
     # -------------------
     # Рядки/стовпчики
@@ -571,8 +578,9 @@ class SADTk:
         i = len(self.entries)
         row_entries = []
         for j in range(self.cols):
-            e = tk.Entry(self.inner, width=16, font=UI_FONT, fg=BLACK, bg=WHITE, relief=tk.SOLID, bd=1, insertbackground=BLACK)
-            e.grid(row=i + 1, column=j, padx=1, pady=1, sticky="nsew", ipady=7)
+            e = tk.Entry(self.inner, width=16, font=UI_FONT, fg=BLACK, bg=WHITE,
+                         relief=tk.SOLID, bd=1, insertbackground=BLACK)
+            e.grid(row=i + 1, column=j, padx=1, pady=1, sticky="nsew", ipady=8)
             self._bind_cell(e)
             row_entries.append(e)
         self.entries.append(row_entries)
@@ -592,13 +600,14 @@ class SADTk:
         col_idx = self.cols - 1
 
         hdr = ttk.Label(self.inner, text=f"Повт.{self.repeat_cols}", style="Header.TLabel", anchor="center")
-        hdr.grid(row=0, column=col_idx, padx=1, pady=1, sticky="nsew", ipadx=10, ipady=6)
+        hdr.grid(row=0, column=col_idx, padx=1, pady=1, sticky="nsew", ipadx=12, ipady=8)
         self.header_widgets.append(hdr)
         self.inner.columnconfigure(col_idx, weight=1)
 
         for i, row in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=16, font=UI_FONT, fg=BLACK, bg=WHITE, relief=tk.SOLID, bd=1, insertbackground=BLACK)
-            e.grid(row=i + 1, column=col_idx, padx=1, pady=1, sticky="nsew", ipady=7)
+            e = tk.Entry(self.inner, width=16, font=UI_FONT, fg=BLACK, bg=WHITE,
+                         relief=tk.SOLID, bd=1, insertbackground=BLACK)
+            e.grid(row=i + 1, column=col_idx, padx=1, pady=1, sticky="nsew", ipady=8)
             self._bind_cell(e)
             row.append(e)
 
@@ -608,7 +617,6 @@ class SADTk:
             messagebox.showinfo("Обмеження", "Мінімум має бути: фактори + 1 повторення.")
             return
 
-        col_idx = self.cols - 1
         hdr = self.header_widgets.pop()
         hdr.destroy()
 
@@ -620,7 +628,7 @@ class SADTk:
         self.repeat_cols = self.cols - self.factors_count
 
     # -------------------
-    # Буфер обміну (Excel)
+    # Буфер обміну (копіювання/вставка)
     # -------------------
     def on_copy(self, event=None):
         w = event.widget
@@ -635,58 +643,6 @@ class SADTk:
             pass
         return "break"
 
-    def _clipboard_text(self):
-        try:
-            return self.table_win.clipboard_get()
-        except Exception:
-            try:
-                return self.root.clipboard_get()
-            except Exception:
-                return ""
-
-    def on_paste_global(self, event=None):
-        # вставка з Excel у поточну активну комірку
-        w = self.table_win.focus_get()
-        if isinstance(w, tk.Entry):
-            return self.on_paste(event)
-        return "break"
-
-    def on_paste(self, event=None):
-        widget = event.widget if (event and hasattr(event, "widget")) else self.table_win.focus_get()
-        if not isinstance(widget, tk.Entry):
-            return "break"
-
-        data = self._clipboard_text()
-        if not data:
-            return "break"
-
-        pos = self.find_pos(widget)
-        if not pos:
-            return "break"
-        r0, c0 = pos
-
-        rows = data.splitlines()
-        for ir, row_text in enumerate(rows):
-            cols = row_text.split("\t")
-            for jc, val in enumerate(cols):
-                rr = r0 + ir
-                cc = c0 + jc
-
-                while rr >= len(self.entries):
-                    self.add_row()
-
-                if cc >= self.cols:
-                    continue
-
-                self.entries[rr][cc].delete(0, tk.END)
-                self.entries[rr][cc].insert(0, val)
-
-        self.entries[r0][c0].focus_set()
-        return "break"
-
-    # -------------------
-    # Навігація
-    # -------------------
     def find_pos(self, widget):
         for i, row in enumerate(self.entries):
             for j, cell in enumerate(row):
@@ -694,6 +650,71 @@ class SADTk:
                     return (i, j)
         return None
 
+    def paste_from_clipboard_button(self):
+        w = self.table_win.focus_get()
+        if not isinstance(w, tk.Entry):
+            self.entries[0][0].focus_set()
+            w = self.entries[0][0]
+        self._paste_into_widget(w)
+
+    def on_paste_global(self, event=None):
+        w = self.table_win.focus_get()
+        if isinstance(w, tk.Entry):
+            self._paste_into_widget(w)
+        return "break"
+
+    def on_paste(self, event=None):
+        widget = event.widget if (event and hasattr(event, "widget")) else self.table_win.focus_get()
+        if not isinstance(widget, tk.Entry):
+            return "break"
+        self._paste_into_widget(widget)
+        return "break"
+
+    def _paste_into_widget(self, widget: tk.Entry):
+        # 1) Пробуємо Windows API (Excel-safe)
+        data = clipboard_text_windows()
+
+        # 2) Якщо з якихось причин пусто — fallback на Tk clipboard
+        if not data:
+            try:
+                data = self.table_win.clipboard_get()
+            except Exception:
+                data = ""
+
+        if not data:
+            messagebox.showwarning("Буфер порожній", "У буфері обміну немає текстових даних.")
+            return
+
+        pos = self.find_pos(widget)
+        if not pos:
+            return
+        r0, c0 = pos
+
+        rows = data.splitlines()
+        if len(rows) == 1 and "\t" not in rows[0]:
+            # простий текст: вставляємо в одну комірку
+            widget.delete(0, tk.END)
+            widget.insert(0, rows[0])
+            widget.focus_set()
+            return
+
+        for ir, row_text in enumerate(rows):
+            cols = row_text.split("\t")
+            for jc, val in enumerate(cols):
+                rr = r0 + ir
+                cc = c0 + jc
+                while rr >= len(self.entries):
+                    self.add_row()
+                if cc >= self.cols:
+                    continue
+                self.entries[rr][cc].delete(0, tk.END)
+                self.entries[rr][cc].insert(0, val)
+
+        self.entries[r0][c0].focus_set()
+
+    # -------------------
+    # Навігація
+    # -------------------
     def on_enter(self, event=None):
         pos = self.find_pos(event.widget)
         if not pos:
@@ -797,10 +818,8 @@ class SADTk:
     def ask_meta_and_analyze(self):
         dlg = MetaDialog(self.table_win, title="Введіть параметри показника")
         self.table_win.wait_window(dlg)
-
         if not dlg.result:
             return
-
         self.indicator_name, self.units = dlg.result
         self.analyze()
 
@@ -818,7 +837,6 @@ class SADTk:
             messagebox.showerror("Помилка аналізу", str(e))
             return
 
-        # залишки: value - cell_mean
         residuals = []
         for rec in long:
             key = tuple(rec[fk] for fk in factors)
@@ -841,9 +859,7 @@ class SADTk:
         active_rep_cols = self._active_repeat_columns()
         repeats_used = len(active_rep_cols)
 
-        # =========================
-        # Таблиця НІР₀₅: по факторах + загальна
-        # =========================
+        # Таблиця НІР₀₅
         L = {fk: len(res["levels"][fk]) for fk in factors}
         r_mean = res.get("r_mean", np.nan)
         df_error = res["df_error"]
@@ -859,14 +875,12 @@ class SADTk:
 
         nir_total = res["nir_total"]
 
-        # =========================
-        # Формування звіту
-        # =========================
+        # Звіт
         title_map = {
             1: "РЕЗУЛЬТАТИ ОДНОФАКТОРНОГО ДИСПЕРСІЙНОГО АНАЛІЗУ",
             2: "РЕЗУЛЬТАТИ ДВОФАКТОРНОГО ДИСПЕРСІЙНОГО АНАЛІЗУ",
             3: "РЕЗУЛЬТАТИ ТРИФАКТОРНОГО ДИСПЕРСІЙНОГО АНАЛІЗУ",
-            4: "РЕЗУЛЬТАТИ ЧОТИРЬОХФАКТОРНОГО ДИСПЕРСІЙНОГО АНАЛІЗУ",
+            4: "РЕЗУЛЬТАТИ ЧОТИРИФАКТОРНОГО ДИСПЕРСІЙНОГО АНАЛІЗУ",
         }
 
         lines = []
@@ -893,9 +907,8 @@ class SADTk:
         lines.append("Істотна різниця: " + res["p_note"])
         lines.append("")
 
-        # ---- ANOVA table with clear separators ----
         lines.append("Таблиця дисперсійного аналізу (ANOVA):")
-        lines.append("-" * 130)
+        lines.append("-" * 132)
 
         header = (
             f"{'Джерело варіації':<34} | "
@@ -908,7 +921,7 @@ class SADTk:
             f"{'Висновок':<18}"
         )
         lines.append(header)
-        lines.append("-" * 130)
+        lines.append("-" * 132)
 
         for subset, SSv, dfv, MSv, Fv, pv, Fcrit, concl in res["table_rows"]:
             name = f"Фактор {pretty_factor_name(subset[0])}" if len(subset) == 1 else f"Взаємодія {format_effect_label(subset)}"
@@ -933,8 +946,7 @@ class SADTk:
             )
             lines.append(line)
 
-        # залишок + загальна
-        lines.append("-" * 130)
+        lines.append("-" * 132)
         lines.append(
             f"{'Залишок':<34} | "
             f"{res['SS_error']:.2f:>14} | "
@@ -955,23 +967,9 @@ class SADTk:
             f"{'':>10} | "
             f"{'':<18}"
         )
-        lines.append("-" * 130)
+        lines.append("-" * 132)
         lines.append("")
 
-        # Сила впливу
-        lines.append("Сила впливу (η², % від суми квадратів загальної):")
-        for r in range(1, self.factors_count + 1):
-            for subset in combinations(factors, r):
-                v = res["eta2"].get(subset, np.nan)
-                if math.isnan(v):
-                    continue
-                label = pretty_factor_name(subset[0]) if len(subset) == 1 else format_effect_label(subset)
-                lines.append(f"  {label}: {v * 100:.1f}%")
-        if res["eta2_res"] is not None and not math.isnan(res["eta2_res"]):
-            lines.append(f"  Залишок: {res['eta2_res'] * 100:.1f}%")
-        lines.append("")
-
-        # ---- Таблиця НІР₀₅ ----
         lines.append("Таблиця НІР₀₅:")
         lines.append("-" * 60)
         for fk in factors:
@@ -987,112 +985,75 @@ class SADTk:
         lines.append("-" * 60)
         lines.append("")
 
-        # Середні значення по факторах
-        lines.append("Середні значення по факторах (у порядку градацій, з буквами істотності):")
-        lines.append("")
-
-        self.means_for_plot = {}
-        nir_for_letters = nir_total
-
-        for fk in factors:
-            levs = res["levels"][fk]
-            means_od = res["means_main"][fk]
-            means_in_order = [(lev, means_od.get(lev, np.nan)) for lev in levs]
-            letters = assign_letters_by_nir(means_in_order, nir_for_letters)
-
-            lines.append(f"Фактор {pretty_factor_name(fk)}:")
-            lines.append(f"{'Градація':<24} | {'Середнє':>12} | {'Істотна різниця':<16}")
-            lines.append("-" * 60)
-            for lev, mu in means_in_order:
-                if mu is None or math.isnan(mu):
-                    continue
-                lines.append(f"{str(lev):<24} | {mu:>12.3f} | {letters.get(lev, ''):<16}")
-            lines.append("-" * 60)
-            lines.append("")
-
-            self.means_for_plot[fk] = (means_in_order, letters)
-
-        # =========================
         # Вікно звіту + копіювання
-        # =========================
         win = tk.Toplevel(self.root)
         win.title(f"{APP_NAME} — Звіт")
-        win.geometry("1220x820")
+        win.geometry("1250x850")
         win.configure(bg=WHITE)
 
         topbar = tk.Frame(win, bg=WHITE)
         topbar.pack(fill=tk.X, padx=10, pady=(10, 6))
 
-        tk.Button(topbar, text="Копіювати звіт", font=UI_FONT_BOLD, fg=BLACK, command=lambda: self.copy_report_to_clipboard(txt)).pack(side=tk.LEFT)
+        def copy_report():
+            try:
+                data = txt.get("1.0", "end-1c")
+                self.root.clipboard_clear()
+                self.root.clipboard_append(data)
+                messagebox.showinfo("Готово", "Звіт скопійовано в буфер обміну.")
+            except Exception as e:
+                messagebox.showerror("Помилка", str(e))
+
+        tk.Button(topbar, text="Копіювати звіт", font=UI_FONT_BOLD, fg=BLACK, command=copy_report).pack(side=tk.LEFT)
 
         body = tk.Frame(win, bg=WHITE)
         body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        txt = ScrolledText(body, width=150, height=28, wrap=tk.NONE)
+        txt = ScrolledText(body, width=160, height=30, wrap=tk.NONE)
         txt.pack(fill=tk.BOTH, expand=True)
         txt.configure(font=REPORT_FONT, fg=BLACK, bg=WHITE, insertbackground=BLACK)
         txt.insert("1.0", "\n".join(lines))
 
-        # Ctrl+A
         txt.bind("<Control-a>", lambda e: (txt.tag_add("sel", "1.0", "end-1c"), "break"))
         txt.bind("<Control-A>", lambda e: (txt.tag_add("sel", "1.0", "end-1c"), "break"))
 
-        # Графіки (як було, але пропорційно)
+        # Графік (пропорційний)
         plot_wrap = tk.Frame(win, bg=WHITE)
         plot_wrap.pack(fill=tk.X, padx=10, pady=(0, 10))
-        self.build_histograms(plot_wrap, factors)
 
-    def copy_report_to_clipboard(self, txt_widget: ScrolledText):
-        try:
-            data = txt_widget.get("1.0", "end-1c")
-            self.root.clipboard_clear()
-            self.root.clipboard_append(data)
-            messagebox.showinfo("Готово", "Звіт скопійовано в буфер обміну.")
-        except Exception as e:
-            messagebox.showerror("Помилка", str(e))
+        self.build_simple_plot(plot_wrap, res, factors)
 
-    def build_histograms(self, parent, factors):
-        if not getattr(self, "means_for_plot", None):
-            return
-
+    def build_simple_plot(self, parent, res, factors):
+        # показуємо лише по головних факторах
         n = len(factors)
-        max_bars = 1
-        for fk in factors:
-            items, _ = self.means_for_plot.get(fk, ([], {}))
-            max_bars = max(max_bars, len([1 for lev, mu in items if mu is not None and not math.isnan(mu)]))
-
-        fig_w = min(max(6.0, 0.85 * max_bars + 3.0), 10.0)
-        fig_h = min(max(2.4 * n, 2.4), 8.5)
+        fig_w = 9.0
+        fig_h = min(max(2.6 * n, 2.6), 9.0)
 
         fig = plt.Figure(figsize=(fig_w, fig_h), dpi=100)
         axes = fig.subplots(n, 1) if n > 1 else [fig.add_subplot(1, 1, 1)]
 
         for ax, fk in zip(axes, factors):
-            items, letters = self.means_for_plot.get(fk, ([], {}))
+            means_od = res["means_main"][fk]
+            levs = res["levels"][fk]
+            items = [(lev, means_od.get(lev, np.nan)) for lev in levs]
             items = [(lev, mu) for lev, mu in items if mu is not None and not math.isnan(mu)]
             if not items:
                 ax.set_visible(False)
                 continue
-
             labels = [str(lev) for lev, _ in items]
             vals = [mu for _, mu in items]
             x = np.arange(len(vals))
-
             ax.bar(x, vals)
             ax.set_title(f"Середні по фактору {pretty_factor_name(fk)}", fontsize=12, pad=8)
             ax.set_xticks(x)
             ax.set_xticklabels(labels, rotation=12, ha="right", fontsize=10)
             ax.set_ylabel(self.units if self.units else "", fontsize=10)
-
-            for i, (lev, mu) in enumerate(items):
-                ax.text(i, mu, f"{mu:.2f}\n{letters.get(lev, '')}", ha="center", va="bottom", fontsize=10)
+            for i, mu in enumerate(vals):
+                ax.text(i, mu, f"{mu:.2f}", ha="center", va="bottom", fontsize=10)
 
         fig.tight_layout()
-
         canvas = FigureCanvasTkAgg(fig, master=parent)
         canvas.draw()
-        w = canvas.get_tk_widget()
-        w.pack(anchor="center")
+        canvas.get_tk_widget().pack(anchor="center")
 
 
 # =========================
