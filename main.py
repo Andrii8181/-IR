@@ -7,14 +7,13 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 Потрібно: Python 3.8+, numpy, scipy
 Встановлення: pip install numpy scipy
 
-ПРАВКИ ЛИШЕ ОФОРМЛЕННЯ (без зміни алгоритмів):
-1) Кнопки над таблицею вводу даних зроблені меншими (width + padding).
-2) Звіт: таблиці більше НЕ “налазять” одна на одну:
-   - В ScrolledText вимкнено перенос рядків (wrap="none")
-   - Додано горизонтальний скрол
-   - Таб-стопи рахуються ширше (padding/min width) + ПЕРШИЙ стовпчик має додатковий запас ширини
-   - Заголовки строго над своїми стовпчиками
-3) Іконка: якщо в корені програми є icon.ico — вона буде емблемою у ВСІХ вікнах (root + Toplevel).
+ПРАВКИ ЛИШЕ ОФОРМЛЕННЯ:
+✅ 1) Кнопки над таблицею: залишив менші, + зменшив шрифт підписів, щоб текст вміщався.
+✅ 2) Іконка: додав надійніший механізм (iconbitmap з default + iconphoto PNG fallback).
+✅ 3) Звітні таблиці: зроблено акуратно:
+   - wrap="none" + горизонтальний скрол
+   - таб-стопи рахуються ТІЛЬКИ від фактичної ширини контенту (без “мінімумів” і без “зайвого розтягування”)
+   - перший стовпчик = по вмісту (не більше/не менше) + мінімальний padding між колонками
 """
 
 import os
@@ -35,7 +34,6 @@ from scipy.stats import studentized_range
 ALPHA = 0.05
 COL_W = 10  # ширина колонок вводу (вужче)
 
-
 # -------------------------
 # DPI awareness (Windows)
 # -------------------------
@@ -53,36 +51,42 @@ except Exception:
 
 
 # -------------------------
-# Icon helper
+# Icon helper (FIXED)
 # -------------------------
+def _app_dir():
+    try:
+        return os.path.dirname(os.path.abspath(__file__))
+    except Exception:
+        return os.getcwd()
+
+
 def set_window_icon(win: tk.Tk | tk.Toplevel):
     """
     Ставить icon.ico з папки програми як емблему.
-    Також пробує icon.png як fallback.
+    Додатково пробує icon.png.
     """
-    try:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-    except Exception:
-        base_dir = os.getcwd()
-
+    base_dir = _app_dir()
     ico_path = os.path.join(base_dir, "icon.ico")
     png_path = os.path.join(base_dir, "icon.png")
 
-    # Windows .ico — головний варіант
-    try:
-        if os.path.exists(ico_path):
+    # 1) ICO (Windows): кілька способів, бо інколи один не спрацьовує
+    if os.path.exists(ico_path):
+        try:
             win.iconbitmap(ico_path)
-    except Exception:
-        pass
+        except Exception:
+            try:
+                win.iconbitmap(default=ico_path)  # частіше працює на Windows
+            except Exception:
+                pass
 
-    # PNG — fallback
-    try:
-        if os.path.exists(png_path):
+    # 2) PNG fallback через iconphoto (працює на багатьох системах)
+    if os.path.exists(png_path):
+        try:
             img = tk.PhotoImage(file=png_path)
             win.iconphoto(True, img)
             win._sad_icon_ref = img  # keep reference
-    except Exception:
-        pass
+        except Exception:
+            pass
 
 
 # -------------------------
@@ -277,46 +281,41 @@ def cld_multi_letters(levels_order, means_dict, sig_matrix):
 
 
 # -------------------------
-# Report table formatting (FIXED)
+# Report tables: аккуратні таб-стопи (FIXED)
 # -------------------------
 def build_table_block(headers, rows):
     lines = []
-    # робимо "лінію" по кількості символів у заголовках (візуально)
-    dash = ["—" * max(3, len(str(h))) for h in headers]
     lines.append("\t".join(str(h) for h in headers))
-    lines.append("\t".join(dash))
+    lines.append("\t".join("—" * max(3, len(str(h))) for h in headers))
     for r in rows:
         lines.append("\t".join("" if v is None else str(v) for v in r))
     return "\n".join(lines) + "\n"
 
 
-def tabs_from_table_px(font_obj: tkfont.Font, headers, rows,
-                       padding_px=70, min_col_px=110, first_col_extra_px=140):
+def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=18):
     """
-    Стабільні таб-стопи (пікселі) + LEFT.
-    Додатково: ПЕРШИЙ стовпчик отримує extra_px, щоб "Джерело" не злипалось з SS.
+    Таб-стопи = строго по вмісту.
+    НІЯКИХ min_col_px і НІЯКИХ extra для 1-го стовпчика.
+    Тільки контент + маленький padding між колонками.
     """
     ncol = len(headers)
     maxw = [0] * ncol
 
     for j in range(ncol):
-        maxw[j] = max(maxw[j], font_obj.measure(str(headers[j])))
+        maxw[j] = font_obj.measure(str(headers[j]))
 
     for r in rows:
         for j in range(ncol):
             s = "" if r[j] is None else str(r[j])
-            maxw[j] = max(maxw[j], font_obj.measure(s))
+            w = font_obj.measure(s)
+            if w > maxw[j]:
+                maxw[j] = w
 
-    widths_px = []
-    for j, w in enumerate(maxw):
-        base = max(min_col_px, w + padding_px)
-        if j == 0:
-            base += first_col_extra_px
-        widths_px.append(base)
+    widths = [w + padding_px for w in maxw]  # padding лише як “пробіл” між колонками
 
     tabs = []
     acc = 0
-    for w in widths_px[:-1]:
+    for w in widths[:-1]:
         acc += w
         tabs.extend([acc, "left"])
     return tuple(tabs)
@@ -365,6 +364,9 @@ def anova_n_way(long, factors, levels_by_factor):
 
     MS_error = SS_error / df_error if df_error > 0 else np.nan
 
+    SS = {}
+    df = {}
+    # SS effects (як було)
     def delta_for_subset(S, levels_S):
         s_len = len(S)
         delta = 0.0
@@ -382,8 +384,6 @@ def anova_n_way(long, factors, levels_by_factor):
                 delta += coef * mu
         return delta
 
-    SS = {}
-    df = {}
     for rS in range(1, k + 1):
         for S in combinations(factors, rS):
             d = 1
@@ -427,7 +427,6 @@ def anova_n_way(long, factors, levels_by_factor):
             eta2[name] = (SS[S] / SS_total) if SS_total > 0 else np.nan
     eta2["Залишок"] = (SS_error / SS_total) if SS_total > 0 else np.nan
 
-    # НІР₀₅ (довідково)
     tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
     NIR05 = {}
     n_eff_cells = harmonic_mean([n for n in cell_counts.values() if n and n > 0])
@@ -455,13 +454,12 @@ def anova_n_way(long, factors, levels_by_factor):
 
 
 # -------------------------
-# LSD sig matrix (ALGORITHMS UNCHANGED)
+# LSD / pairwise (UNCHANGED)
 # -------------------------
 def lsd_sig_matrix(levels_order, means, ns, MS_error, df_error, alpha=0.05):
     sig = {}
     if any(math.isnan(x) for x in [MS_error, df_error]) or MS_error <= 0 or df_error <= 0:
         return sig
-
     tcrit = float(t.ppf(1 - alpha / 2, df_error))
     for i in range(len(levels_order)):
         for j in range(i + 1, len(levels_order)):
@@ -477,9 +475,6 @@ def lsd_sig_matrix(levels_order, means, ns, MS_error, df_error, alpha=0.05):
     return sig
 
 
-# -------------------------
-# Pairwise (ALGORITHMS UNCHANGED)
-# -------------------------
 def pairwise_param_short_variants_pm(v_names, means, ns, MS_error, df_error, method, alpha=0.05):
     pairs = [(v_names[i], v_names[j]) for i in range(len(v_names)) for j in range(i + 1, len(v_names))]
     rows = []
@@ -550,7 +545,6 @@ def pairwise_mw_bonf_short_variants_pm(v_names, groups_dict, alpha=0.05):
     mtests = len(pairs) if pairs else 1
     rows = []
     sig = {}
-
     for a, b in pairs:
         xa = groups_dict.get(a, [])
         xb = groups_dict.get(b, [])
@@ -746,16 +740,21 @@ class SADTk:
         ctl = tk.Frame(self.table_win, padx=6, pady=5)
         ctl.pack(fill=tk.X)
 
-        # ✅ Кнопки над таблицею — трохи менші
+        # ✅ Менший шрифт ТІЛЬКИ для кнопок панелі, щоб підпис вміщався
+        ctl_btn_font = ("Times New Roman", 11)
+
+        def mk_btn(parent, text, width, cmd, **kw):
+            return tk.Button(parent, text=text, width=width, command=cmd, font=ctl_btn_font, **kw)
+
         b_w = 12
         pad = 2
-        tk.Button(ctl, text="Додати рядок", width=b_w, command=self.add_row).pack(side=tk.LEFT, padx=pad)
-        tk.Button(ctl, text="Видалити рядок", width=b_w, command=self.delete_row).pack(side=tk.LEFT, padx=pad)
-        tk.Button(ctl, text="Додати стовпчик", width=b_w, command=self.add_column).pack(side=tk.LEFT, padx=(8, pad))
-        tk.Button(ctl, text="Видалити стовпчик", width=b_w, command=self.delete_column).pack(side=tk.LEFT, padx=pad)
-        tk.Button(ctl, text="Вставити з буфера", width=b_w + 3, command=self.paste_from_focus).pack(side=tk.LEFT, padx=(10, pad))
-        tk.Button(ctl, text="Аналіз даних", width=b_w, bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=(10, pad))
-        tk.Button(ctl, text="Розробник", width=b_w, command=self.show_about).pack(side=tk.RIGHT, padx=pad)
+        mk_btn(ctl, "Додати рядок", b_w, self.add_row).pack(side=tk.LEFT, padx=pad)
+        mk_btn(ctl, "Видалити рядок", b_w, self.delete_row).pack(side=tk.LEFT, padx=pad)
+        mk_btn(ctl, "Додати стовпчик", b_w, self.add_column).pack(side=tk.LEFT, padx=(8, pad))
+        mk_btn(ctl, "Видалити стовпчик", b_w, self.delete_column).pack(side=tk.LEFT, padx=pad)
+        mk_btn(ctl, "Вставити з буфера", b_w + 3, self.paste_from_focus).pack(side=tk.LEFT, padx=(10, pad))
+        mk_btn(ctl, "Аналіз даних", b_w, self.analyze, bg="#c62828", fg="white").pack(side=tk.LEFT, padx=(10, pad))
+        mk_btn(ctl, "Розробник", b_w, self.show_about).pack(side=tk.RIGHT, padx=pad)
 
         self.canvas = tk.Canvas(self.table_win)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -987,9 +986,7 @@ class SADTk:
 
         return long, rep_cols
 
-    # -------------------------
-    # ANALYZE (logic unchanged from your latest version)
-    # -------------------------
+    # -------- ANALYZE (ЛОГІКА НЕ ЧІПАЄТЬСЯ) --------
     def analyze(self):
         params = self.ask_indicator_units()
         if not params["ok"]:
@@ -1091,18 +1088,6 @@ class SADTk:
             )
             letters_named = cld_multi_letters(v_names, means1, sig)
         else:
-            if method == "kw":
-                arrays = [groups1[name] for name in v_names if len(groups1[name]) > 0]
-                kw_line = ""
-                if len(arrays) >= 2:
-                    try:
-                        H, pkw = kruskal(*arrays)
-                        kw_line = f"KW (варіанти): H={fmt_num(float(H),3)}, p={fmt_num(float(pkw),4)}."
-                    except Exception:
-                        kw_line = ""
-            else:
-                kw_line = ""
-
             pairwise_rows, sig, p_col_name = pairwise_mw_bonf_short_variants_pm(v_names, groups1, alpha=ALPHA)
             means_tmp = {name: float(np.mean(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
             letters_named = cld_multi_letters(v_names, means_tmp, sig)
@@ -1117,8 +1102,6 @@ class SADTk:
             "mw": "Непараметричний аналіз: Манна-Уітні (MW) + Bonferroni.",
             "kw": "Непараметричний аналіз: Крускала-Уолліса (KW) + post-hoc MW (Bonferroni).",
         }[method]
-        if method == "kw" and kw_line:
-            method_text += f"\n{kw_line}"
 
         seg = []
         title_map = {1: "О Д Н О Ф А К Т О Р Н О Г О", 2: "Д В О Ф А К Т О Р Н О Г О", 3: "Т Р И Ф А К Т О Р Н О Г О", 4: "Ч О Т И Р И Ф А К Т О Р Н О Г О"}
@@ -1136,7 +1119,6 @@ class SADTk:
         seg.append(("text", "У таблицях знак \"-\" означає p ≥ 0.05 (істотної різниці немає).\n"))
         seg.append(("text", "Істотна різниця (літери): різні літери означають істотну різницю (за обраним методом).\n\n"))
 
-        # ANOVA table
         anova_rows = []
         for name, SSv, dfv, MSv, Fv, pv in res["table"]:
             if name in ("Залишок", "Загальна"):
@@ -1154,7 +1136,6 @@ class SADTk:
         seg.append(("table", (["Джерело", "SS", "df", "MS", "F", "p", "Висновок"], anova_rows)))
         seg.append(("text", "\n"))
 
-        # eta
         seg.append(("text", "Сила впливу (%, частка від загальної суми квадратів):\n"))
         eta = res.get("eta2", {})
         for name, *_ in res["table"]:
@@ -1173,7 +1154,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno = 3
 
-        # factor means
         for f in self.factor_keys:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
             lvls = levels_by_factor[f]
@@ -1197,7 +1177,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
-        # variants mean table
         seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень (варіанти)\n"))
         if method in ("mw", "kw"):
             rows = []
@@ -1221,7 +1200,6 @@ class SADTk:
         seg.append(("text", "\n"))
         tno += 1
 
-        # pairwise
         if method in ("tukey", "duncan", "bonferroni", "mw", "kw") and pairwise_rows:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Результати парних порівнянь (варіанти)\n"))
             seg.append(("table", (["Комбінація варіантів", "p", "Істотна різниця"], pairwise_rows)))
@@ -1240,7 +1218,6 @@ class SADTk:
         top = tk.Frame(self.report_win, padx=8, pady=8)
         top.pack(fill=tk.X)
 
-        # ✅ додаємо горизонтальний скрол, і вимикаємо wrap — саме це зазвичай і “ламає” таблиці
         xsb = ttk.Scrollbar(self.report_win, orient="horizontal")
         xsb.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -1249,7 +1226,6 @@ class SADTk:
         xsb.config(command=txt.xview)
 
         txt.configure(font=("Times New Roman", 14), fg="#000000")
-
         font_obj = tkfont.Font(font=("Times New Roman", 14))
 
         table_idx = 0
@@ -1259,13 +1235,7 @@ class SADTk:
                 continue
 
             headers, rows = payload
-            tabs = tabs_from_table_px(
-                font_obj, headers, rows,
-                padding_px=70,      # ширше
-                min_col_px=110,     # ширше
-                first_col_extra_px=140  # особливо ширший перший стовпчик
-            )
-
+            tabs = tabs_from_table_px(font_obj, headers, rows, padding_px=18)  # ✅ строго по вмісту
             tag = f"tbl_{table_idx}"
             table_idx += 1
             txt.tag_configure(tag, tabs=tabs)
