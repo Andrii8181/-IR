@@ -3,27 +3,22 @@
 
 """
 S.A.D. — Статистичний аналіз даних (Tkinter)
+
 Потрібно: Python 3.8+, numpy, scipy
 Встановлення: pip install numpy scipy
 
-ЗМІНИ ЗА ВАШИМИ ОСТАННІМИ ПРАВКАМИ:
-1) У таблицях середніх значень зроблено "ширший" перший стовпчик (через TAB-стопи):
-   - перший TAB значно далі, щоб "Варіант" не зсував інші колонки.
-2) Множинні літери (наприклад "ab") увімкнені також у таблицях середніх по факторах
-   (для LSD/НІР₀₅, де літери взагалі показуються).
-3) Таблиця парних порівнянь (варіанти) тепер має 3 стовпчики:
-   - Комбінація варіантів
-   - p (або p_adj)
-   - Істотна різниця (+ / -)
-4) У таблиці ANOVA та у таблицях середніх по факторах:
-   - якщо істотності немає → ставиться "-" (а не порожньо)
-   - якщо є істотність / літери → показує літери/висновок
-5) У таблиці варіантів стовпчик n видалений, SD позначено як "± SD".
+ОСТАННІ ПРАВКИ (ВАШІ):
+1) У звіті ширина ПЕРШИХ стовпчиків (і загалом усіх стовпчиків) тепер ІНДИВІДУАЛЬНА
+   та пропорційна вмісту КОЖНОЇ таблиці окремо.
+   Реалізовано через Text-теги з індивідуальними TAB-стопами на кожну таблицю.
+2) Пояснення істотності: тепер знак "-" означає p ≥ 0.05 (немає істотної різниці).
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
+import tkinter.font as tkfont
+
 import math
 import numpy as np
 from itertools import combinations
@@ -119,16 +114,6 @@ def median_iqr(arr):
     return (med, q1, q3)
 
 
-def tab_table(headers, rows):
-    # Таблиці звіту: таб-роздільники (колонки не "пливуть")
-    out = []
-    out.append("\t".join(headers))
-    out.append("\t".join(["—" * max(3, len(h)) for h in headers]))
-    for r in rows:
-        out.append("\t".join("" if v is None else str(v) for v in r))
-    return "\n".join(out)
-
-
 def subset_stats(long, keys):
     sums = defaultdict(float)
     cnts = defaultdict(int)
@@ -181,9 +166,9 @@ def variant_mean_sd(long, factor_keys):
 def cld_multi_letters(levels_order, means_dict, sig_matrix):
     """
     Compact Letter Display з множинними літерами (може повернути 'ab', 'bc' і т.д.)
-    Вимоги:
+    Умова:
       - значущі пари НЕ мають ділити спільну літеру
-      - незначущі пари прагнемо з'єднати хоча б однією літерою (де це можливо)
+      - незначущі пари прагнемо об'єднати хоча б однією літерою (де це можливо)
     """
     valid = [lvl for lvl in levels_order if not math.isnan(means_dict.get(lvl, np.nan))]
     if not valid:
@@ -196,9 +181,7 @@ def cld_multi_letters(levels_order, means_dict, sig_matrix):
             return False
         return bool(sig_matrix.get((x, y), False) or sig_matrix.get((y, x), False))
 
-    groups = []  # list[set]
-
-    # базові сумісні групи
+    groups = []
     for lvl in sorted_lvls:
         compatible = []
         for gi, grp in enumerate(groups):
@@ -213,7 +196,6 @@ def cld_multi_letters(levels_order, means_dict, sig_matrix):
     def share_group(a, b):
         return any((a in g and b in g) for g in groups)
 
-    # дотягнути незн. пари до спільної групи
     for i in range(len(sorted_lvls)):
         for j in range(i + 1, len(sorted_lvls)):
             a, b = sorted_lvls[i], sorted_lvls[j]
@@ -267,6 +249,54 @@ def cld_multi_letters(levels_order, means_dict, sig_matrix):
         else:
             out[lvl] = ""
     return out
+
+
+# -------------------------
+# Таблиця для звіту з ІНДИВІДУАЛЬНИМИ TAB-стопами
+# -------------------------
+def build_table_block(headers, rows):
+    """
+    Повертає:
+      text:  рядки таблиці з '\t' як роздільник
+      col_chars: максимальна довжина в символах по кожному стовпчику (для оцінки ширини)
+    """
+    all_rows = [headers] + rows
+    ncol = len(headers)
+    col_chars = [0] * ncol
+    for r in all_rows:
+        for j in range(ncol):
+            s = "" if r[j] is None else str(r[j])
+            col_chars[j] = max(col_chars[j], len(s))
+
+    dash = ["—" * max(3, len(h)) for h in headers]
+    lines = []
+    lines.append("\t".join(headers))
+    lines.append("\t".join(dash))
+    for r in rows:
+        lines.append("\t".join("" if v is None else str(v) for v in r))
+    return "\n".join(lines) + "\n", col_chars
+
+
+def tabs_from_table(font_obj: tkfont.Font, col_chars, padding_px=18, min_col_px=70):
+    """
+    Генерує список TAB-стопів у пікселях для Text-widget.
+    Кожен наступний таб = сума ширин попередніх стовпчиків.
+    """
+    widths_px = []
+    for ch in col_chars:
+        # оцінка ширини колонки: ширина "M"*ch + padding
+        # (M як "широкий" символ; працює стабільно для пропорційного шрифту)
+        w = font_obj.measure("M" * ch) + padding_px
+        w = max(w, min_col_px)
+        widths_px.append(w)
+
+    tabs = []
+    acc = 0
+    # таби ставимо ПІСЛЯ кожної колонки (крім останньої теж можна — не шкодить)
+    for w in widths_px[:-1]:
+        acc += w
+        tabs.extend([acc, "center"])
+    return tuple(tabs)
 
 
 # -------------------------
@@ -374,16 +404,14 @@ def anova_n_way(long, factors, levels_by_factor):
             eta2[name] = (SS[S] / SS_total) if SS_total > 0 else np.nan
     eta2["Залишок"] = (SS_error / SS_total) if SS_total > 0 else np.nan
 
-    # НІР₀₅ у звіті (довідково) — через n_eff
+    # НІР₀₅ (довідково) — через n_eff
     tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
-
     NIR05 = {}
     n_eff_cells = harmonic_mean([n for n in cell_counts.values() if n and n > 0])
     nir_all = tval * math.sqrt(2 * MS_error / n_eff_cells) if not any(
         math.isnan(x) for x in [tval, MS_error, n_eff_cells]
     ) else np.nan
     NIR05["Загальна"] = nir_all
-
     for fct in factors:
         marg = subset_stats(long, (fct,))
         n_eff = harmonic_mean([v[1] for v in marg.values() if v[1] and v[1] > 0])
@@ -404,7 +432,7 @@ def anova_n_way(long, factors, levels_by_factor):
 
 
 # -------------------------
-# LSD pairwise decision (коректно для unequal n)
+# LSD pairwise decision
 # -------------------------
 def lsd_sig_matrix(levels_order, means, ns, MS_error, df_error, alpha=0.05):
     sig = {}
@@ -427,7 +455,8 @@ def lsd_sig_matrix(levels_order, means, ns, MS_error, df_error, alpha=0.05):
 
 
 # -------------------------
-# Парні порівняння (ВАРІАНТИ): коротко (+ / -)
+# Парні порівняння (варіанти): 3 колонки, істотність +/-.
+# Повертає також sig_matrix для CLD (літер).
 # -------------------------
 def pairwise_param_short_variants_pm(v_names, means, ns, MS_error, df_error, method, alpha=0.05):
     pairs = [(v_names[i], v_names[j]) for i in range(len(v_names)) for j in range(i + 1, len(v_names))]
@@ -450,7 +479,6 @@ def pairwise_param_short_variants_pm(v_names, means, ns, MS_error, df_error, met
             decision = (p_adj < alpha)
             sig[(a, b)] = decision
             rows.append([f"{a}  vs  {b}", fmt_num(p_adj, 4), "+" if decision else "-"])
-
         return rows, sig, "p_adj"
 
     if method == "tukey":
@@ -464,7 +492,6 @@ def pairwise_param_short_variants_pm(v_names, means, ns, MS_error, df_error, met
             decision = (p < alpha)
             sig[(a, b)] = decision
             rows.append([f"{a}  vs  {b}", fmt_num(p, 4), "+" if decision else "-"])
-
         return rows, sig, "p"
 
     if method == "duncan":
@@ -493,7 +520,6 @@ def pairwise_param_short_variants_pm(v_names, means, ns, MS_error, df_error, met
             decision = abs(ma - mb) > SR
             sig[(a, b)] = decision
             rows.append([f"{a}  vs  {b}", fmt_num(p, 4), "+" if decision else "-"])
-
         return rows, sig, "p (набл.)"
 
     return [], {}, "p"
@@ -701,7 +727,7 @@ class SADTk:
 
         tk.Button(ctl, text="Вставити з буфера", command=self.paste_from_focus).pack(side=tk.LEFT, padx=18)
         tk.Button(ctl, text="Аналіз даних", bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=16)
-        tk.Button(ctl, text="Про розробника", command=self.show_about).pack(side=tk.RIGHT, padx=4)
+        tk.Button(ctl, text="Розробник", command=self.show_about).pack(side=tk.RIGHT, padx=4)
 
         self.canvas = tk.Canvas(self.table_win)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -742,7 +768,7 @@ class SADTk:
     def show_about(self):
         messagebox.showinfo(
             "Розробник",
-            "S.A.D. — Статистичний аналіз даних\nРозробник: Чаплоуцький Андрій Миколайович\nУманський національний університет\nВерсія: 1.0"
+            "S.A.D. — Статистичний аналіз даних\nРозробка: Чаплоуцький Андрій Миколайович\nУманський національний університет\nВерсія: 1.0"
         )
 
     def bind_cell(self, e: tk.Entry):
@@ -984,7 +1010,7 @@ class SADTk:
         MS_error = res.get("MS_error", np.nan)
         df_error = res.get("df_error", np.nan)
 
-        # ---- По факторах: описові таблиці + літери (для LSD) ----
+        # ---- По факторах: дані + літери (для LSD) ----
         factor_groups = {}
         factor_means = {}
         factor_ns = {}
@@ -1031,17 +1057,15 @@ class SADTk:
         if method == "lsd":
             sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
             letters_named = cld_multi_letters(v_names, means1, sigv)
-            pairwise_rows = []  # LSD — без парних порівнянь
+            pairwise_rows = []
 
         elif method in ("tukey", "duncan", "bonferroni"):
             pairwise_rows, sig, p_col_name = pairwise_param_short_variants_pm(
                 v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA
             )
-            # літери з матриці sig
             letters_named = cld_multi_letters(v_names, means1, sig)
 
         else:
-            # mw / kw: MW+Bonferroni для варіантів
             if method == "kw":
                 arrays = [groups1[name] for name in v_names if len(groups1[name]) > 0]
                 if len(arrays) >= 2:
@@ -1073,41 +1097,27 @@ class SADTk:
             method_text += f"\n{kw_line}"
 
         # -------------------------
-        # З В І Т
+        # Формуємо ЗВІТ як СЕГМЕНТИ:
+        #   ("text", None) або ("TABLE", (headers, rows))
         # -------------------------
-        title_map = {
-            1: "О Д Н О Ф А К Т О Р Н О Г О",
-            2: "Д В О Ф А К Т О Р Н О Г О",
-            3: "Т Р И Ф А К Т О Р Н О Г О",
-            4: "Ч О Т И Р И Ф А К Т О Р Н О Г О",
-        }
+        seg = []
 
-        L = []
-        L.append(f"Р Е З У Л Ь Т А Т И   {title_map[self.factors_count]}   Д И С П Е Р С І Й Н О Г О   А Н А Л І З У")
-        L.append("")
-        L.append(f"Показник:\t{indicator}")
-        L.append(f"Одиниці виміру:\t{units}")
-        L.append("")
-        L.append(f"Кількість варіантів:\t{num_variants}")
-        L.append(f"Кількість повторностей:\t{len(used_rep_cols)}")
-        L.append(f"Загальна кількість облікових значень:\t{len(long)}")
-        L.append("")
+        title_map = {1: "О Д Н О Ф А К Т О Р Н О Г О", 2: "Д В О Ф А К Т О Р Н О Г О", 3: "Т Р И Ф А К Т О Р Н О Г О", 4: "Ч О Т И Р И Ф А К Т О Р Н О Г О"}
+        seg.append(("text", f"Р Е З У Л Ь Т А Т И   {title_map[self.factors_count]}   Д И С П Е Р С І Й Н О Г О   А Н А Л І З У\n\n"))
+        seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
+        seg.append(("text", f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
         if not math.isnan(W):
-            L.append(
-                "Перевірка нормальності залишків (Shapiro–Wilk):\t"
-                f"{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})"
-            )
+            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\t"
+                           f"{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
         else:
-            L.append("Перевірка нормальності залишків (Shapiro–Wilk):\tн/д")
-        L.append("")
-        L.append(method_text)
-        L.append("")
-        L.append("Пояснення позначень істотності: ** — p<0.01; * — p<0.05; без позначки — p≥0.05.")
-        L.append("Істотна різниця (літери): різні літери означають істотну різницю (за обраним методом).")
-        L.append("")
+            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
 
-        # Таблиця ANOVA
-        L.append("ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)")
+        seg.append(("text", method_text + "\n\n"))
+        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
+        seg.append(("text", "У таблицях знак \"-\" означає p ≥ 0.05 (істотної різниці немає).\n"))
+        seg.append(("text", "Істотна різниця (літери): різні літери означають істотну різницю (за обраним методом).\n\n"))
+
+        # ANOVA table
         anova_rows = []
         for name, SSv, dfv, MSv, Fv, pv in res["table"]:
             if name in ("Залишок", "Загальна"):
@@ -1116,41 +1126,39 @@ class SADTk:
                                    fmt_num(MSv, 3), "", "", ""])
             else:
                 mark = significance_mark(pv)
-                if mark:
-                    concl = f"істотна різниця {mark}"
-                else:
-                    concl = "-"
+                concl = f"істотна різниця {mark}" if mark else "-"
                 anova_rows.append([name, fmt_num(SSv, 2),
                                    str(int(dfv)) if dfv is not None and not math.isnan(dfv) else "",
-                                   fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4),
-                                   concl])
-        L.append(tab_table(["Джерело", "SS", "df", "MS", "F", "p", "Висновок"], anova_rows))
-        L.append("")
+                                   fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
 
-        # Сила впливу
+        seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
+        seg.append(("table", (["Джерело", "SS", "df", "MS", "F", "p", "Висновок"], anova_rows)))
+        seg.append(("text", "\n"))
+
+        # eta
+        seg.append(("text", "Сила впливу (%, частка від загальної суми квадратів):\n"))
         eta = res.get("eta2", {})
-        L.append("Сила впливу (%, частка від загальної суми квадратів):")
         for name, *_ in res["table"]:
             if name in eta:
-                L.append(f"  • {name}:\t{eta[name]*100:.2f}%")
-        L.append("")
+                seg.append(("text", f"  • {name}:\t{eta[name]*100:.2f}%\n"))
+        seg.append(("text", "\n"))
 
-        # НІР₀₅ — тільки при LSD (довідково)
         tno = 2
         if method == "lsd":
-            L.append("ТАБЛИЦЯ 2. Значення НІР₀₅ (довідково)")
             nir_rows = []
             for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
                 if key in res.get("NIR05", {}):
                     nir_rows.append([key, fmt_num(res["NIR05"][key], 4)])
-            L.append(tab_table(["Елемент", "НІР₀₅"], nir_rows))
-            L.append("")
+            seg.append(("text", "ТАБЛИЦЯ 2. Значення НІР₀₅\n"))
+            seg.append(("table", (["Елемент", "НІР₀₅"], nir_rows)))
+            seg.append(("text", "\n"))
             tno = 3
 
-        # Середнє по фактору: якщо немає літери → "-"
+        # factor means tables
         for f in self.factor_keys:
-            L.append(f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}")
+            seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
             lvls = levels_by_factor[f]
+
             if method in ("mw", "kw"):
                 rows = []
                 for lvl in lvls:
@@ -1158,30 +1166,22 @@ class SADTk:
                     n = len(arr)
                     med, q1, q3 = factor_meds[f].get(lvl, (np.nan, np.nan, np.nan))
                     letter = letters_factor[f].get(lvl, "")
-                    rows.append([
-                        str(lvl), str(n),
-                        fmt_num(med, 3),
-                        f"{fmt_num(q1,3)}–{fmt_num(q3,3)}",
-                        letter if letter else "-"
-                    ])
-                L.append(tab_table([f"Градація {f}", "n", "Медіана", "IQR(Q1–Q3)", "Істотна різниця"], rows))
+                    rows.append([str(lvl), str(n), fmt_num(med, 3), f"{fmt_num(q1,3)}–{fmt_num(q3,3)}", letter if letter else "-"])
+                seg.append(("table", ([f"Градація {f}", "n", "Медіана", "IQR(Q1–Q3)", "Істотна різниця"], rows)))
             else:
                 rows = []
                 for lvl in lvls:
                     m = factor_means[f].get(lvl, np.nan)
                     n = factor_ns[f].get(lvl, 0)
                     letter = letters_factor[f].get(lvl, "")
-                    rows.append([
-                        str(lvl), str(n),
-                        fmt_num(m, 3),
-                        letter if letter else "-"
-                    ])
-                L.append(tab_table([f"Градація {f}", "n", "Середнє", "Істотна різниця"], rows))
-            L.append("")
+                    rows.append([str(lvl), str(n), fmt_num(m, 3), letter if letter else "-"])
+                seg.append(("table", ([f"Градація {f}", "n", "Середнє", "Істотна різниця"], rows)))
+
+            seg.append(("text", "\n"))
             tno += 1
 
-        # Таблиця варіантів: БЕЗ n, SD -> "± SD"
-        L.append(f"ТАБЛИЦЯ {tno}. Таблиця середніх значень (варіанти)")
+        # variants mean table
+        seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень (варіанти)\n"))
         if method in ("mw", "kw"):
             rows = []
             for k in variant_order:
@@ -1190,15 +1190,8 @@ class SADTk:
                 med, q1, q3 = v_meds.get(k, (np.nan, np.nan, np.nan))
                 name = " | ".join(map(str, k))
                 letter = letters_variants.get(k, "")
-                rows.append([
-                    name,
-                    fmt_num(m, 3),
-                    fmt_num(sd, 3),
-                    fmt_num(med, 3),
-                    f"{fmt_num(q1,3)}–{fmt_num(q3,3)}",
-                    letter if letter else "-"
-                ])
-            L.append(tab_table(["Варіант", "Середнє", "± SD", "Медіана", "IQR(Q1–Q3)", "Істотна різниця"], rows))
+                rows.append([name, fmt_num(m, 3), fmt_num(sd, 3), fmt_num(med, 3), f"{fmt_num(q1,3)}–{fmt_num(q3,3)}", letter if letter else "-"])
+            seg.append(("table", (["Варіант", "Середнє", "± SD", "Медіана", "IQR(Q1–Q3)", "Істотна різниця"], rows)))
         else:
             rows = []
             for k in variant_order:
@@ -1207,18 +1200,19 @@ class SADTk:
                 name = " | ".join(map(str, k))
                 letter = letters_variants.get(k, "")
                 rows.append([name, fmt_num(m, 3), fmt_num(sd, 3), letter if letter else "-"])
-            L.append(tab_table(["Варіант", "Середнє", "± SD", "Істотна різниця"], rows))
-        L.append("")
+            seg.append(("table", (["Варіант", "Середнє", "± SD", "Істотна різниця"], rows)))
+        seg.append(("text", "\n"))
         tno += 1
 
-        # Парні порівняння: 3 колонки (комбінація, p, +/-)
+        # pairwise table (3 columns)
         if method in ("tukey", "duncan", "bonferroni", "mw", "kw") and pairwise_rows:
-            L.append(f"ТАБЛИЦЯ {tno}. Результати парних порівнянь (варіанти)")
-            L.append(tab_table(["Комбінація варіантів", p_col_name, "Істотна різниця"], pairwise_rows))
+            seg.append(("text", f"ТАБЛИЦЯ {tno}. Результати парних порівнянь (варіанти)\n"))
+            seg.append(("table", (["Комбінація варіантів", p_col_name, "Істотна різниця"], pairwise_rows)))
 
-        self.show_report("\n".join(L))
+        self.show_report_segments(seg)
 
-    def show_report(self, text):
+    # ---------- Звіт: вставка сегментів з індивідуальними TAB-стопами ----------
+    def show_report_segments(self, segments):
         if self.report_win and tk.Toplevel.winfo_exists(self.report_win):
             self.report_win.destroy()
 
@@ -1229,29 +1223,42 @@ class SADTk:
         top = tk.Frame(self.report_win, padx=8, pady=8)
         top.pack(fill=tk.X)
 
+        txt = ScrolledText(self.report_win, width=120, height=40)
+        txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        txt.configure(font=("Times New Roman", 14), fg="#000000")
+
+        # базовий таб (на випадок звичайних рядків із табами)
+        txt.configure(tabs=(240, "left", 480, "left", 720, "left", 960, "left"))
+
+        font_obj = tkfont.Font(font=("Times New Roman", 14))
+
+        # вставка сегментів
+        table_idx = 0
+        for kind, payload in segments:
+            if kind == "text":
+                txt.insert("end", payload)
+                continue
+
+            headers, rows = payload
+            table_text, col_chars = build_table_block(headers, rows)
+            tabs = tabs_from_table(font_obj, col_chars, padding_px=22, min_col_px=70)
+
+            tag = f"tbl_{table_idx}"
+            table_idx += 1
+            txt.tag_configure(tag, tabs=tabs)
+
+            start = txt.index("end")
+            txt.insert("end", table_text)
+            end = txt.index("end")
+            txt.tag_add(tag, start, end)
+
+        # копіювання
         def copy_all():
             self.report_win.clipboard_clear()
-            self.report_win.clipboard_append(text)
+            self.report_win.clipboard_append(txt.get("1.0", "end-1c"))
             messagebox.showinfo("Готово", "Звіт скопійовано в буфер обміну.")
 
         tk.Button(top, text="Копіювати звіт", command=copy_all).pack(side=tk.LEFT, padx=4)
-
-        txt = ScrolledText(self.report_win, width=120, height=40)
-        txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-
-        # TAB-стопи: ШИРОКИЙ перший стовпчик, інші компактні → колонки не "пливуть"
-        # Працює добре і в самому вікні, і при вставці у Word.
-        first_tab = 520   # ширина 1-го стовпчика
-        step = 185        # крок для наступних стовпчиків
-        tabs = []
-        pos = first_tab
-        for _ in range(1, 30):
-            tabs.extend([pos, "center"])
-            pos += step
-        txt.configure(tabs=tuple(tabs))
-
-        txt.insert("1.0", text)
-        txt.configure(font=("Times New Roman", 14), fg="#000000")
 
         def on_ctrl_c(event=None):
             try:
