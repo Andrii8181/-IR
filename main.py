@@ -8,10 +8,9 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 Встановлення: pip install numpy scipy
 
 ВИПРАВЛЕНО ОФОРМЛЕННЯ:
-✅ Таблиці у звіті: таб-стопи працюють коректно (передаємо тільки числа px).
-✅ Заголовки строго над своїми стовпчиками, нічого не "пливе".
-✅ Кнопки над таблицею вводу: шрифт НЕ змінюємо, самі кнопки трохи ширші.
-✅ icon.ico: шукаємо у папці скрипта і у поточній папці запуску, ставимо для всіх вікон.
+✅ Кнопки над таблицею вводу: зроблено компактнішими + авто-підбір шрифту під назви кнопок.
+✅ Таблиці у звіті: заголовки не "злипаються" (збільшено міжколонковий відступ таб-стопів + мінівідступ у заголовках).
+✅ icon.ico: надійно шукаємо у папці скрипта/поточній папці + підтримка зібраного .exe (PyInstaller).
 """
 
 import os
@@ -50,9 +49,17 @@ except Exception:
 
 
 # -------------------------
-# ICON (FIXED)
+# ICON (FIXED + frozen/exe support)
 # -------------------------
 def _script_dir():
+    # Працює і для .py, і для зібраного .exe (PyInstaller)
+    try:
+        import sys
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            return sys._MEIPASS
+    except Exception:
+        pass
+
     try:
         return os.path.dirname(os.path.abspath(__file__))
     except Exception:
@@ -62,7 +69,7 @@ def _script_dir():
 def _find_icon_file():
     """
     Шукаємо icon.ico у:
-    1) папці скрипта
+    1) папці скрипта / папці ресурсу exe
     2) поточній папці запуску (cwd)
     """
     candidates = [
@@ -269,22 +276,43 @@ def cld_multi_letters(levels_order, means_dict, sig_matrix):
     return out
 
 
+def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9, target_px=155):
+    """
+    Повертає tkfont.Font підібраного розміру так, щоб найдовший текст вмістився у target_px.
+    """
+    f = tkfont.Font(family=family, size=start)
+    size = start
+    while size > min_size:
+        maxw = max(f.measure(t) for t in texts)
+        if maxw <= target_px:
+            break
+        size -= 1
+        f.configure(size=size)
+    return f
+
+
 # -------------------------
 # REPORT TABLES (FIXED TAB STOPS)
 # -------------------------
 def build_table_block(headers, rows):
+    def hcell(x):  # мінівідступ у заголовках
+        return f"{x} "
+
+    def ccell(x):
+        return "" if x is None else str(x)
+
     lines = []
-    lines.append("\t".join(str(h) for h in headers))
+    lines.append("\t".join(hcell(h) for h in headers))
     lines.append("\t".join("—" * max(3, len(str(h))) for h in headers))
     for r in rows:
-        lines.append("\t".join("" if v is None else str(v) for v in r))
+        lines.append("\t".join(ccell(v) for v in r))
     return "\n".join(lines) + "\n"
 
 
-def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=18):
+def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32):
     """
-    ✅ Головне виправлення:
     Для Text widget найнадійніше: tabs=(pos1,pos2,pos3,...) тільки числа.
+    padding_px збільшено, щоб заголовки не "злипались".
     """
     ncol = len(headers)
     maxw = [0] * ncol
@@ -299,12 +327,10 @@ def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=18):
             if w > maxw[j]:
                 maxw[j] = w
 
-    # widths = content width + padding між колонками
     widths = [w + padding_px for w in maxw]
 
     tabs = []
     acc = 0
-    # таб-стопи потрібні між колонками (останній не треба)
     for w in widths[:-1]:
         acc += w
         tabs.append(acc)
@@ -710,20 +736,40 @@ class SADTk:
         self.factor_names = [f"Фактор {self.factor_keys[i]}" for i in range(factors_count)]
         self.column_names = self.factor_names + [f"Повт.{i+1}" for i in range(self.repeat_count)]
 
-        # ✅ Кнопки трохи ширші, але шрифт НЕ чіпаємо
+        # ✅ Кнопки компактніші + автопідбір шрифту під найдовшу назву
         ctl = tk.Frame(self.table_win, padx=6, pady=6)
         ctl.pack(fill=tk.X)
 
-        bw = 16  # було 12 — зробили трохи більше
-        pad = 3
+        btn_texts = [
+            "Додати рядок",
+            "Видалити рядок",
+            "Додати стовпчик",
+            "Видалити стовпчик",
+            "Вставити з буфера",
+            "Аналіз даних",
+            "Розробник",
+        ]
+        btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=13, min_size=9, target_px=155)
 
-        tk.Button(ctl, text="Додати рядок", width=bw, command=self.add_row).pack(side=tk.LEFT, padx=pad)
-        tk.Button(ctl, text="Видалити рядок", width=bw, command=self.delete_row).pack(side=tk.LEFT, padx=pad)
-        tk.Button(ctl, text="Додати стовпчик", width=bw, command=self.add_column).pack(side=tk.LEFT, padx=(10, pad))
-        tk.Button(ctl, text="Видалити стовпчик", width=bw, command=self.delete_column).pack(side=tk.LEFT, padx=pad)
-        tk.Button(ctl, text="Вставити з буфера", width=bw + 3, command=self.paste_from_focus).pack(side=tk.LEFT, padx=(10, pad))
-        tk.Button(ctl, text="Аналіз даних", width=bw, bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=(10, pad))
-        tk.Button(ctl, text="Розробник", width=bw, command=self.show_about).pack(side=tk.RIGHT, padx=pad)
+        bw = 15     # менше
+        bh = 1      # компактніше
+        padx = 3
+        pady = 2
+
+        tk.Button(ctl, text="Додати рядок", width=bw, height=bh, font=btn_font,
+                  command=self.add_row).pack(side=tk.LEFT, padx=padx, pady=pady)
+        tk.Button(ctl, text="Видалити рядок", width=bw, height=bh, font=btn_font,
+                  command=self.delete_row).pack(side=tk.LEFT, padx=padx, pady=pady)
+        tk.Button(ctl, text="Додати стовпчик", width=bw, height=bh, font=btn_font,
+                  command=self.add_column).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
+        tk.Button(ctl, text="Видалити стовпчик", width=bw, height=bh, font=btn_font,
+                  command=self.delete_column).pack(side=tk.LEFT, padx=padx, pady=pady)
+        tk.Button(ctl, text="Вставити з буфера", width=bw + 2, height=bh, font=btn_font,
+                  command=self.paste_from_focus).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
+        tk.Button(ctl, text="Аналіз даних", width=bw, height=bh, font=btn_font,
+                  bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
+        tk.Button(ctl, text="Розробник", width=bw, height=bh, font=btn_font,
+                  command=self.show_about).pack(side=tk.RIGHT, padx=padx, pady=pady)
 
         self.canvas = tk.Canvas(self.table_win)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -1002,12 +1048,10 @@ class SADTk:
         MS_error = res.get("MS_error", np.nan)
         df_error = res.get("df_error", np.nan)
 
-        # means per factor
         factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
         factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
         factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
 
-        # letters per factor (LSD only)
         letters_factor = {}
         if method == "lsd":
             for f in self.factor_keys:
@@ -1018,7 +1062,6 @@ class SADTk:
             for f in self.factor_keys:
                 letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
 
-        # variants
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         num_variants = len(variant_order)
         vstats = variant_mean_sd(long, self.factor_keys)
@@ -1047,7 +1090,6 @@ class SADTk:
 
         letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
-        # ---- report segments
         title_map = {1: "О Д Н О Ф А К Т О Р Н О Г О", 2: "Д В О Ф А К Т О Р Н О Г О", 3: "Т Р И Ф А К Т О Р Н О Г О", 4: "Ч О Т И Р И Ф А К Т О Р Н О Г О"}
 
         seg = []
@@ -1064,7 +1106,6 @@ class SADTk:
         seg.append(("text", "У таблицях знак \"-\" означає p ≥ 0.05.\n"))
         seg.append(("text", "Істотна різниця (літери): різні літери означають істотну різницю.\n\n"))
 
-        # Table 1 ANOVA
         anova_rows = []
         for name, SSv, dfv, MSv, Fv, pv in res["table"]:
             if name in ("Залишок", "Загальна"):
@@ -1082,7 +1123,6 @@ class SADTk:
         seg.append(("table", (["Джерело", "SS", "df", "MS", "F", "p", "Висновок"], anova_rows)))
         seg.append(("text", "\n"))
 
-        # NIR only for LSD
         tno = 2
         if method == "lsd":
             nir_rows = []
@@ -1094,7 +1134,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno = 3
 
-        # Factor means
         for f in self.factor_keys:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
             rows = []
@@ -1106,7 +1145,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
-        # Variant means table
         seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень (варіанти)\n"))
         rows = []
         for k in variant_order:
@@ -1119,7 +1157,6 @@ class SADTk:
         seg.append(("text", "\n"))
         tno += 1
 
-        # Pairwise
         if method in ("tukey", "duncan", "bonferroni", "mw") and pairwise_rows:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (варіанти)\n"))
             seg.append(("table", (["Комбінація варіантів", "p", "Істотна різниця"], pairwise_rows)))
@@ -1138,7 +1175,6 @@ class SADTk:
         top = tk.Frame(self.report_win, padx=8, pady=8)
         top.pack(fill=tk.X)
 
-        # ✅ Горизонтальний скрол + wrap none
         xsb = ttk.Scrollbar(self.report_win, orient="horizontal")
         xsb.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -1156,11 +1192,12 @@ class SADTk:
                 continue
 
             headers, rows = payload
-            tabs = tabs_from_table_px(font_obj, headers, rows, padding_px=18)
+
+            # ✅ збільшено padding для таб-стопів, щоб заголовки не "злипались"
+            tabs = tabs_from_table_px(font_obj, headers, rows, padding_px=32)
+
             tag = f"tbl_{table_idx}"
             table_idx += 1
-
-            # ✅ ВАЖЛИВО: tabs тільки числа
             txt.tag_configure(tag, tabs=tabs)
 
             start = txt.index("end")
