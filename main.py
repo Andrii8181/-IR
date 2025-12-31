@@ -8,14 +8,14 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 Встановлення: pip install numpy scipy
 
 Оновлення (за твоїми вимогами):
-✅ Кнопки над таблицею вводу: компактніші + авто-підбір шрифту під назви.
-✅ Звіт: заголовки таблиць НЕ злипаються (збільшено відступ таб-стопів + мінівідступ у заголовках).
-✅ icon.ico: ставиться як емблема програми (пошук у папці скрипта/ресурсів exe та cwd).
-✅ Непараметричні методи: додано Kruskal–Wallis (глобально) + пост-хок Mann–Whitney (Bonferroni).
-✅ Для непараметричних звітів додано МЕДІАНИ та Q1–Q3 (IQR), узгоджено опис зі статистикою.
-✅ Для Mann–Whitney у парних порівняннях показуємо U та p(Bonferroni).
-✅ Для Kruskal–Wallis показуємо H, df, p.
-✅ Перед таблицею ANOVA вказано, який саме аналіз/тест виконується.
+✅ Додано таблицю "Сила впливу" (SS, %) для факторів, їх комбінацій, залишку та загальної.
+✅ Для непараметричних методів структура звіту скоригована:
+   - ANOVA подається як ДОВІДКОВА дисперсійна декомпозиція (без p/висновків по ANOVA).
+   - Висновки робляться за Kruskal–Wallis та/або Mann–Whitney (Bonferroni).
+✅ Заголовки таблиць не злипаються (padding таб-стопів + пробіл у заголовках).
+✅ icon.ico підхоплюється і ставиться як іконка програми.
+✅ Кнопки керування компактніші + шрифт адаптовано під назви.
+✅ Для непараметричних звітів додано Медіани та Q1–Q3 (IQR).
 """
 
 import os
@@ -34,7 +34,7 @@ from scipy.stats import mannwhitneyu, kruskal
 from scipy.stats import studentized_range
 
 ALPHA = 0.05
-COL_W = 10  # ширина колонок вводу
+COL_W = 10
 
 
 # -------------------------
@@ -57,7 +57,6 @@ except Exception:
 # ICON (support py + frozen exe)
 # -------------------------
 def _script_dir():
-    # Працює і для .py, і для PyInstaller .exe
     try:
         import sys
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -302,7 +301,7 @@ def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9
 # -------------------------
 def build_table_block(headers, rows):
     def hcell(x):
-        return f"{x} "  # мінівідступ, щоб заголовки не "злипались"
+        return f"{x} "  # міні-відступ для заголовків
 
     def ccell(x):
         return "" if x is None else str(x)
@@ -341,7 +340,7 @@ def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32):
 
 
 # -------------------------
-# ANOVA 1–4 (без змін логіки)
+# ANOVA 1–4 (логіка як була)
 # -------------------------
 def anova_n_way(long, factors, levels_by_factor):
     N = len(long)
@@ -424,12 +423,9 @@ def anova_n_way(long, factors, levels_by_factor):
         return "Фактор " + "×".join(subset)
 
     table_rows = []
-    effect_names = {}
-
     for rS in range(1, k + 1):
         for S in combinations(factors, rS):
             name = pretty_interaction(S)
-            effect_names[S] = name
             SSv = SS.get(S, np.nan)
             dfv = df.get(S, np.nan)
             MSv = SSv / dfv if (dfv and not math.isnan(dfv) and dfv > 0) else np.nan
@@ -462,6 +458,8 @@ def anova_n_way(long, factors, levels_by_factor):
         "MS_error": MS_error,
         "df_error": df_error,
         "NIR05": NIR05,
+        "SS_total": SS_total,
+        "SS_error": SS_error,
     }
 
 
@@ -576,6 +574,37 @@ def pairwise_mw_bonf_short_variants_pm(v_names, groups_dict, alpha=0.05):
 
 
 # -------------------------
+# NEW: Effect strength table (SS, %)
+# -------------------------
+def build_effect_strength_rows(anova_table_rows):
+    """
+    anova_table_rows: list of tuples (name, SS, df, MS, F, p)
+    повертає rows для таблиці сили впливу: [Джерело, SS, %SS]
+    """
+    SS_total = None
+    by_name = []
+    for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
+        if name == "Загальна":
+            SS_total = SSv
+
+    if SS_total is None or (isinstance(SS_total, float) and math.isnan(SS_total)) or SS_total <= 0:
+        SS_total = np.nan
+
+    rows = []
+    for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
+        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
+            continue
+        if name == "Загальна":
+            pct = 100.0 if not math.isnan(SS_total) else np.nan
+            rows.append([name, fmt_num(SSv, 2), fmt_num(pct, 2)])
+            continue
+        pct = (SSv / SS_total * 100.0) if (not math.isnan(SS_total) and SS_total > 0) else np.nan
+        rows.append([name, fmt_num(SSv, 2), fmt_num(pct, 2)])
+
+    return rows
+
+
+# -------------------------
 # GUI
 # -------------------------
 class SADTk:
@@ -687,7 +716,7 @@ class SADTk:
             options = [
                 ("НІР₀₅", "lsd"),
                 ("Тест Тьюкі", "tukey"),
-                ("Тест Данкан", "duncan"),
+                ("Тест Дункана", "duncan"),
                 ("Тест Бонферроні", "bonferroni"),
             ]
         else:
@@ -696,7 +725,7 @@ class SADTk:
                    "Виберіть один з непараметричних типів аналізу.")
             tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
             options = [
-                ("Краскела–Уолліса", "kw"),
+                ("Краскела–Уолліса + пост-хок Манна-Уітні", "kw"),
                 ("Манна-Уітні (парні) + Бонферроні", "mw"),
             ]
 
@@ -751,9 +780,9 @@ class SADTk:
             "Аналіз даних",
             "Розробник",
         ]
-        btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=13, min_size=9, target_px=155)
+        btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=13, min_size=9, target_px=150)
 
-        bw = 15
+        bw = 14
         bh = 1
         padx = 3
         pady = 2
@@ -1074,6 +1103,7 @@ class SADTk:
             for f in self.factor_keys:
                 letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
 
+        # variants
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         num_variants = len(variant_order)
 
@@ -1096,18 +1126,18 @@ class SADTk:
             v_medians[k] = med
             v_q[k] = (q1, q3)
 
-        kw_H, kw_p, kw_df, kw_k = (np.nan, np.nan, np.nan, 0)
+        # Kruskal–Wallis (global across variants)
+        kw_H, kw_p, kw_df = (np.nan, np.nan, np.nan)
         if method == "kw":
             try:
                 kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
-                kw_k = len(kw_samples)
-                if kw_k >= 2:
+                if len(kw_samples) >= 2:
                     kw_res = kruskal(*kw_samples)
                     kw_H = float(kw_res.statistic)
                     kw_p = float(kw_res.pvalue)
-                    kw_df = int(kw_k - 1)
+                    kw_df = int(len(kw_samples) - 1)
             except Exception:
-                kw_H, kw_p, kw_df, kw_k = (np.nan, np.nan, np.nan, 0)
+                kw_H, kw_p, kw_df = (np.nan, np.nan, np.nan)
 
         letters_named = {name: "" for name in v_names}
         pairwise_rows = []
@@ -1122,12 +1152,14 @@ class SADTk:
 
         elif method in ("mw", "kw"):
             pairwise_rows, sig = pairwise_mw_bonf_short_variants_pm(v_names, groups1, alpha=ALPHA)
-            means_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-            letters_named = cld_multi_letters(v_names, means_tmp, sig)
+            med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
+            letters_named = cld_multi_letters(v_names, med_tmp, sig)
 
         letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
-        # ---- report segments
+        # -------------------------
+        # REPORT segments
+        # -------------------------
         title_map = {
             1: "О Д Н О Ф А К Т О Р Н О Г О",
             2: "Д В О Ф А К Т О Р Н О Г О",
@@ -1145,14 +1177,13 @@ class SADTk:
         else:
             seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
 
-        # ✅ ОЦЕ ДОДАНО: явно вказуємо, який аналіз/тест виконується (перед таблицею ANOVA)
         method_label = {
-            "lsd": "Параметричний аналіз: дисперсійний аналіз ANOVA + критерій НІР₀₅ (LSD).",
-            "tukey": "Параметричний аналіз: дисперсійний аналіз ANOVA + пост-хок тест Тьюкі (Tukey HSD).",
-            "duncan": "Параметричний аналіз: дисперсійний аналіз ANOVA + пост-хок тест Дункана.",
-            "bonferroni": "Параметричний аналіз: дисперсійний аналіз ANOVA + пост-хок тест Бонферроні.",
-            "kw": "Непараметричний аналіз: тест Краскела–Уолліса (Kruskal–Wallis) + пост-хок Манна–Уітні з корекцією Бонферроні.",
-            "mw": "Непараметричний аналіз: парні порівняння Манна–Уітні (Mann–Whitney) з корекцією Бонферроні.",
+            "lsd": "Параметричний аналіз: ANOVA + НІР₀₅ (LSD).",
+            "tukey": "Параметричний аналіз: ANOVA + тест Тьюкі (Tukey HSD).",
+            "duncan": "Параметричний аналіз: ANOVA + тест Дункана.",
+            "bonferroni": "Параметричний аналіз: ANOVA + корекція Бонферроні.",
+            "kw": "Непараметричний аналіз: Kruskal–Wallis + пост-хок Mann–Whitney (Bonferroni).",
+            "mw": "Непараметричний аналіз: Mann–Whitney (Bonferroni) для парних порівнянь.",
         }.get(method, "")
 
         if method_label:
@@ -1166,7 +1197,7 @@ class SADTk:
                 concl = "істотна різниця " + significance_mark(kw_p) if kw_p < 0.05 else "-"
                 seg.append(("text",
                             f"Непараметричний тест між варіантами (Kruskal–Wallis):\t"
-                            f"H={fmt_num(kw_H,4)}; df={kw_df}; p={fmt_num(kw_p,4)}\t{concl}\n\n"))
+                            f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n\n"))
             else:
                 seg.append(("text", "Непараметричний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
 
@@ -1174,35 +1205,52 @@ class SADTk:
         seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
         seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
 
-        # Table 1 ANOVA
+        # ---- Table 1: ANOVA or ANOVA reference
         anova_rows = []
+        nonparam = method in ("mw", "kw")
+
         for name, SSv, dfv, MSv, Fv, pv in res["table"]:
+            df_txt = str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""
+
             if name in ("Залишок", "Загальна"):
-                anova_rows.append([name, fmt_num(SSv, 2),
-                                   str(int(dfv)) if dfv is not None and not math.isnan(dfv) else "",
-                                   fmt_num(MSv, 3), "", "", ""])
+                anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
+                continue
+
+            if nonparam:
+                # ❗ Для непараметричних: не показуємо F,p і висновки ANOVA (щоб не вводити в оману)
+                anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
             else:
                 mark = significance_mark(pv)
                 concl = f"істотна різниця {mark}" if mark else "-"
-                anova_rows.append([name, fmt_num(SSv, 2),
-                                   str(int(dfv)) if dfv is not None and not math.isnan(dfv) else "",
-                                   fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
+                anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
 
-        seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
+        if nonparam:
+            seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійна декомпозиція (ANOVA — довідково)\n"))
+        else:
+            seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
+
         seg.append(("table", (["Джерело", "SS", "df", "MS", "F", "p", "Висновок"], anova_rows)))
         seg.append(("text", "\n"))
 
-        tno = 2
+        # ---- Table 2: Effect strength (SS, %)
+        eff_rows = build_effect_strength_rows(res["table"])
+        seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів та їх комбінацій (частка від SS, %)\n"))
+        seg.append(("table", (["Джерело", "SS", "SS, %"], eff_rows)))
+        seg.append(("text", "\n"))
+
+        # ---- NIR (LSD only)
+        tno = 3
         if method == "lsd":
             nir_rows = []
             for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
                 if key in res.get("NIR05", {}):
                     nir_rows.append([key, fmt_num(res["NIR05"][key], 4)])
-            seg.append(("text", "ТАБЛИЦЯ 2. Значення НІР₀₅\n"))
+            seg.append(("text", "ТАБЛИЦЯ 3. Значення НІР₀₅\n"))
             seg.append(("table", (["Елемент", "НІР₀₅"], nir_rows)))
             seg.append(("text", "\n"))
-            tno = 3
+            tno = 4
 
+        # ---- Factor tables
         for f in self.factor_keys:
             if method in ("mw", "kw"):
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика по фактору {f} (непараметрична)\n"))
@@ -1230,8 +1278,9 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
+        # ---- Variant table
         if method in ("mw", "kw"):
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця описової статистики (варіанти, непараметрична)\n"))
+            seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
             rows = []
             for k in variant_order:
                 name = " | ".join(map(str, k))
@@ -1261,6 +1310,7 @@ class SADTk:
         seg.append(("text", "\n"))
         tno += 1
 
+        # ---- Pairwise
         if method in ("mw", "kw") and pairwise_rows:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Mann–Whitney, Bonferroni)\n"))
             seg.append(("table", (["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця"], pairwise_rows)))
