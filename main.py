@@ -11,6 +11,7 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 ✅ Кнопки над таблицею вводу: зроблено компактнішими + авто-підбір шрифту під назви кнопок.
 ✅ Таблиці у звіті: заголовки не "злипаються" (збільшено міжколонковий відступ таб-стопів + мінівідступ у заголовках).
 ✅ icon.ico: надійно шукаємо у папці скрипта/поточній папці + підтримка зібраного .exe (PyInstaller).
+✅ Додано ще один непараметричний аналіз: Kruskal–Wallis (глобальний тест) + пост-хок MW (Bonferroni).
 """
 
 import os
@@ -25,7 +26,7 @@ from itertools import combinations
 from collections import defaultdict
 
 from scipy.stats import shapiro, t, f as f_dist
-from scipy.stats import mannwhitneyu
+from scipy.stats import mannwhitneyu, kruskal
 from scipy.stats import studentized_range
 
 ALPHA = 0.05
@@ -86,7 +87,6 @@ def set_window_icon(win: tk.Tk | tk.Toplevel):
     ico = _find_icon_file()
     if not ico:
         return
-    # Найнадійніше для Windows:
     try:
         win.iconbitmap(ico)
         return
@@ -625,7 +625,7 @@ class SADTk:
 
         tk.Label(
             self.main_frame,
-            text="Виберіть тип аналізу → Внесіть дані → Натисніть «Аналіз даних»",
+            text="Виберіть тип аналізу → внесіть дані (можна вставляти з Excel) → натисніть «Аналіз даних»",
             fg="#000000",
             bg="white"
         ).pack(pady=10)
@@ -695,7 +695,10 @@ class SADTk:
                    "за методом Шапіра-Вілка.\n"
                    "Виберіть один з непараметричних типів аналізу.")
             tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
-            options = [("Манна-Уітні", "mw")]
+            options = [
+                ("Краскела–Уолліса", "kw"),
+                ("Манна-Уітні (парні, Бонферроні)", "mw"),
+            ]
 
         var = tk.StringVar(value=options[0][1])
         for text, val in options:
@@ -751,8 +754,8 @@ class SADTk:
         ]
         btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=13, min_size=9, target_px=155)
 
-        bw = 15     # менше
-        bh = 1      # компактніше
+        bw = 15
+        bh = 1
         padx = 3
         pady = 2
 
@@ -809,7 +812,7 @@ class SADTk:
         self.table_win.bind("<Control-V>", self.on_paste)
 
     def show_about(self):
-        messagebox.showinfo("Розробник", "S.A.D. — Статистичний аналіз даних\nВерсія: 1.0\nРозробник: Чаплоуцький Андрій Миколайович\nУманський національний університет")
+        messagebox.showinfo("Розробник", "S.A.D. — Статистичний аналіз даних\nВерсія: 1.0\nРозробик: Чаплоуцький Андрій Миколайович\nУманський національний університет")
 
     def bind_cell(self, e: tk.Entry):
         e.bind("<Return>", self.on_enter)
@@ -1064,6 +1067,7 @@ class SADTk:
 
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         num_variants = len(variant_order)
+
         vstats = variant_mean_sd(long, self.factor_keys)
         v_means = {k: vstats[k][0] for k in vstats.keys()}
         v_sds = {k: vstats[k][1] for k in vstats.keys()}
@@ -1074,19 +1078,37 @@ class SADTk:
         ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
         groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
 
+        # --- Kruskal–Wallis (для варіантів) якщо обрано
+        kw_H, kw_p = (np.nan, np.nan)
+        if method == "kw":
+            try:
+                kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
+                if len(kw_samples) >= 2:
+                    kw_res = kruskal(*kw_samples)
+                    kw_H = float(kw_res.statistic)
+                    kw_p = float(kw_res.pvalue)
+            except Exception:
+                kw_H, kw_p = (np.nan, np.nan)
+
         letters_named = {name: "" for name in v_names}
         pairwise_rows = []
 
         if method == "lsd":
             sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
             letters_named = cld_multi_letters(v_names, means1, sigv)
+
         elif method in ("tukey", "duncan", "bonferroni"):
             pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
             letters_named = cld_multi_letters(v_names, means1, sig)
-        else:
+
+        elif method in ("mw", "kw"):
+            # Для KW: глобальний тест + парні MW з Бонферроні як пост-хок
             pairwise_rows, sig = pairwise_mw_bonf_short_variants_pm(v_names, groups1, alpha=ALPHA)
             means_tmp = {name: float(np.mean(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
             letters_named = cld_multi_letters(v_names, means_tmp, sig)
+
+        else:
+            pairwise_rows, sig = [], {}
 
         letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
@@ -1098,14 +1120,22 @@ class SADTk:
         seg.append(("text", f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
 
         if not math.isnan(W):
-            seg.append(("text", f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
+            seg.append(("text", f"Перевірка нормальності (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
         else:
             seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
 
-        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
-        seg.append(("text", "У таблицях знак \"-\" означає p ≥ 0.05.\n"))
-        seg.append(("text", "Істотна різниця (літери): різні літери означають істотну різницю.\n\n"))
+        if method == "kw":
+            if not (isinstance(kw_p, float) and math.isnan(kw_p)):
+                concl = "істотна різниця " + significance_mark(kw_p) if kw_p < 0.05 else "-"
+                seg.append(("text", f"Непараметричний тест між варіантами (Kruskal–Wallis):\tH={fmt_num(kw_H,4)}; p={fmt_num(kw_p,4)}\t{concl}\n\n"))
+            else:
+                seg.append(("text", "Непараметричний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
 
+        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
+        seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
+        seg.append(("text", "Істотна різниця (літери): різні літери свідчать пронаявність істотної різниці.\n\n"))
+
+        # Table 1 ANOVA
         anova_rows = []
         for name, SSv, dfv, MSv, Fv, pv in res["table"]:
             if name in ("Залишок", "Загальна"):
@@ -1123,6 +1153,7 @@ class SADTk:
         seg.append(("table", (["Джерело", "SS", "df", "MS", "F", "p", "Висновок"], anova_rows)))
         seg.append(("text", "\n"))
 
+        # NIR only for LSD
         tno = 2
         if method == "lsd":
             nir_rows = []
@@ -1134,6 +1165,7 @@ class SADTk:
             seg.append(("text", "\n"))
             tno = 3
 
+        # Factor means
         for f in self.factor_keys:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
             rows = []
@@ -1145,6 +1177,7 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
+        # Variant means table
         seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень (варіанти)\n"))
         rows = []
         for k in variant_order:
@@ -1157,7 +1190,8 @@ class SADTk:
         seg.append(("text", "\n"))
         tno += 1
 
-        if method in ("tukey", "duncan", "bonferroni", "mw") and pairwise_rows:
+        # Pairwise
+        if method in ("tukey", "duncan", "bonferroni", "mw", "kw") and pairwise_rows:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (варіанти)\n"))
             seg.append(("table", (["Комбінація варіантів", "p", "Істотна різниця"], pairwise_rows)))
 
@@ -1192,8 +1226,6 @@ class SADTk:
                 continue
 
             headers, rows = payload
-
-            # ✅ збільшено padding для таб-стопів, щоб заголовки не "злипались"
             tabs = tabs_from_table_px(font_obj, headers, rows, padding_px=32)
 
             tag = f"tbl_{table_idx}"
