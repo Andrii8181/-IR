@@ -4,11 +4,14 @@
 """
 S.A.D. — Статистичний аналіз даних (Tkinter)
 Потрібно: Python 3.8+, numpy, scipy
-Встановлення: pip install numpy scipy
+Опційно (для експорту у Word .docx): python-docx
+Встановлення:
+  pip install numpy scipy
+  pip install python-docx
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from tkinter.scrolledtext import ScrolledText
 import math
 import numpy as np
@@ -32,6 +35,9 @@ except Exception:
 
 
 ALPHA = 0.05  # для НІР₀₅
+
+# Ширина колонок у таблиці введення (шрифт НЕ чіпаємо)
+COL_W = 12  # було 14; можна 11/12
 
 
 # -------------------------
@@ -172,6 +178,44 @@ def compact_letters(levels_in_order, means_dict, nir):
     return mapping
 
 
+def make_ascii_table(headers, rows, aligns=None):
+    """
+    ASCII-таблиця з межами: стовпчики/рядки відмежовані.
+    headers: list[str]
+    rows: list[list[str]]
+    aligns: list[str] 'l'/'r'/'c'
+    """
+    rows_s = [[("" if v is None else str(v)) for v in row] for row in rows]
+    headers_s = [str(h) for h in headers]
+    ncol = len(headers_s)
+
+    if aligns is None:
+        aligns = ["l"] * ncol
+
+    widths = [len(headers_s[i]) for i in range(ncol)]
+    for row in rows_s:
+        for i in range(ncol):
+            widths[i] = max(widths[i], len(row[i]))
+
+    def fmt_cell(text, w, a):
+        if a == "r":
+            return text.rjust(w)
+        if a == "c":
+            return text.center(w)
+        return text.ljust(w)
+
+    sep = "+" + "+".join(["-" * (w + 2) for w in widths]) + "+"
+
+    out = []
+    out.append(sep)
+    out.append("| " + " | ".join(fmt_cell(headers_s[i], widths[i], "c") for i in range(ncol)) + " |")
+    out.append(sep)
+    for row in rows_s:
+        out.append("| " + " | ".join(fmt_cell(row[i], widths[i], aligns[i]) for i in range(ncol)) + " |")
+        out.append(sep)
+    return "\n".join(out)
+
+
 # -------------------------
 # Узагальнений ANOVA для 1–4 факторів (на основі маргінальних середніх)
 # -------------------------
@@ -212,23 +256,22 @@ def anova_n_way(long, factors, levels_by_factor):
         if not math.isnan(v) and not math.isnan(m):
             SS_error += (v - m) ** 2
 
-    # Визначення df
+    # df
     levels_count = {f: len(levels_by_factor[f]) for f in factors}
     total_cells = 1
     for f in factors:
         total_cells *= levels_count[f]
 
     df_total = N - 1
-    df_error = N - total_cells  # як у твоїй початковій логіці (працює коректно при повному факторіальному плані)
+    df_error = N - total_cells  # коректно при повному факторіальному плані
 
     if df_error <= 0:
-        # якщо клітинок більше/дорівнює N — формально немає df похибки
         df_error = max(1, df_error)
 
     # MS_error
     MS_error = SS_error / df_error if df_error > 0 else np.nan
 
-    # Підготовка inclusion-exclusion для SS ефектів
+    # inclusion-exclusion для SS ефектів
     def delta_for_subset(S, levels_S):
         """
         delta_S = sum_{T ⊆ S} (-1)^(|S|-|T|) μ_T
@@ -242,7 +285,6 @@ def anova_n_way(long, factors, levels_by_factor):
                 if len(T) == 0:
                     mu = grand_mean
                 else:
-                    # витягнути відповідні рівні
                     idxs = [S.index(x) for x in T]
                     levs_T = tuple(levels_S[i] for i in idxs)
                     mu = stats[T].get(levs_T, (np.nan, 0))[0]
@@ -251,19 +293,16 @@ def anova_n_way(long, factors, levels_by_factor):
                 delta += coef * mu
         return delta
 
-    # SS для кожного ефекту S (S - непорожня підмножина факторів)
     SS = {}
     df = {}
 
     for rS in range(1, k + 1):
         for S in combinations(factors, rS):
-            # df_S = Π (levels_i - 1)
             d = 1
             for f in S:
                 d *= (levels_count[f] - 1)
             df[S] = d
 
-            # сума по всіх комбінаціях рівнів підмножини S, які існують в даних stats[S]
             ss = 0.0
             for levels_S, (mS, nS) in stats[S].items():
                 if nS <= 0 or mS is None or (isinstance(mS, float) and math.isnan(mS)):
@@ -272,24 +311,14 @@ def anova_n_way(long, factors, levels_by_factor):
                 ss += nS * (delta ** 2)
             SS[S] = ss
 
-    # MS, F, p
+    # p-values
     table_rows = []
     p_values = {}
-    effect_names = {}  # для друку красивих назв
+    effect_names = {}
 
-    # назви факторів
-    pretty = {"A": "Фактор А", "B": "Фактор В", "C": "Фактор С", "D": "Фактор Д"}
-    def pretty_name(subset):
-        # subset tuple like ('A','B')
-        if len(subset) == 1:
-            return pretty.get(subset[0], subset[0])
-        # взаємодія
-        return "*".join([pretty.get(x, x).replace("Фактор ", "Фактор ") for x in subset]).replace("Фактор ", "Фактор ")
-
-    # але для взаємодій просили "Фактор А*В", "Фактор А*В*С" (без повторення слова)
     def pretty_interaction(subset):
         if len(subset) == 1:
-            return pretty.get(subset[0], subset[0])
+            return {"A": "Фактор А", "B": "Фактор В", "C": "Фактор С", "D": "Фактор Д"}.get(subset[0], subset[0])
         letters = []
         for x in subset:
             if x == "A":
@@ -304,7 +333,6 @@ def anova_n_way(long, factors, levels_by_factor):
                 letters.append(x)
         return "Фактор " + "*".join(letters)
 
-    # порядок: головні ефекти, потім 2-way, 3-way, 4-way
     for rS in range(1, k + 1):
         for S in combinations(factors, rS):
             name = pretty_interaction(S)
@@ -317,7 +345,6 @@ def anova_n_way(long, factors, levels_by_factor):
             p_values[name] = pv
             table_rows.append((name, SSv, dfv, MSv, Fv, pv))
 
-    # додати Залишок і Загальна
     table_rows.append(("Залишок", SS_error, df_error, MS_error, None, None))
     table_rows.append(("Загальна", SS_total, df_total, None, None, None))
 
@@ -329,31 +356,28 @@ def anova_n_way(long, factors, levels_by_factor):
             eta2[name] = (SS[S] / SS_total) if SS_total > 0 else np.nan
     eta2["Залишок"] = (SS_error / SS_total) if SS_total > 0 else np.nan
 
-    # НІР₀₅ (по факторах + загальна)
-    # r_mean = середня повторність по комірках (ті, що мають n>0)
+    # НІР₀₅
     r_list = [n for n in cell_counts.values() if n > 0]
     r_mean = float(np.mean(r_list)) if r_list else np.nan
-
     tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
 
     NIR05 = {}
+    pretty_map = {"A": "Фактор А", "B": "Фактор В", "C": "Фактор С", "D": "Фактор Д"}
+
     if k == 1:
-        # як в однофакторному: 2*MS_error/mean_n
         mean_n = np.mean([v[1] for v in stats[(factors[0],)].values()]) if stats.get((factors[0],)) else np.nan
         nir = tval * math.sqrt(2 * MS_error / mean_n) if not any(math.isnan(x) for x in [tval, MS_error, mean_n]) else np.nan
-        NIR05[pretty["A"]] = nir
+        NIR05[pretty_map["A"]] = nir
         NIR05["Загальна"] = nir
     else:
-        # для головних ефектів: divisor = (product of other factor levels) * r_mean
-        for f in factors:
+        for fct in factors:
             other_prod = 1
             for g in factors:
-                if g != f:
+                if g != fct:
                     other_prod *= levels_count[g]
             divisor = other_prod * r_mean
             nir = tval * math.sqrt(2 * MS_error / divisor) if not any(math.isnan(x) for x in [tval, MS_error, r_mean]) else np.nan
-            NIR05[pretty.get(f, f)] = nir
-        # загальна для варіантів
+            NIR05[pretty_map.get(fct, fct)] = nir
         nir_all = tval * math.sqrt(2 * MS_error / r_mean) if not any(math.isnan(x) for x in [tval, MS_error, r_mean]) else np.nan
         NIR05["Загальна"] = nir_all
 
@@ -377,7 +401,7 @@ class SADTk:
         root.title("S.A.D. — Статистичний аналіз даних")
         root.geometry("1000x560")
 
-        # Загальні параметри стилю
+        # Загальні параметри стилю (НЕ змінюємо)
         self.base_font = ("Times New Roman", 15)
         root.option_add("*Font", self.base_font)
         root.option_add("*Foreground", "#000000")
@@ -418,6 +442,7 @@ class SADTk:
 
         self.table_win = None
         self.report_win = None
+        self.last_report_text = ""  # для експорту DOCX
 
     # ---------- Діалог показника + одиниць (в одному вікні, по центру) ----------
     def ask_indicator_units(self):
@@ -475,7 +500,7 @@ class SADTk:
         self.table_win.geometry("1280x720")
 
         # Фактори + повторності
-        self.repeat_count = 6  # зробив трохи більше, але порожні колонки автоматично ігноруються
+        self.repeat_count = 6  # порожні колонки автоматично ігноруються
         factor_letters = ["А", "В", "С", "Д"]
         self.factor_names = [f"Фактор {factor_letters[i]}" for i in range(factors_count)]
         self.column_names = self.factor_names + [f"Повт.{i+1}" for i in range(self.repeat_count)]
@@ -494,7 +519,6 @@ class SADTk:
 
         tk.Button(ctl, text="Аналіз даних", bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=16)
 
-        # справа кнопка "Про розробника"
         tk.Button(ctl, text="Про розробника", command=self.show_about).pack(side=tk.RIGHT, padx=4)
 
         # Canvas + Scroll
@@ -515,14 +539,14 @@ class SADTk:
         self.header_labels = []
 
         for j, name in enumerate(self.column_names):
-            lbl = tk.Label(self.inner, text=name, relief=tk.RIDGE, width=14, bg="#f0f0f0", fg="#000000")
+            lbl = tk.Label(self.inner, text=name, relief=tk.RIDGE, width=COL_W, bg="#f0f0f0", fg="#000000")
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             self.header_labels.append(lbl)
 
         for i in range(self.rows):
             row_entries = []
             for j in range(self.cols):
-                e = tk.Entry(self.inner, width=14, fg="#000000")
+                e = tk.Entry(self.inner, width=COL_W, fg="#000000")
                 e.grid(row=i + 1, column=j, padx=2, pady=2)
                 self.bind_cell(e)
                 row_entries.append(e)
@@ -558,7 +582,7 @@ class SADTk:
         i = len(self.entries)
         row_entries = []
         for j in range(self.cols):
-            e = tk.Entry(self.inner, width=14, fg="#000000")
+            e = tk.Entry(self.inner, width=COL_W, fg="#000000")
             e.grid(row=i + 1, column=j, padx=2, pady=2)
             self.bind_cell(e)
             row_entries.append(e)
@@ -578,17 +602,16 @@ class SADTk:
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
 
     def add_column(self):
-        # додаємо нову повторність справа
         self.cols += 1
         col_idx = self.cols - 1
         name = f"Повт.{col_idx - self.factors_count + 1}"
 
-        lbl = tk.Label(self.inner, text=name, relief=tk.RIDGE, width=14, bg="#f0f0f0", fg="#000000")
+        lbl = tk.Label(self.inner, text=name, relief=tk.RIDGE, width=COL_W, bg="#f0f0f0", fg="#000000")
         lbl.grid(row=0, column=col_idx, padx=2, pady=2, sticky="nsew")
         self.header_labels.append(lbl)
 
         for i, row in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=14, fg="#000000")
+            e = tk.Entry(self.inner, width=COL_W, fg="#000000")
             e.grid(row=i + 1, column=col_idx, padx=2, pady=2)
             self.bind_cell(e)
             row.append(e)
@@ -597,17 +620,14 @@ class SADTk:
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
 
     def delete_column(self):
-        # мінімум: фактори + 1 повторність
         if self.cols <= self.factors_count + 1:
             return
         col_idx = self.cols - 1
 
-        # видалити header
         if self.header_labels:
             lbl = self.header_labels.pop()
             lbl.destroy()
 
-        # видалити entries
         for row in self.entries:
             w = row.pop()
             w.destroy()
@@ -691,7 +711,7 @@ class SADTk:
 
         return "break"
 
-    # ---------- Які повторності реально активні (порожні колонки ігноруємо) ----------
+    # ---------- Які повторності реально активні ----------
     def used_repeat_columns(self):
         rep_start = self.factors_count
         rep_cols = list(range(rep_start, self.cols))
@@ -764,10 +784,10 @@ class SADTk:
             messagebox.showinfo("Результат", "Надто мало даних для аналізу.")
             return
 
-        # Порядок рівнів факторів — як введено (не сортуємо!)
+        # Порядок рівнів факторів — як введено (не сортуємо)
         levels_by_factor = {}
-        for f in self.factor_keys:
-            levels_by_factor[f] = first_seen_order([r.get(f) for r in long])
+        for fct in self.factor_keys:
+            levels_by_factor[fct] = first_seen_order([r.get(fct) for r in long])
 
         # ANOVA 1–4
         try:
@@ -776,11 +796,11 @@ class SADTk:
             messagebox.showerror("Помилка аналізу", str(ex))
             return
 
-        # Residuals для Shapiro: value - mean(комірки)
+        # Residuals для Shapiro
         cell_means = res.get("cell_means", {})
         residuals = []
         for r in long:
-            key = tuple(r.get(f) for f in self.factor_keys)
+            key = tuple(r.get(fct) for fct in self.factor_keys)
             v = r.get("value", np.nan)
             m = cell_means.get(key, np.nan)
             if not math.isnan(v) and not math.isnan(m):
@@ -792,23 +812,22 @@ class SADTk:
         except Exception:
             W, p_norm = (np.nan, np.nan)
 
-        # Літери для факторів (маргінальні середні)
-        # Рахуємо маргінальні середні напряму з long (щоб порядок рівнів був як введено)
+        # Маргінальні середні по факторах
         means_factor = {}
-        for f in self.factor_keys:
-            stats_f = subset_stats(long, (f,))
-            means_factor[f] = {k[0]: v[0] for k, v in stats_f.items()}
+        for fct in self.factor_keys:
+            stats_f = subset_stats(long, (fct,))
+            means_factor[fct] = {k[0]: v[0] for k, v in stats_f.items()}
 
         NIR = res.get("NIR05", {})
         letters_factor = {}
-        for f in self.factor_keys:
-            pretty = {"A":"Фактор А","B":"Фактор В","C":"Фактор С","D":"Фактор Д"}[f]
+        for fct in self.factor_keys:
+            pretty = {"A": "Фактор А", "B": "Фактор В", "C": "Фактор С", "D": "Фактор Д"}[fct]
             nir_f = NIR.get(pretty, np.nan)
-            letters_factor[f] = compact_letters(levels_by_factor[f], means_factor[f], nir_f)
+            letters_factor[fct] = compact_letters(levels_by_factor[fct], means_factor[fct], nir_f)
 
-        # Таблиця варіантів: mean, SD, літери (за Загальною НІР₀₅)
+        # Таблиця варіантів
         vstats = variant_mean_sd(long, self.factor_keys)
-        variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
+        variant_order = first_seen_order([tuple(r.get(fct) for fct in self.factor_keys) for r in long])
         v_means = {k: vstats[k][0] for k in vstats.keys()}
         letters_variants = compact_letters(variant_order, v_means, NIR.get("Загальна", np.nan))
 
@@ -842,66 +861,55 @@ class SADTk:
         report_lines.append("Істотна різниця між середніми: різні літери біля середніх значень.")
         report_lines.append("")
 
-        # Таблиця 1 — ANOVA
+        # Таблиця 1 — ANOVA (ASCII)
         report_lines.append("ТАБЛИЦЯ 1. Дисперсійний аналіз")
-        report_lines.append("────────────────────────────────────────────────────────────────────────────────────────────────────────")
-        report_lines.append(
-            f"{'Джерело варіації':<26}"
-            f"{'Сума квадратів':>16}"
-            f"{'Ступені свободи':>16}"
-            f"{'Середній квадрат':>18}"
-            f"{'F-критерій':>14}"
-            f"{'p-значення':>14}"
-            f"{'Висновок':>18}"
-        )
-        report_lines.append("────────────────────────────────────────────────────────────────────────────────────────────────────────")
-
+        headers = ["Джерело варіації", "Сума квадратів", "Ступені свободи", "Середній квадрат", "F-критерій", "p-значення", "Висновок"]
+        rows = []
         for name, SSv, dfv, MSv, Fv, pv in res["table"]:
             if name in ("Залишок", "Загальна"):
-                report_lines.append(
-                    f"{name:<26}"
-                    f"{fmt_num(SSv,2):>16}"
-                    f"{(str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ''):>16}"
-                    f"{fmt_num(MSv,3):>18}"
-                    f"{'':>14}{'':>14}{'':>18}"
-                )
+                rows.append([
+                    name,
+                    fmt_num(SSv, 2),
+                    (str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""),
+                    fmt_num(MSv, 3),
+                    "",
+                    "",
+                    ""
+                ])
             else:
                 mark = significance_mark(pv)
                 concl = "істотна різниця" if mark else ""
-                report_lines.append(
-                    f"{name:<26}"
-                    f"{fmt_num(SSv,2):>16}"
-                    f"{(str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ''):>16}"
-                    f"{fmt_num(MSv,3):>18}"
-                    f"{fmt_num(Fv,3):>14}"
-                    f"{fmt_num(pv,4):>14}"
-                    f"{(concl + (' ' + mark if mark else '')):>18}"
-                )
-
-        report_lines.append("────────────────────────────────────────────────────────────────────────────────────────────────────────")
+                rows.append([
+                    name,
+                    fmt_num(SSv, 2),
+                    (str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""),
+                    fmt_num(MSv, 3),
+                    fmt_num(Fv, 3),
+                    fmt_num(pv, 4),
+                    (concl + (" " + mark if mark else ""))
+                ])
+        report_lines.append(make_ascii_table(headers, rows, aligns=["l", "r", "r", "r", "r", "r", "l"]))
         report_lines.append("")
 
         # Сила впливу
         report_lines.append("Сила впливу (%, частка від загальної суми квадратів):")
         eta = res.get("eta2", {})
-        # порядок: усе як у таблиці ANOVA, плюс Залишок
         for name, *_ in res["table"]:
             if name in eta:
                 report_lines.append(f"  • {name:<26} — {eta[name]*100:7.2f}%")
         report_lines.append("")
 
-        # Таблиця НІР₀₅
+        # Таблиця 2 — НІР₀₅ (ASCII)
         report_lines.append("ТАБЛИЦЯ 2. Значення НІР₀₅")
-        report_lines.append("────────────────────────────────────────────")
-        report_lines.append(f"{'Елемент':<20}{'НІР₀₅':>12}")
-        report_lines.append("────────────────────────────────────────────")
+        headers = ["Елемент", "НІР₀₅"]
+        rows = []
         for key in ["Фактор А", "Фактор В", "Фактор С", "Фактор Д", "Загальна"]:
             if key in res.get("NIR05", {}):
-                report_lines.append(f"{key:<20}{fmt_num(res['NIR05'][key],2):>12}")
-        report_lines.append("────────────────────────────────────────────")
+                rows.append([key, fmt_num(res["NIR05"][key], 2)])
+        report_lines.append(make_ascii_table(headers, rows, aligns=["l", "r"]))
         report_lines.append("")
 
-        # Середні по факторах (у порядку введення)
+        # Середні по факторах (порядок введення)
         if self.factors_count >= 1:
             report_lines.append("Середні по фактору А:")
             for lvl in levels_by_factor["A"]:
@@ -927,18 +935,19 @@ class SADTk:
                 report_lines.append(f"  {lvl:<24}{fmt_num(m,2):>10}  {letters_factor['D'].get(lvl,'')}")
             report_lines.append("")
 
-        # Таблиця варіантів
-        report_lines.append("ТАБЛИЦЯ 3. Варіанти досліду: середнє значення, SD та буквенні позначення істотної різниці")
-        report_lines.append("────────────────────────────────────────────────────────────────────────────────────────────")
-        report_lines.append(f"{'Варіант (рівні факторів)':<62}{'Середнє':>10}{'SD':>10}{'Літера':>10}")
-        report_lines.append("────────────────────────────────────────────────────────────────────────────────────────────")
+        # Таблиця 3 — перейменована і “нормальна” (ASCII)
+        report_lines.append("ТАБЛИЦЯ 3. Таблиця середніх значень (варіанти досліду), SD та буквені позначення істотної різниці")
+        headers = ["Варіант (рівні факторів)", "n", "Середнє", "SD", "Літера"]
+        rows = []
         for key in variant_order:
             m, sd, n = vstats.get(key, (np.nan, np.nan, 0))
             name = " | ".join([str(x) for x in key])
-            report_lines.append(f"{name:<62}{fmt_num(m,2):>10}{fmt_num(sd,2):>10}{letters_variants.get(key,''):>10}")
-        report_lines.append("────────────────────────────────────────────────────────────────────────────────────────────")
+            rows.append([name, str(n), fmt_num(m, 2), fmt_num(sd, 2), letters_variants.get(key, "")])
+        report_lines.append(make_ascii_table(headers, rows, aligns=["l", "r", "r", "r", "c"]))
 
-        self.show_report("\n".join(report_lines))
+        report_text = "\n".join(report_lines)
+        self.last_report_text = report_text
+        self.show_report(report_text)
 
     # ---------- Вікно звіту (копіювання працює) ----------
     def show_report(self, text):
@@ -957,7 +966,42 @@ class SADTk:
             self.report_win.clipboard_append(text)
             messagebox.showinfo("Готово", "Звіт скопійовано в буфер обміну.")
 
+        def export_docx():
+            # Гарантоване збереження Times New Roman у Word: через .docx
+            try:
+                from docx import Document
+                from docx.shared import Pt
+            except Exception:
+                messagebox.showerror(
+                    "Немає бібліотеки",
+                    "Для експорту у Word встановіть python-docx:\n\npip install python-docx"
+                )
+                return
+
+            path = filedialog.asksaveasfilename(
+                defaultextension=".docx",
+                filetypes=[("Word document", "*.docx")],
+                title="Зберегти звіт як DOCX"
+            )
+            if not path:
+                return
+
+            try:
+                doc = Document()
+                style = doc.styles["Normal"]
+                style.font.name = "Times New Roman"
+                style.font.size = Pt(14)
+
+                for line in text.splitlines():
+                    doc.add_paragraph(line)
+
+                doc.save(path)
+                messagebox.showinfo("Готово", f"DOCX збережено:\n{path}")
+            except Exception as ex:
+                messagebox.showerror("Помилка експорту", str(ex))
+
         tk.Button(top, text="Копіювати весь звіт", command=copy_all).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Експорт у DOCX (Word)", command=export_docx).pack(side=tk.LEFT, padx=6)
 
         txt = ScrolledText(self.report_win, width=120, height=40)
         txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
