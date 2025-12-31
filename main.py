@@ -15,6 +15,7 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 ✅ Для непараметричних звітів додано МЕДІАНИ та Q1–Q3 (IQR), узгоджено опис зі статистикою.
 ✅ Для Mann–Whitney у парних порівняннях показуємо U та p(Bonferroni).
 ✅ Для Kruskal–Wallis показуємо H, df, p.
+✅ Перед таблицею ANOVA вказано, який саме аналіз/тест виконується.
 """
 
 import os
@@ -151,7 +152,6 @@ def harmonic_mean(nums):
 
 
 def median_q1_q3(arr):
-    """Повертає (median, q1, q3) або (nan,nan,nan) якщо даних немає."""
     if arr is None or len(arr) == 0:
         return (np.nan, np.nan, np.nan)
     a = np.array(arr, dtype=float)
@@ -301,8 +301,8 @@ def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9
 # REPORT TABLES (tabs)
 # -------------------------
 def build_table_block(headers, rows):
-    def hcell(x):  # мінівідступ у заголовках, щоб не "злипались"
-        return f"{x} "
+    def hcell(x):
+        return f"{x} "  # мінівідступ, щоб заголовки не "злипались"
 
     def ccell(x):
         return "" if x is None else str(x)
@@ -440,13 +440,6 @@ def anova_n_way(long, factors, levels_by_factor):
     table_rows.append(("Залишок", SS_error, df_error, MS_error, None, None))
     table_rows.append(("Загальна", SS_total, df_total, None, None, None))
 
-    eta2 = {}
-    for rS in range(1, k + 1):
-        for S in combinations(factors, rS):
-            name = effect_names[S]
-            eta2[name] = (SS[S] / SS_total) if SS_total > 0 else np.nan
-    eta2["Залишок"] = (SS_error / SS_total) if SS_total > 0 else np.nan
-
     tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
     NIR05 = {}
     n_eff_cells = harmonic_mean([n for n in cell_counts.values() if n and n > 0])
@@ -468,7 +461,6 @@ def anova_n_way(long, factors, levels_by_factor):
         "cell_counts": cell_counts,
         "MS_error": MS_error,
         "df_error": df_error,
-        "eta2": eta2,
         "NIR05": NIR05,
     }
 
@@ -561,10 +553,6 @@ def pairwise_param_short_variants_pm(v_names, means, ns, MS_error, df_error, met
 
 
 def pairwise_mw_bonf_short_variants_pm(v_names, groups_dict, alpha=0.05):
-    """
-    Парні порівняння Mann–Whitney з корекцією Bonferroni.
-    Повертає рядки з U та p_adj.
-    """
     pairs = [(v_names[i], v_names[j]) for i in range(len(v_names)) for j in range(i + 1, len(v_names))]
     mtests = len(pairs) if pairs else 1
     rows = []
@@ -699,7 +687,7 @@ class SADTk:
             options = [
                 ("НІР₀₅", "lsd"),
                 ("Тест Тьюкі", "tukey"),
-                ("Тест Дункана", "duncan"),
+                ("Тест Данкан", "duncan"),
                 ("Тест Бонферроні", "bonferroni"),
             ]
         else:
@@ -708,7 +696,7 @@ class SADTk:
                    "Виберіть один з непараметричних типів аналізу.")
             tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
             options = [
-                ("Краскела–Уолліса (глобально) + пост-хок MW", "kw"),
+                ("Краскела–Уолліса", "kw"),
                 ("Манна-Уітні (парні) + Бонферроні", "mw"),
             ]
 
@@ -751,7 +739,6 @@ class SADTk:
         self.factor_names = [f"Фактор {self.factor_keys[i]}" for i in range(factors_count)]
         self.column_names = self.factor_names + [f"Повт.{i+1}" for i in range(self.repeat_count)]
 
-        # компактні кнопки + автошрифт
         ctl = tk.Frame(self.table_win, padx=6, pady=6)
         ctl.pack(fill=tk.X)
 
@@ -1040,7 +1027,6 @@ class SADTk:
             messagebox.showerror("Помилка аналізу", str(ex))
             return
 
-        # залишки для Shapiro
         cell_means = res.get("cell_means", {})
         residuals = []
         for rec in long:
@@ -1064,12 +1050,10 @@ class SADTk:
         MS_error = res.get("MS_error", np.nan)
         df_error = res.get("df_error", np.nan)
 
-        # групи для факторів (значення)
         factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
-        # середні/SD
         factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
         factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
-        # медіани/Q1–Q3
+
         factor_medians = {}
         factor_q = {}
         for f in self.factor_keys:
@@ -1080,7 +1064,6 @@ class SADTk:
                 factor_medians[f][lvl] = med
                 factor_q[f][lvl] = (q1, q3)
 
-        # letters per factor (LSD only)
         letters_factor = {}
         if method == "lsd":
             for f in self.factor_keys:
@@ -1091,7 +1074,6 @@ class SADTk:
             for f in self.factor_keys:
                 letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
 
-        # variants
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         num_variants = len(variant_order)
 
@@ -1105,7 +1087,6 @@ class SADTk:
         ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
         groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
 
-        # медіани/Q1–Q3 для варіантів
         v_medians = {}
         v_q = {}
         for i, k in enumerate(variant_order):
@@ -1115,7 +1096,6 @@ class SADTk:
             v_medians[k] = med
             v_q[k] = (q1, q3)
 
-        # Kruskal–Wallis (глобальний тест для варіантів)
         kw_H, kw_p, kw_df, kw_k = (np.nan, np.nan, np.nan, 0)
         if method == "kw":
             try:
@@ -1141,7 +1121,6 @@ class SADTk:
             letters_named = cld_multi_letters(v_names, means1, sig)
 
         elif method in ("mw", "kw"):
-            # Пост-хок: MW + Bonferroni (для kw — після глобального тесту теж)
             pairwise_rows, sig = pairwise_mw_bonf_short_variants_pm(v_names, groups1, alpha=ALPHA)
             means_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
             letters_named = cld_multi_letters(v_names, means_tmp, sig)
@@ -1166,6 +1145,19 @@ class SADTk:
         else:
             seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
 
+        # ✅ ОЦЕ ДОДАНО: явно вказуємо, який аналіз/тест виконується (перед таблицею ANOVA)
+        method_label = {
+            "lsd": "Параметричний аналіз: дисперсійний аналіз ANOVA + критерій НІР₀₅ (LSD).",
+            "tukey": "Параметричний аналіз: дисперсійний аналіз ANOVA + пост-хок тест Тьюкі (Tukey HSD).",
+            "duncan": "Параметричний аналіз: дисперсійний аналіз ANOVA + пост-хок тест Дункана.",
+            "bonferroni": "Параметричний аналіз: дисперсійний аналіз ANOVA + пост-хок тест Бонферроні.",
+            "kw": "Непараметричний аналіз: тест Краскела–Уолліса (Kruskal–Wallis) + пост-хок Манна–Уітні з корекцією Бонферроні.",
+            "mw": "Непараметричний аналіз: парні порівняння Манна–Уітні (Mann–Whitney) з корекцією Бонферроні.",
+        }.get(method, "")
+
+        if method_label:
+            seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
+
         if method in ("mw", "kw"):
             seg.append(("text", "Для непараметричних методів основною описовою статистикою є медіана та міжквартильний розмах (Q1–Q3).\n\n"))
 
@@ -1180,7 +1172,7 @@ class SADTk:
 
         seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
         seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
-        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про істотну різницю.\n\n"))
+        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
 
         # Table 1 ANOVA
         anova_rows = []
@@ -1200,7 +1192,6 @@ class SADTk:
         seg.append(("table", (["Джерело", "SS", "df", "MS", "F", "p", "Висновок"], anova_rows)))
         seg.append(("text", "\n"))
 
-        # NIR only for LSD
         tno = 2
         if method == "lsd":
             nir_rows = []
@@ -1212,7 +1203,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno = 3
 
-        # Factor tables
         for f in self.factor_keys:
             if method in ("mw", "kw"):
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика по фактору {f} (непараметрична)\n"))
@@ -1240,7 +1230,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
-        # Variant means/medians table
         if method in ("mw", "kw"):
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця описової статистики (варіанти, непараметрична)\n"))
             rows = []
@@ -1272,7 +1261,6 @@ class SADTk:
         seg.append(("text", "\n"))
         tno += 1
 
-        # Pairwise
         if method in ("mw", "kw") and pairwise_rows:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Mann–Whitney, Bonferroni)\n"))
             seg.append(("table", (["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця"], pairwise_rows)))
