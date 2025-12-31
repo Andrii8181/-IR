@@ -6,18 +6,22 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 Потрібно: Python 3.8+, numpy, scipy
 Встановлення: pip install numpy scipy
 
-ОНОВЛЕНО:
-- У звіті: "Кількість повторностей" (замість "активних")
-- Додано: "Кількість варіантів"
-- "НІР₀₅" (05 у нижньому регістрі через індекси)
-- Для Shapiro–Wilk у звіті: W і p
-- У парних порівняннях по варіантах p-значення присутні для всіх методів:
-    Tukey: p
-    Bonferroni: p_adj
-    Duncan: p (наближено через studentized_range.sf для відповідного r)
-    MW (post-hoc): p_adj
-- Вирівнювання колонок у таблицях: через TAB-роздільники + табстопи в ScrolledText
-- Видалено аналіз χ² (Хі-квадрат) повністю
+ЗМІНИ ЗА ВАШИМИ ПРАВКАМИ:
+1) У звіті поміняно місцями:
+   - Кількість варіантів (спочатку)
+   - Кількість повторностей (потім)
+2) "Показники за фактором" → "Середнє по фактору"
+3) Парні порівняння: ТІЛЬКИ для комбінації варіантів (factor-level pairwise прибрані)
+4) Парні порівняння (варіанти): таблиця містить:
+   - Комбінація варіантів
+   - p (або p_adj)
+   - Значущість (* / **)
+   - Буквене позначення ("a vs b") у колонці "Істотна різниця"
+5) Перевірка НІР і літер:
+   - LSD/НІР₀₅ рішення про істотність тепер робиться КОРЕКТНО для (не)рівних n:
+       |m_i - m_j| > t(1-α/2, df_error) * sqrt(MS_error*(1/n_i + 1/n_j))
+     Це саме той підхід, який використовують більшість статистичних пакетів при unequal n.
+   - Літери формуються з матриці істотності (pairwise decisions), тобто узгоджено з тестом.
 """
 
 import tkinter as tk
@@ -119,6 +123,7 @@ def median_iqr(arr):
 
 
 def tab_table(headers, rows):
+    # Таблиці звіту: таб-роздільники (колонки не "пливуть")
     out = []
     out.append("\t".join(headers))
     out.append("\t".join(["—" * max(3, len(h)) for h in headers]))
@@ -177,6 +182,11 @@ def variant_mean_sd(long, factor_keys):
 
 
 def sig_matrix_to_letters(levels_order, means_dict, sig_matrix):
+    """
+    Compact letter display:
+    - Групи, які НЕ мають між собою істотних відмінностей, можуть мати спільну літеру.
+    - Якщо пара істотно відрізняється → не можуть бути в одній літері.
+    """
     valid = [lvl for lvl in levels_order if not math.isnan(means_dict.get(lvl, np.nan))]
     if not valid:
         return {lvl: "" for lvl in levels_order}
@@ -240,9 +250,9 @@ def anova_n_way(long, factors, levels_by_factor):
     SS_total = np.nansum((values - grand_mean) ** 2)
 
     SS_error = 0.0
-    for r in long:
-        key = tuple(r.get(f) for f in factors)
-        v = r.get("value", np.nan)
+    for rec in long:
+        key = tuple(rec.get(f) for f in factors)
+        v = rec.get("value", np.nan)
         m = cell_means.get(key, np.nan)
         if not math.isnan(v) and not math.isnan(m):
             SS_error += (v - m) ** 2
@@ -321,53 +331,79 @@ def anova_n_way(long, factors, levels_by_factor):
             eta2[name] = (SS[S] / SS_total) if SS_total > 0 else np.nan
     eta2["Залишок"] = (SS_error / SS_total) if SS_total > 0 else np.nan
 
-    # НІР₀₅ (потрібен тільки для LSD)
+    # НІР₀₅ (одне число для звіту) — розрахунок через n_eff (гармонічне середнє),
+    # але РІШЕННЯ "істотно/неістотно" для LSD робимо попарно по формулі з 1/n_i + 1/n_j (див. analyze()).
     r_list = [n for n in cell_counts.values() if n > 0]
     r_mean = float(np.mean(r_list)) if r_list else np.nan
     tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
 
     NIR05 = {}
-    if k == 1:
-        mean_n = np.mean([v[1] for v in stats[(factors[0],)].values()]) if stats.get((factors[0],)) else np.nan
-        nir = tval * math.sqrt(2 * MS_error / mean_n) if not any(math.isnan(x) for x in [tval, MS_error, mean_n]) else np.nan
-        NIR05["Фактор A"] = nir
-        NIR05["Загальна"] = nir
-    else:
-        for fct in factors:
-            other_prod = 1
-            for g in factors:
-                if g != fct:
-                    other_prod *= levels_count[g]
-            divisor = other_prod * r_mean
-            nir = tval * math.sqrt(2 * MS_error / divisor) if not any(math.isnan(x) for x in [tval, MS_error, r_mean]) else np.nan
-            NIR05[f"Фактор {fct}"] = nir
-        nir_all = tval * math.sqrt(2 * MS_error / r_mean) if not any(math.isnan(x) for x in [tval, MS_error, r_mean]) else np.nan
-        NIR05["Загальна"] = nir_all
+    # НІР₀₅ по варіантах (комірках)
+    n_eff_cells = harmonic_mean([n for n in cell_counts.values() if n and n > 0])
+    nir_all = tval * math.sqrt(2 * MS_error / n_eff_cells) if not any(
+        math.isnan(x) for x in [tval, MS_error, n_eff_cells]
+    ) else np.nan
+    NIR05["Загальна"] = nir_all
+
+    # НІР₀₅ для головних факторів (оцінково): n_eff по маргінальних групах
+    for fct in factors:
+        marg = subset_stats(long, (fct,))
+        n_eff = harmonic_mean([v[1] for v in marg.values() if v[1] and v[1] > 0])
+        nir = tval * math.sqrt(2 * MS_error / n_eff) if not any(
+            math.isnan(x) for x in [tval, MS_error, n_eff]
+        ) else np.nan
+        NIR05[f"Фактор {fct}"] = nir
 
     return {
         "table": table_rows,
         "cell_means": cell_means,
+        "cell_counts": cell_counts,
         "MS_error": MS_error,
         "df_error": df_error,
         "eta2": eta2,
         "NIR05": NIR05,
-        "r_mean": r_mean,
     }
 
 
 # -------------------------
-# КОРОТКІ парні таблиці (параметричні)
+# LSD pairwise decision (коректно для unequal n)
 # -------------------------
-def pairwise_param_short(levels_order, means, ns, letters_map, MS_error, df_error, method, alpha=0.05):
+def lsd_sig_matrix(levels_order, means, ns, MS_error, df_error, alpha=0.05):
     """
-    rows_short:
-      [Пара, Статистика, p/p_adj, Знач., Істотна різниця]
-    sig_matrix:
-      dict((a,b)->bool) для літер
+    Матриця істотності для LSD/НІР₀₅:
+      |m_i - m_j| > t(1-α/2, df_error) * sqrt(MS_error*(1/n_i + 1/n_j))
     """
-    pairs = [(levels_order[i], levels_order[j]) for i in range(len(levels_order)) for j in range(i + 1, len(levels_order))]
     sig = {}
+    if any(math.isnan(x) for x in [MS_error, df_error]) or MS_error <= 0 or df_error <= 0:
+        return sig
+
+    tcrit = float(t.ppf(1 - alpha / 2, df_error))
+    for i in range(len(levels_order)):
+        for j in range(i + 1, len(levels_order)):
+            a, b = levels_order[i], levels_order[j]
+            ma, mb = means.get(a, np.nan), means.get(b, np.nan)
+            na, nb = ns.get(a, 0), ns.get(b, 0)
+            if any(map(math.isnan, [ma, mb])) or na <= 0 or nb <= 0:
+                continue
+            se = math.sqrt(MS_error * (1.0 / na + 1.0 / nb))
+            if se <= 0:
+                continue
+            sig[(a, b)] = (abs(ma - mb) > tcrit * se)
+    return sig
+
+
+# -------------------------
+# КОРОТКІ парні таблиці (для ВАРІАНТІВ)
+# -------------------------
+def pairwise_param_short_variants(v_names, means, ns, letters_map, MS_error, df_error, method, alpha=0.05):
+    """
+    Повертає rows:
+      [Комбінація варіантів, p/p_adj, Знач., Істотна різниця]
+    і sig_matrix (для літер)
+    """
+    pairs = [(v_names[i], v_names[j]) for i in range(len(v_names)) for j in range(i + 1, len(v_names))]
     rows = []
+    sig = {}
 
     def letter_pair(a, b):
         return f"{letters_map.get(a,'')} vs {letters_map.get(b,'')}"
@@ -386,37 +422,26 @@ def pairwise_param_short(levels_order, means, ns, letters_map, MS_error, df_erro
             p = 2 * (1 - t.cdf(tval, df_error))
             p_adj = min(1.0, float(p) * mtests)
             sig[(a, b)] = (p_adj < alpha)
-            rows.append([
-                f"{a} vs {b}",
-                f"t={fmt_num(tval,3)}",
-                fmt_num(p_adj, 4),
-                significance_mark(p_adj),
-                letter_pair(a, b),
-            ])
+            rows.append([f"{a}  vs  {b}", fmt_num(p_adj, 4), significance_mark(p_adj), letter_pair(a, b)])
 
     elif method == "tukey":
-        n_eff = harmonic_mean([ns.get(l, 0) for l in levels_order])
+        n_eff = harmonic_mean([ns.get(l, 0) for l in v_names])
         for a, b in pairs:
             ma, mb = means.get(a, np.nan), means.get(b, np.nan)
             if any(map(math.isnan, [ma, mb, MS_error, n_eff])) or n_eff <= 0 or MS_error <= 0:
                 continue
             q = abs(ma - mb) / math.sqrt(MS_error / n_eff)
-            p = float(studentized_range.sf(q, len(levels_order), df_error))
+            p = float(studentized_range.sf(q, len(v_names), df_error))
             sig[(a, b)] = (p < alpha)
-            rows.append([
-                f"{a} vs {b}",
-                f"q={fmt_num(q,3)}",
-                fmt_num(p, 4),
-                significance_mark(p),
-                letter_pair(a, b),
-            ])
+            rows.append([f"{a}  vs  {b}", fmt_num(p, 4), significance_mark(p), letter_pair(a, b)])
 
     elif method == "duncan":
-        valid = [lvl for lvl in levels_order if not math.isnan(means.get(lvl, np.nan))]
+        # DMRT: рішення — через SR (крокова), p — наближено studentized_range.sf(q; r, df)
+        valid = [lvl for lvl in v_names if not math.isnan(means.get(lvl, np.nan))]
         ordered = sorted(valid, key=lambda z: means[z], reverse=True)
+        pos = {lvl: i for i, lvl in enumerate(ordered)}
         n_eff = harmonic_mean([ns.get(l, 0) for l in ordered])
         se_base = math.sqrt(MS_error / n_eff) if (not math.isnan(n_eff) and n_eff > 0 and MS_error > 0) else np.nan
-        pos = {lvl: i for i, lvl in enumerate(ordered)}
 
         for a, b in pairs:
             ma, mb = means.get(a, np.nan), means.get(b, np.nan)
@@ -430,7 +455,6 @@ def pairwise_param_short(levels_order, means, ns, letters_map, MS_error, df_erro
             r = (j - i) + 1
 
             q = abs(ma - mb) / se_base
-            # Наближене p для DMRT через розподіл studentized range (за r)
             p = float(studentized_range.sf(q, r, df_error))
 
             qcrit = studentized_range.ppf(1 - alpha, r, df_error)
@@ -438,22 +462,18 @@ def pairwise_param_short(levels_order, means, ns, letters_map, MS_error, df_erro
             decision = abs(ma - mb) > SR
             sig[(a, b)] = decision
 
-            rows.append([
-                f"{a} vs {b}",
-                f"SR={fmt_num(SR,3)} (r={r})",
-                fmt_num(p, 4),
-                significance_mark(p),
-                letter_pair(a, b),
-            ])
+            rows.append([f"{a}  vs  {b}", fmt_num(p, 4), significance_mark(p), letter_pair(a, b)])
+
+    elif method == "lsd":
+        # LSD: для таблиці парних порівнянь у вашій логіці НЕ показуємо.
+        # Але ця функція може знадобитися, якщо колись захочете.
+        pass
 
     return rows, sig
 
 
-# -------------------------
-# КОРОТКІ парні таблиці (непараметричні MW+Bonferroni)
-# -------------------------
-def pairwise_mw_bonf_short(levels_order, groups_dict, letters_map, alpha=0.05):
-    pairs = [(levels_order[i], levels_order[j]) for i in range(len(levels_order)) for j in range(i + 1, len(levels_order))]
+def pairwise_mw_bonf_short_variants(v_names, groups_dict, letters_map, alpha=0.05):
+    pairs = [(v_names[i], v_names[j]) for i in range(len(v_names)) for j in range(i + 1, len(v_names))]
     mtests = len(pairs) if pairs else 1
     rows = []
     sig = {}
@@ -473,13 +493,7 @@ def pairwise_mw_bonf_short(levels_order, groups_dict, letters_map, alpha=0.05):
         p = float(p)
         p_adj = min(1.0, p * mtests)
         sig[(a, b)] = (p_adj < alpha)
-        rows.append([
-            f"{a} vs {b}",
-            f"U={fmt_num(float(U),3)}",
-            fmt_num(p_adj, 4),
-            significance_mark(p_adj),
-            letter_pair(a, b),
-        ])
+        rows.append([f"{a}  vs  {b}", fmt_num(p_adj, 4), significance_mark(p_adj), letter_pair(a, b)])
     return rows, sig
 
 
@@ -534,6 +548,7 @@ class SADTk:
         self.table_win = None
         self.report_win = None
 
+    # ---------- Діалог показник + одиниці ----------
     def ask_indicator_units(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Параметри звіту")
@@ -577,6 +592,7 @@ class SADTk:
         self.root.wait_window(dlg)
         return out
 
+    # ---------- Вибір методу ----------
     def choose_method_window(self, p_norm):
         dlg = tk.Toplevel(self.root)
         dlg.title("Вибір виду аналізу")
@@ -636,6 +652,7 @@ class SADTk:
         self.root.wait_window(dlg)
         return out
 
+    # ---------- Вікно таблиці ----------
     def open_table(self, factors_count):
         if self.table_win and tk.Toplevel.winfo_exists(self.table_win):
             self.table_win.destroy()
@@ -924,9 +941,9 @@ class SADTk:
         # residuals → Shapiro
         cell_means = res.get("cell_means", {})
         residuals = []
-        for r in long:
-            key = tuple(r.get(f) for f in self.factor_keys)
-            v = r.get("value", np.nan)
+        for rec in long:
+            key = tuple(rec.get(f) for f in self.factor_keys)
+            v = rec.get("value", np.nan)
             m = cell_means.get(key, np.nan)
             if not math.isnan(v) and not math.isnan(m):
                 residuals.append(v - m)
@@ -945,7 +962,7 @@ class SADTk:
         MS_error = res.get("MS_error", np.nan)
         df_error = res.get("df_error", np.nan)
 
-        # ---- Групи по факторах (описові) ----
+        # ---- По факторах: тільки середні/медіани + ЛІТЕРИ (без парних таблиць) ----
         factor_groups = {}
         factor_means = {}
         factor_ns = {}
@@ -958,7 +975,7 @@ class SADTk:
             factor_ns[f] = {lvl: len(arr) for lvl, arr in g2.items()}
             factor_meds[f] = {lvl: median_iqr(arr) for lvl, arr in g2.items()}
 
-        # ---- Варіанти ----
+        # ---- Варіанти (комбінації) ----
         var_groups_raw = groups_by_keys(long, tuple(self.factor_keys))
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         num_variants = len(variant_order)
@@ -969,151 +986,94 @@ class SADTk:
         v_groups = {k: var_groups_raw.get(k, []) for k in variant_order}
         v_meds = {k: median_iqr(v_groups.get(k, [])) for k in variant_order}
 
-        # ---- Літери ----
-        letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
-        letters_variants = {k: "" for k in variant_order}
+        # Імена варіантів (рядки)
+        v_names = [" | ".join(map(str, k)) for k in variant_order]
+        means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
+        ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
+        groups1 = {v_names[i]: v_groups.get(variant_order[i], []) for i in range(len(variant_order))}
 
-        pairwise_blocks = []
-
-        # ---------- ПАРАМЕТРИЧНІ ----------
-        if method in ("lsd", "tukey", "duncan", "bonferroni"):
-            method_text = {
-                "lsd": "Порівняння середніх: НІР₀₅ (LSD).",
-                "tukey": "Порівняння середніх: тест Тьюкі (Tukey HSD).",
-                "duncan": "Порівняння середніх: тест Дункана (DMRT).",
-                "bonferroni": "Порівняння середніх: Bonferroni (парні t-тести з поправкою).",
-            }[method]
-
-            if method == "lsd":
-                # літери за НІР (без парних таблиць)
-                for f in self.factor_keys:
-                    nir = res.get("NIR05", {}).get(f"Фактор {f}", np.nan)
-                    lvls = levels_by_factor[f]
-                    sig = {}
-                    if not math.isnan(nir) and nir > 0:
-                        for i in range(len(lvls)):
-                            for j in range(i + 1, len(lvls)):
-                                a, b = lvls[i], lvls[j]
-                                ma, mb = factor_means[f].get(a, np.nan), factor_means[f].get(b, np.nan)
-                                if not math.isnan(ma) and not math.isnan(mb):
-                                    sig[(a, b)] = (abs(ma - mb) > nir)
-                    letters_factor[f] = sig_matrix_to_letters(lvls, factor_means[f], sig)
-
-                nir_all = res.get("NIR05", {}).get("Загальна", np.nan)
-                sigv = {}
-                if not math.isnan(nir_all) and nir_all > 0:
-                    for i in range(len(variant_order)):
-                        for j in range(i + 1, len(variant_order)):
-                            a, b = variant_order[i], variant_order[j]
-                            ma, mb = v_means.get(a, np.nan), v_means.get(b, np.nan)
-                            if not math.isnan(ma) and not math.isnan(mb):
-                                sigv[(a, b)] = (abs(ma - mb) > nir_all)
-
-                v_names = [" | ".join(map(str, k)) for k in variant_order]
-                means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
-                sigv_named = {}
-                for i in range(len(variant_order)):
-                    for j in range(i + 1, len(variant_order)):
-                        if (variant_order[i], variant_order[j]) in sigv:
-                            sigv_named[(v_names[i], v_names[j])] = sigv[(variant_order[i], variant_order[j])]
-                letters_named = sig_matrix_to_letters(v_names, means1, sigv_named)
-                letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
-
-            else:
-                # Tukey/Duncan/Bonferroni: sig→літери→короткі парні таблиці
-                # Пояснення p-колонки:
-                #   Tukey: p
-                #   Bonferroni: p_adj
-                #   Duncan: p (наближ.)
-                p_col = "p"
-                if method == "bonferroni":
-                    p_col = "p_adj"
-                elif method == "duncan":
-                    p_col = "p (набл.)"
-
-                for f in self.factor_keys:
-                    lvls = levels_by_factor[f]
-                    tmp_letters = {lvl: "" for lvl in lvls}
-                    _, sig = pairwise_param_short(
-                        lvls, factor_means[f], factor_ns[f], tmp_letters, MS_error, df_error, method, alpha=ALPHA
-                    )
-                    letters_factor[f] = sig_matrix_to_letters(lvls, factor_means[f], sig)
-
-                    rows, _ = pairwise_param_short(
-                        lvls, factor_means[f], factor_ns[f], letters_factor[f], MS_error, df_error, method, alpha=ALPHA
-                    )
-                    if rows:
-                        pairwise_blocks.append(
-                            f"Парні порівняння (Фактор {f})\n" +
-                            tab_table(["Пара", "Статистика", p_col, "Знач.", "Істотна різниця"], rows) + "\n"
-                        )
-
-                # Варіанти
-                v_names = [" | ".join(map(str, k)) for k in variant_order]
-                means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
-                ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
-                tmp_letters = {name: "" for name in v_names}
-
-                _, sig = pairwise_param_short(v_names, means1, ns1, tmp_letters, MS_error, df_error, method, alpha=ALPHA)
-                letters_named = sig_matrix_to_letters(v_names, means1, sig)
-                letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
-
-                rows, _ = pairwise_param_short(v_names, means1, ns1, letters_named, MS_error, df_error, method, alpha=ALPHA)
-                if rows:
-                    pairwise_blocks.append(
-                        "Парні порівняння (Варіанти)\n" +
-                        tab_table(["Пара", "Статистика", p_col, "Знач.", "Істотна різниця"], rows) + "\n"
-                    )
-
-        # ---------- НЕПАРАМЕТРИЧНІ ----------
-        else:
-            method_text = {
-                "mw": "Непараметричний аналіз: Манна-Уітні (MW) + Bonferroni.",
-                "kw": "Непараметричний аналіз: Крускала-Уолліса (KW) + post-hoc MW (Bonferroni).",
-            }[method]
-
+        # ---- Літери для факторів (щоб співпало з пакетами) ----
+        letters_factor = {}
+        if method == "lsd":
+            # LSD літери по факторах: через pairwise-формулу з (1/n_i + 1/n_j)
             for f in self.factor_keys:
                 lvls = levels_by_factor[f]
+                sig = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
+                letters_factor[f] = sig_matrix_to_letters(lvls, factor_means[f], sig)
+        else:
+            # Для інших методів (коли ви робите post-hoc лише по варіантах) —
+            # літери по факторах показуємо як "описові" за LSD-логікою? Це часто плутає.
+            # Тому робимо так: літери по факторах НЕ будуємо (порожні).
+            for f in self.factor_keys:
+                letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
 
-                tmp_letters = {lvl: "" for lvl in lvls}
-                _, sig = pairwise_mw_bonf_short(lvls, factor_groups[f], tmp_letters, alpha=ALPHA)
+        # ---- Літери + парні порівняння ТІЛЬКИ по варіантах ----
+        letters_named = {name: "" for name in v_names}
+        pairwise_rows = []  # таблиця парних порівнянь тільки для варіантів
+        p_col_name = "p"
 
-                means_tmp = {lvl: float(np.mean(factor_groups[f].get(lvl, []))) if len(factor_groups[f].get(lvl, [])) else np.nan for lvl in lvls}
-                letters_factor[f] = sig_matrix_to_letters(lvls, means_tmp, sig)
+        if method == "lsd":
+            # Літери для варіантів (LSD): через коректну pairwise-формулу
+            sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
+            letters_named = sig_matrix_to_letters(v_names, means1, sigv)
+            p_col_name = "p (LSD)"
 
-                rows, _ = pairwise_mw_bonf_short(lvls, factor_groups[f], letters_factor[f], alpha=ALPHA)
-                if rows:
-                    pairwise_blocks.append(
-                        f"Парні порівняння (Фактор {f}) MW+Bonferroni\n" +
-                        tab_table(["Пара", "Статистика", "p_adj", "Знач.", "Істотна різниця"], rows) + "\n"
-                    )
+            # Парні порівняння для LSD — НЕ показуємо (як ви просили раніше)
+            pairwise_rows = []
 
-            # Варіанти
-            v_names = [" | ".join(map(str, k)) for k in variant_order]
-            g = {v_names[i]: v_groups.get(variant_order[i], []) for i in range(len(variant_order))}
-
-            if method == "kw":
-                arrays = [g[name] for name in v_names if len(g[name]) > 0]
-                if len(arrays) >= 2:
-                    try:
-                        H, pkw = kruskal(*arrays)
-                        method_text += f"\nKW (варіанти): H={fmt_num(float(H),3)}, p={fmt_num(float(pkw),4)}."
-                    except Exception:
-                        pass
+        elif method in ("tukey", "duncan", "bonferroni"):
+            if method == "bonferroni":
+                p_col_name = "p_adj"
+            elif method == "duncan":
+                p_col_name = "p (набл.)"
 
             tmp_letters = {name: "" for name in v_names}
-            means_tmp = {name: float(np.mean(g[name])) if len(g[name]) else np.nan for name in v_names}
-            _, sig = pairwise_mw_bonf_short(v_names, g, tmp_letters, alpha=ALPHA)
+            _, sig = pairwise_param_short_variants(v_names, means1, ns1, tmp_letters, MS_error, df_error, method, alpha=ALPHA)
+            letters_named = sig_matrix_to_letters(v_names, means1, sig)
 
+            pairwise_rows, _ = pairwise_param_short_variants(v_names, means1, ns1, letters_named, MS_error, df_error, method, alpha=ALPHA)
+
+        else:
+            # mw / kw: post-hoc MW+Bonferroni тільки по варіантах
+            p_col_name = "p_adj"
+
+            if method == "kw":
+                arrays = [groups1[name] for name in v_names if len(groups1[name]) > 0]
+                if len(arrays) < 2:
+                    pass
+                else:
+                    # глобальний KW (для інформації в тексті нижче)
+                    pass
+
+            tmp_letters = {name: "" for name in v_names}
+            _, sig = pairwise_mw_bonf_short_variants(v_names, groups1, tmp_letters, alpha=ALPHA)
+            # для літер потрібні середні (лише як порядок), не впливають на sig
+            means_tmp = {name: float(np.mean(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
             letters_named = sig_matrix_to_letters(v_names, means_tmp, sig)
-            letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
-            rows, _ = pairwise_mw_bonf_short(v_names, g, letters_named, alpha=ALPHA)
-            if rows:
-                pairwise_blocks.append(
-                    "Парні порівняння (Варіанти) MW+Bonferroni\n" +
-                    tab_table(["Пара", "Статистика", "p_adj", "Знач.", "Істотна різниця"], rows) + "\n"
-                )
+            pairwise_rows, _ = pairwise_mw_bonf_short_variants(v_names, groups1, letters_named, alpha=ALPHA)
+
+        # повернути літери у variant_order
+        letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
+
+        # Текст про метод
+        method_text = {
+            "lsd": "Порівняння середніх: НІР₀₅ (LSD).",
+            "tukey": "Порівняння середніх: тест Тьюкі (Tukey HSD).",
+            "duncan": "Порівняння середніх: тест Дункана (DMRT).",
+            "bonferroni": "Порівняння середніх: Bonferroni (парні t-тести з поправкою).",
+            "mw": "Непараметричний аналіз: Манна-Уітні (MW) + Bonferroni.",
+            "kw": "Непараметричний аналіз: Крускала-Уолліса (KW) + post-hoc MW (Bonferroni).",
+        }[method]
+
+        if method == "kw":
+            arrays = [groups1[name] for name in v_names if len(groups1[name]) > 0]
+            if len(arrays) >= 2:
+                try:
+                    H, pkw = kruskal(*arrays)
+                    method_text += f"\nKW (варіанти): H={fmt_num(float(H),3)}, p={fmt_num(float(pkw),4)}."
+                except Exception:
+                    pass
 
         # -------------------------
         # З В І Т
@@ -1131,12 +1091,16 @@ class SADTk:
         L.append(f"Показник:\t{indicator}")
         L.append(f"Одиниці виміру:\t{units}")
         L.append("")
-        L.append(f"Кількість повторностей:\t{len(used_rep_cols)}")
+        # МІСЦЯМИ: варіанти → повторності
         L.append(f"Кількість варіантів:\t{num_variants}")
+        L.append(f"Кількість повторностей:\t{len(used_rep_cols)}")
         L.append(f"Загальна кількість облікових значень:\t{len(long)}")
         L.append("")
         if not math.isnan(W):
-            L.append(f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})")
+            L.append(
+                "Перевірка нормальності залишків (Shapiro–Wilk):\t"
+                f"{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})"
+            )
         else:
             L.append("Перевірка нормальності залишків (Shapiro–Wilk):\tн/д")
         L.append("")
@@ -1151,17 +1115,17 @@ class SADTk:
         anova_rows = []
         for name, SSv, dfv, MSv, Fv, pv in res["table"]:
             if name in ("Залишок", "Загальна"):
-                anova_rows.append([name, fmt_num(SSv, 2), str(int(dfv)) if dfv is not None and not math.isnan(dfv) else "",
+                anova_rows.append([name, fmt_num(SSv, 2),
+                                   str(int(dfv)) if dfv is not None and not math.isnan(dfv) else "",
                                    fmt_num(MSv, 3), "", "", ""])
             else:
                 mark = significance_mark(pv)
                 concl = "істотна різниця" if mark else ""
-                anova_rows.append([name, fmt_num(SSv, 2), str(int(dfv)) if dfv is not None and not math.isnan(dfv) else "",
-                                   fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), (concl + (" " + mark if mark else ""))])
-        L.append(tab_table(
-            ["Джерело", "SS", "df", "MS", "F", "p", "Висновок"],
-            anova_rows
-        ))
+                anova_rows.append([name, fmt_num(SSv, 2),
+                                   str(int(dfv)) if dfv is not None and not math.isnan(dfv) else "",
+                                   fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4),
+                                   (concl + (" " + mark if mark else ""))])
+        L.append(tab_table(["Джерело", "SS", "df", "MS", "F", "p", "Висновок"], anova_rows))
         L.append("")
 
         # Сила впливу
@@ -1175,7 +1139,9 @@ class SADTk:
         # НІР₀₅ — тільки при LSD
         tno = 2
         if method == "lsd":
-            L.append("ТАБЛИЦЯ 2. Значення НІР₀₅")
+            L.append("ТАБЛИЦЯ 2. Значення НІР₀₅ (довідково)")
+            # важливо: рішення по LSD робиться попарно за формулою з 1/n_i+1/n_j;
+            # тут показуємо "типове" НІР₀₅ через n_eff (гармонічне), щоб було число в звіті.
             nir_rows = []
             for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
                 if key in res.get("NIR05", {}):
@@ -1184,9 +1150,9 @@ class SADTk:
             L.append("")
             tno = 3
 
-        # Таблиці по факторах
+        # Середнє по фактору (без парних порівнянь)
         for f in self.factor_keys:
-            L.append(f"ТАБЛИЦЯ {tno}. Показники за фактором {f}")
+            L.append(f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}")
             lvls = levels_by_factor[f]
             if method in ("mw", "kw"):
                 rows = []
@@ -1227,15 +1193,18 @@ class SADTk:
         L.append("")
         tno += 1
 
-        # Парні порівняння: для LSD НЕ ВИВОДИМО
-        if method in ("tukey", "duncan", "bonferroni", "mw", "kw") and pairwise_blocks:
-            L.append(f"ТАБЛИЦЯ {tno}. Результати парних порівнянь (коротка форма)")
-            L.append("")
-            for b in pairwise_blocks:
-                L.append(b)
+        # Парні порівняння: ТІЛЬКИ для варіантів і ТІЛЬКИ для tukey/duncan/bonferroni/mw/kw
+        # (для LSD не показуємо)
+        if method in ("tukey", "duncan", "bonferroni", "mw", "kw") and pairwise_rows:
+            L.append(f"ТАБЛИЦЯ {tno}. Результати парних порівнянь (варіанти)")
+            L.append(tab_table(
+                ["Комбінація варіантів", p_col_name, "Знач.", "Істотна різниця"],
+                pairwise_rows
+            ))
 
         self.show_report("\n".join(L))
 
+    # ---------- Вікно звіту ----------
     def show_report(self, text):
         if self.report_win and tk.Toplevel.winfo_exists(self.report_win):
             self.report_win.destroy()
@@ -1257,7 +1226,7 @@ class SADTk:
         txt = ScrolledText(self.report_win, width=120, height=40)
         txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
-        # TAB-стопи для вирівнювання у звіті (і після вставки в Word зазвичай виглядає рівніше)
+        # TAB-стопи для вирівнювання колонок
         tab_px = 175
         tabs = tuple(tab_px * i for i in range(1, 30))
         txt.configure(tabs=tabs)
