@@ -813,7 +813,7 @@ class SADTk:
 
         tk.Label(
             self.main_frame,
-            text="Виберіть тип аналізу → внесіть дані (можна вставляти з Excel) → натисніть «Аналіз даних»",
+            text="Виберіть тип аналізу → Внесіть дані → Натисніть «Аналіз даних»",
             fg="#000000",
             bg="white"
         ).pack(pady=10)
@@ -880,7 +880,7 @@ class SADTk:
             options = [
                 ("НІР₀₅", "lsd"),
                 ("Тест Тьюкі", "tukey"),
-                ("Тест Данкан", "duncan"),
+                ("Тест Дункана", "duncan"),
                 ("Тест Бонферроні", "bonferroni"),
             ]
         else:
@@ -889,8 +889,8 @@ class SADTk:
                    "Виберіть один з непараметричних типів аналізу.")
             tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
             options = [
-                ("Краскела–Уолліса (глобально) + пост-хок MW", "kw"),
-                ("Манна-Уітні (парні) + Бонферроні", "mw"),
+                ("Краскела–Уолліса", "kw"),
+                ("Манна-Уітні", "mw"),
             ]
 
         var = tk.StringVar(value=options[0][1])
@@ -1002,7 +1002,7 @@ class SADTk:
         self.table_win.bind("<Control-V>", self.on_paste)
 
     def show_about(self):
-        messagebox.showinfo("Розробник", "S.A.D. — Статистичний аналіз даних\nРозробка: (вкажіть автора/організацію)\nВерсія: 1.0")
+        messagebox.showinfo("Розробник", "S.A.D. — Статистичний аналіз даних\nВерсія: 1.0\nРозробик: Чаплоуцький Андрій Миколайович\nУманський національний університет")
 
     def bind_cell(self, e: tk.Entry):
         e.bind("<Return>", self.on_enter)
@@ -1365,8 +1365,8 @@ class SADTk:
             "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
             "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Данкан.",
             "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
-            "kw": "Непараметричний аналіз: Kruskal–Wallis + (за потреби) пост-хок Mann–Whitney (Bonferroni).",
-            "mw": "Непараметричний аналіз: Mann–Whitney (Bonferroni) для парних порівнянь.",
+            "kw": "Непараметричний аналіз: Kruskal–Wallis.",
+            "mw": "Непараметричний аналіз: Mann–Whitney.",
         }.get(method, "")
 
         if method_label:
@@ -1374,8 +1374,8 @@ class SADTk:
 
         # ✅ Пояснення позначень — одразу після назви аналізу (як просив)
         seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
-        seg.append(("text", "У таблицях знак \"-\" означає p ≥ 0.05.\n"))
-        seg.append(("text", "Істотна різниця (літери): різні літери означають істотну різницю.\n\n"))
+        seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
+        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
 
         nonparam = method in ("mw", "kw")
 
@@ -1422,7 +1422,7 @@ class SADTk:
             seg.append(("text", "\n"))
 
             eff_rows = build_effect_strength_rows(res["table"])
-            seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів, їх комбінацій та залишку (%)\n"))
+            seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів та їх комбінацій (% від SS)\n"))
             seg.append(("table", {"headers": ["Джерело", "%"], "rows": eff_rows}))
             seg.append(("text", "\n"))
 
@@ -1459,7 +1459,7 @@ class SADTk:
                 seg.append(("text", "\n"))
                 tno += 1
 
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень (варіанти)\n"))
+            seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
             rows_v = []
             for k in variant_order:
                 name = " | ".join(map(str, k))
@@ -1479,7 +1479,7 @@ class SADTk:
             tno += 1
 
             if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (варіанти)\n"))
+                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
                 seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
                 seg.append(("text", "\n"))
 
@@ -1537,7 +1537,7 @@ class SADTk:
                 seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
             else:
                 if pairwise_rows:
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Mann–Whitney, Bonferroni) + ефект (Cliff’s δ)\n"))
+                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння + ефект (Cliff’s δ)\n"))
                     seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
                     seg.append(("text", "\n"))
 
@@ -1550,7 +1550,7 @@ class SADTk:
             self.report_win.destroy()
 
         self.report_win = tk.Toplevel(self.root)
-        self.report_win.title("Звіт (можна копіювати)")
+        self.report_win.title("Звіт")
         self.report_win.geometry("1180x760")
         set_window_icon(self.report_win)
 
