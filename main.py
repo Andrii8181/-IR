@@ -1363,7 +1363,7 @@ class SADTk:
         method_label = {
             "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
             "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
-            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Данкан.",
+            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
             "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
             "kw": "Непараметричний аналіз: Kruskal–Wallis.",
             "mw": "Непараметричний аналіз: Mann–Whitney.",
