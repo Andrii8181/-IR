@@ -13,6 +13,7 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 ✅ Пояснення позначень (**/*/літери/"-") перенесено одразу після рядка «Виконуваний статистичний аналіз».
 ✅ Іконка icon.ico: пошук у корені програми (папка скрипта), cwd, папка запуску (argv0), папка exe (sys.executable),
    підтримка PyInstaller (_MEIPASS). Ставимо iconbitmap для всіх вікон.
+✅ Кнопки над таблицею вводу: шрифт +1 пункт і автопідбір ширини, щоб напис завжди поміщався.
 """
 
 import os
@@ -844,7 +845,7 @@ class SADTk:
             out["indicator"] = e_ind.get().strip()
             out["units"] = e_units.get().strip()
             if not out["indicator"] or not out["units"]:
-                messagebox.showwarning("Помилка", "Заповніть назву показника та одиниці виміру.")
+                messagebox.showwarning("Помилка", "Заповніть поле назви показника та одиниці виміру.")
                 return
             out["ok"] = True
             dlg.destroy()
@@ -932,7 +933,7 @@ class SADTk:
         self.factor_names = [f"Фактор {self.factor_keys[i]}" for i in range(factors_count)]
         self.column_names = self.factor_names + [f"Повт.{i+1}" for i in range(self.repeat_count)]
 
-        # Buttons row (compact + auto font)
+        # Buttons row (font +1pt + auto widths so text always fits)
         ctl = tk.Frame(self.table_win, padx=6, pady=6)
         ctl.pack(fill=tk.X)
 
@@ -942,26 +943,40 @@ class SADTk:
             "Вставити з буфера", "Аналіз даних",
             "Розробник",
         ]
-        btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=13, min_size=9, target_px=150)
 
-        bw = 14
+        # шрифт +1 пункт
+        btn_font = tkfont.Font(family="Times New Roman", size=14)
+
+        # автоматичний підбір ширини кнопки (Tk width = "в символах")
+        avg_char_px = max(1, btn_font.measure("0"))
+
+        def btn_w(text, pad_px=26, min_chars=12):
+            px = btn_font.measure(text) + pad_px
+            return max(min_chars, int(math.ceil(px / avg_char_px)))
+
         bh = 1
         padx = 3
         pady = 2
 
-        tk.Button(ctl, text="Додати рядок", width=bw, height=bh, font=btn_font,
+        tk.Button(ctl, text="Додати рядок", width=btn_w("Додати рядок"), height=bh, font=btn_font,
                   command=self.add_row).pack(side=tk.LEFT, padx=padx, pady=pady)
-        tk.Button(ctl, text="Видалити рядок", width=bw, height=bh, font=btn_font,
+
+        tk.Button(ctl, text="Видалити рядок", width=btn_w("Видалити рядок"), height=bh, font=btn_font,
                   command=self.delete_row).pack(side=tk.LEFT, padx=padx, pady=pady)
-        tk.Button(ctl, text="Додати стовпчик", width=bw, height=bh, font=btn_font,
+
+        tk.Button(ctl, text="Додати стовпчик", width=btn_w("Додати стовпчик"), height=bh, font=btn_font,
                   command=self.add_column).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
-        tk.Button(ctl, text="Видалити стовпчик", width=bw, height=bh, font=btn_font,
+
+        tk.Button(ctl, text="Видалити стовпчик", width=btn_w("Видалити стовпчик"), height=bh, font=btn_font,
                   command=self.delete_column).pack(side=tk.LEFT, padx=padx, pady=pady)
-        tk.Button(ctl, text="Вставити з буфера", width=bw + 2, height=bh, font=btn_font,
+
+        tk.Button(ctl, text="Вставити з буфера", width=btn_w("Вставити з буфера", pad_px=34), height=bh, font=btn_font,
                   command=self.paste_from_focus).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
-        tk.Button(ctl, text="Аналіз даних", width=bw, height=bh, font=btn_font,
+
+        tk.Button(ctl, text="Аналіз даних", width=btn_w("Аналіз даних"), height=bh, font=btn_font,
                   bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
-        tk.Button(ctl, text="Розробник", width=bw, height=bh, font=btn_font,
+
+        tk.Button(ctl, text="Розробник", width=btn_w("Розробник"), height=bh, font=btn_font,
                   command=self.show_about).pack(side=tk.RIGHT, padx=padx, pady=pady)
 
         self.canvas = tk.Canvas(self.table_win)
@@ -1002,7 +1017,13 @@ class SADTk:
         self.table_win.bind("<Control-V>", self.on_paste)
 
     def show_about(self):
-        messagebox.showinfo("Розробник", "S.A.D. — Статистичний аналіз даних\nВерсія: 1.0\nРозробик: Чаплоуцький Андрій Миколайович\nУманський національний університет")
+        messagebox.showinfo(
+            "Розробник",
+            "S.A.D. — Статистичний аналіз даних\n"
+            "Версія: 1.0\n"
+            "Розробик: Чаплоуцький Андрій Миколайович\n"
+            "Уманський національний університет"
+        )
 
     def bind_cell(self, e: tk.Entry):
         e.bind("<Return>", self.on_enter)
@@ -1372,7 +1393,7 @@ class SADTk:
         if method_label:
             seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
 
-        # ✅ Пояснення позначень — одразу після назви аналізу (як просив)
+        # ✅ Пояснення позначень — одразу після назви аналізу
         seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
         seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
         seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
