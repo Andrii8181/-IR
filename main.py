@@ -942,9 +942,9 @@ class SADTk:
             "Вставити з буфера", "Аналіз даних",
             "Розробник",
         ]
-        btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=13, min_size=9, target_px=150)
+        btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=14, min_size=9, target_px=150)
 
-        bw = 15
+        bw = 16
         bh = 1
         padx = 3
         pady = 2
