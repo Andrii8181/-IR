@@ -944,7 +944,7 @@ class SADTk:
         ]
         btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=13, min_size=9, target_px=150)
 
-        bw = 13
+        bw = 15
         bh = 1
         padx = 3
         pady = 2
