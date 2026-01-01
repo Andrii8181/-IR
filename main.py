@@ -1,4 +1,3 @@
-
 # main.py
 # -*- coding: utf-8 -*-
 
@@ -8,18 +7,16 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 Потрібно: Python 3.8+, numpy, scipy
 Встановлення: pip install numpy scipy
 
-Оновлення (поточний пакет правок):
-✅ У таблиці ANOVA (парам. звіти) збільшено відстань (Tab) між «Джерело» та «SS».
-✅ У таблиці середніх значень (варіанти) збільшено відстань між «Варіант» та «Середнє».
-✅ Таблиця розміру ефекту: додано 3-й стовпчик «Висновок» (слабкий/середній/сильний).
-✅ Таблиця CV: примітку прибрано.
-✅ Непараметричні звіти: ANOVA прибрано; додано ранги (середній ранг), ε² (для Kruskal–Wallis),
-   у парних порівняннях — Cliff’s delta (δ) + інтерпретація; пост-хок лише якщо KW істотний.
-✅ icon.ico підхоплюється (папка скрипта і cwd) і ставиться як іконка для всіх вікон.
-✅ Кнопки над таблицею вводу компактніші + шрифт підганяється під назви.
+Останні правки:
+✅ Заголовок звіту: «ЗВІТ СТАТИСТИЧНОГО АНАЛІЗУ ДАНИХ».
+✅ Прибрано фразу про інтерпретацію непараметричних тестів через ранги.
+✅ Пояснення позначень (**/*/літери/"-") перенесено одразу після рядка «Виконуваний статистичний аналіз».
+✅ Іконка icon.ico: пошук у корені програми (папка скрипта), cwd, папка запуску (argv0), папка exe (sys.executable),
+   підтримка PyInstaller (_MEIPASS). Ставимо iconbitmap для всіх вікон.
 """
 
 import os
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
@@ -56,29 +53,63 @@ except Exception:
 
 
 # -------------------------
-# ICON (support py + frozen exe)
+# ICON (robust search)
 # -------------------------
 def _script_dir():
+    # 1) PyInstaller temp dir
     try:
-        import sys
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
             return sys._MEIPASS
     except Exception:
         pass
-
+    # 2) normal script dir
     try:
         return os.path.dirname(os.path.abspath(__file__))
     except Exception:
         return os.getcwd()
 
 
+def _exe_dir():
+    try:
+        return os.path.dirname(os.path.abspath(sys.executable))
+    except Exception:
+        return None
+
+
+def _argv0_dir():
+    try:
+        p = sys.argv[0]
+        if not p:
+            return None
+        return os.path.dirname(os.path.abspath(p))
+    except Exception:
+        return None
+
+
 def _find_icon_file():
-    candidates = [
-        os.path.join(_script_dir(), "icon.ico"),
-        os.path.join(os.getcwd(), "icon.ico"),
-    ]
+    """
+    Шукаємо icon.ico у:
+    - папці скрипта (корінь програми)
+    - поточній папці запуску (cwd)
+    - папці sys.argv[0]
+    - папці sys.executable (для зібраних exe)
+    - _MEIPASS (PyInstaller)
+    """
+    candidates = []
+
+    for base in [_script_dir(), os.getcwd(), _argv0_dir(), _exe_dir()]:
+        if base:
+            candidates.append(os.path.join(base, "icon.ico"))
+
+    # У PyInstaller _script_dir() може бути _MEIPASS; все одно дублюємо надійно
+    try:
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(os.path.join(sys._MEIPASS, "icon.ico"))
+    except Exception:
+        pass
+
     for p in candidates:
-        if os.path.exists(p):
+        if p and os.path.exists(p):
             return p
     return None
 
@@ -87,6 +118,7 @@ def set_window_icon(win: tk.Tk | tk.Toplevel):
     ico = _find_icon_file()
     if not ico:
         return
+    # Найнадійніше у Windows:
     try:
         win.iconbitmap(ico)
         return
@@ -186,7 +218,6 @@ def cv_percent_from_level_means(level_means):
 
 
 def partial_eta2_label(pe2: float) -> str:
-    # пороги Cohen (часто застосовують і для partial η² як наближення)
     if pe2 is None or (isinstance(pe2, float) and math.isnan(pe2)):
         return ""
     if pe2 < 0.01:
@@ -199,10 +230,9 @@ def partial_eta2_label(pe2: float) -> str:
 
 
 def epsilon_squared_kw(H: float, n: int, k: int) -> float:
-    # ε² = (H - k + 1) / (n - k)
     if any(x is None for x in [H, n, k]):
         return np.nan
-    if any(isinstance(x, float) and math.isnan(x) for x in [H]):
+    if isinstance(H, float) and math.isnan(H):
         return np.nan
     if n <= k or k < 2:
         return np.nan
@@ -210,10 +240,6 @@ def epsilon_squared_kw(H: float, n: int, k: int) -> float:
 
 
 def cliffs_delta(x, y):
-    """
-    Cliff's delta δ ∈ [-1, 1]
-    Позитивне: x має тенденцію бути більшим за y.
-    """
     x = np.array(x, dtype=float)
     y = np.array(y, dtype=float)
     x = x[~np.isnan(x)]
@@ -222,7 +248,6 @@ def cliffs_delta(x, y):
     if nx == 0 or ny == 0:
         return np.nan
 
-    # O(nx*ny) може бути важко на великих, але тут типово невеликі.
     gt = 0
     lt = 0
     for xi in x:
@@ -232,7 +257,6 @@ def cliffs_delta(x, y):
 
 
 def cliffs_label(delta_abs: float) -> str:
-    # пороги (Romano et al.): negligible 0.147, small 0.33, medium 0.474, large
     if delta_abs is None or (isinstance(delta_abs, float) and math.isnan(delta_abs)):
         return ""
     if delta_abs < 0.147:
@@ -361,10 +385,7 @@ def cld_multi_letters(levels_order, means_dict, sig_matrix):
 
     out = {}
     for lvl in levels_order:
-        if lvl in mapping:
-            out[lvl] = "".join(sorted(mapping[lvl]))
-        else:
-            out[lvl] = ""
+        out[lvl] = "".join(sorted(mapping.get(lvl, [])))
     return out
 
 
@@ -384,10 +405,8 @@ def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9
 # REPORT TABLES (tabs)
 # -------------------------
 def build_table_block(headers, rows):
-    def hcell(x):
-        return f"{x} "  # мінімальний відступ у заголовках
-    def ccell(x):
-        return "" if x is None else str(x)
+    def hcell(x): return f"{x} "
+    def ccell(x): return "" if x is None else str(x)
 
     lines = []
     lines.append("\t".join(hcell(h) for h in headers))
@@ -398,10 +417,6 @@ def build_table_block(headers, rows):
 
 
 def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extra_gap_after_col=None, extra_gap_px=0):
-    """
-    Tabs = cumulative width per column (except last).
-    extra_gap_after_col: індекс колонки, після якої додаємо додатковий проміжок (px).
-    """
     ncol = len(headers)
     maxw = [0] * ncol
 
@@ -429,7 +444,7 @@ def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extr
 
 
 # -------------------------
-# ANOVA 1–4 (логіка як була)
+# ANOVA 1–4
 # -------------------------
 def anova_n_way(long, factors, levels_by_factor):
     N = len(long)
@@ -553,7 +568,7 @@ def anova_n_way(long, factors, levels_by_factor):
 
 
 # -------------------------
-# Brown–Forsythe (Levene center=median)
+# Brown–Forsythe
 # -------------------------
 def brown_forsythe_from_groups(groups_dict):
     samples = [np.array(v, dtype=float) for v in groups_dict.values() if v and len(v) >= 2]
@@ -734,10 +749,6 @@ def build_partial_eta2_rows_with_label(anova_table_rows):
 # Ranks
 # -------------------------
 def mean_ranks_by_key(long, key_func):
-    """
-    Ранжуємо всі значення (з урахуванням ties), потім рахуємо середній ранг по групах.
-    key_func(rec)->hashable key
-    """
     vals = []
     keys = []
     for rec in long:
@@ -1095,8 +1106,7 @@ class SADTk:
     def paste_from_focus(self):
         w = self.table_win.focus_get()
         if isinstance(w, tk.Entry):
-            class E:
-                pass
+            class E: pass
             ev = E()
             ev.widget = w
             self.on_paste(ev)
@@ -1174,14 +1184,10 @@ class SADTk:
                     continue
 
                 rec = {"value": val}
-                if self.factors_count >= 1:
-                    rec["A"] = levels[0]
-                if self.factors_count >= 2:
-                    rec["B"] = levels[1]
-                if self.factors_count >= 3:
-                    rec["C"] = levels[2]
-                if self.factors_count >= 4:
-                    rec["D"] = levels[3]
+                if self.factors_count >= 1: rec["A"] = levels[0]
+                if self.factors_count >= 2: rec["B"] = levels[1]
+                if self.factors_count >= 3: rec["C"] = levels[2]
+                if self.factors_count >= 4: rec["D"] = levels[3]
                 long.append(rec)
 
         return long, rep_cols
@@ -1208,7 +1214,6 @@ class SADTk:
 
         levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
 
-        # ---- ANOVA core (використовується для параметричних звітів і для деяких метрик, але у непарам-режимі не виводимо)
         try:
             res = anova_n_way(long, self.factor_keys, levels_by_factor)
         except Exception as ex:
@@ -1238,12 +1243,8 @@ class SADTk:
         MS_error = res.get("MS_error", np.nan)
         df_error = res.get("df_error", np.nan)
 
-        # ---- groups
         factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
-        factor_means = {
-            f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()}
-            for f in self.factor_keys
-        }
+        factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
         factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
 
         factor_medians = {}
@@ -1256,7 +1257,6 @@ class SADTk:
                 factor_medians[f][lvl] = med
                 factor_q[f][lvl] = (q1, q3)
 
-        # ---- variants
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         v_names = [" | ".join(map(str, k)) for k in variant_order]
         num_variants = len(variant_order)
@@ -1270,11 +1270,9 @@ class SADTk:
         ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
         groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
 
-        # ---- ranks
         ranks_by_variant = mean_ranks_by_key(long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys))
         ranks_by_factor = {f: mean_ranks_by_key(long, key_func=lambda rec, ff=f: rec.get(ff)) for f in self.factor_keys}
 
-        # ---- nonparam descriptive per variants
         v_medians = {}
         v_q = {}
         for i, k in enumerate(variant_order):
@@ -1284,12 +1282,10 @@ class SADTk:
             v_medians[k] = med
             v_q[k] = (q1, q3)
 
-        # ---- Brown–Forsythe (parametric only): by variants
         bf_F, bf_p = (np.nan, np.nan)
         if method in ("lsd", "tukey", "duncan", "bonferroni"):
             bf_F, bf_p = brown_forsythe_from_groups(groups1)
 
-        # ---- Kruskal–Wallis global
         kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
         if method == "kw":
             try:
@@ -1303,7 +1299,6 @@ class SADTk:
             except Exception:
                 kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
 
-        # ---- letters per factor (LSD only)
         letters_factor = {}
         if method == "lsd":
             for f in self.factor_keys:
@@ -1314,7 +1309,6 @@ class SADTk:
             for f in self.factor_keys:
                 letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
 
-        # ---- letters + pairwise for variants
         letters_named = {name: "" for name in v_names}
         pairwise_rows = []
         do_posthoc = True
@@ -1322,24 +1316,18 @@ class SADTk:
         if method == "lsd":
             sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
             letters_named = cld_multi_letters(v_names, means1, sigv)
-
         elif method in ("tukey", "duncan", "bonferroni"):
             pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
             letters_named = cld_multi_letters(v_names, means1, sig)
-
         elif method == "kw":
-            # Пост-хок лише якщо KW істотний
             if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
                 do_posthoc = False
-
             if do_posthoc:
                 pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
                 med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
                 letters_named = cld_multi_letters(v_names, med_tmp, sig)
             else:
-                # Без пост-хоку — літери не ставимо
                 letters_named = {name: "" for name in v_names}
-
         elif method == "mw":
             pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
             med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
@@ -1347,12 +1335,10 @@ class SADTk:
 
         letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
-        # ---- model fit stats (параметричні)
         SS_total = res.get("SS_total", np.nan)
         SS_error = res.get("SS_error", np.nan)
         R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
 
-        # ---- CV table values (як просив: фактори + загальний, без примітки)
         cv_rows = []
         for f in self.factor_keys:
             lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
@@ -1364,15 +1350,8 @@ class SADTk:
         # -------------------------
         # REPORT segments
         # -------------------------
-        title_map = {
-            1: "О Д Н О Ф А К Т О Р Н О Г О",
-            2: "Д В О Ф А К Т О Р Н О Г О",
-            3: "Т Р И Ф А К Т О Р Н О Г О",
-            4: "Ч О Т И Р И Ф А К Т О Р Н О Г О",
-        }
-
         seg = []
-        seg.append(("text", f"Р Е З У Л Ь Т А Т И   {title_map[self.factors_count]}   Д И С П Е Р С І Й Н О Г О   А Н А Л І З У\n\n"))
+        seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
         seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
         seg.append(("text", f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
 
@@ -1393,10 +1372,14 @@ class SADTk:
         if method_label:
             seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
 
-        if method in ("mw", "kw"):
-            seg.append(("text", "Непараметричні тести оцінюють відмінності розподілів (через ранги). "
-                               "За близьких форм розподілу різниці часто інтерпретують як зміщення центральної тенденції.\n\n"))
+        # ✅ Пояснення позначень — одразу після назви аналізу (як просив)
+        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
+        seg.append(("text", "У таблицях знак \"-\" означає p ≥ 0.05.\n"))
+        seg.append(("text", "Істотна різниця (літери): різні літери означають істотну різницю.\n\n"))
 
+        nonparam = method in ("mw", "kw")
+
+        # Nonparam global test line
         if method == "kw":
             if not (isinstance(kw_p, float) and math.isnan(kw_p)):
                 concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
@@ -1407,15 +1390,8 @@ class SADTk:
             else:
                 seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
 
-        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
-        seg.append(("text", "У таблицях знак \"-\" означає p ≥ 0.05.\n"))
-        seg.append(("text", "Істотна різниця (літери): різні літери означають істотну різницю.\n\n"))
-
-        nonparam = method in ("mw", "kw")
-
-        # ---- PARAMETRIC SECTION
+        # ---- PARAMETRIC
         if not nonparam:
-            # Brown–Forsythe before ANOVA
             if not any(math.isnan(x) for x in [bf_F, bf_p]):
                 bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
                 seg.append(("text",
@@ -1424,7 +1400,7 @@ class SADTk:
             else:
                 seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
 
-            # Table 1 ANOVA (збільшено tab між «Джерело» та «SS»)
+            # ANOVA table with extra gap after "Джерело"
             anova_rows = []
             for name, SSv, dfv, MSv, Fv, pv in res["table"]:
                 df_txt = str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""
@@ -1440,32 +1416,27 @@ class SADTk:
                 "headers": ["Джерело", "SS", "df", "MS", "F", "p", "Висновок"],
                 "rows": anova_rows,
                 "padding_px": 32,
-                "extra_gap_after_col": 0,   # після «Джерело»
-                "extra_gap_px": 60          # додатковий Tab-прохід
+                "extra_gap_after_col": 0,
+                "extra_gap_px": 60
             }))
             seg.append(("text", "\n"))
 
-            # Table 2 Effect strength (%)
             eff_rows = build_effect_strength_rows(res["table"])
             seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів, їх комбінацій та залишку (%)\n"))
             seg.append(("table", {"headers": ["Джерело", "%"], "rows": eff_rows}))
             seg.append(("text", "\n"))
 
-            # Table 3 Effect size (partial eta2) with conclusion
             pe2_rows = build_partial_eta2_rows_with_label(res["table"])
             seg.append(("text", "ТАБЛИЦЯ 3. Розмір ефекту (partial η²)\n"))
             seg.append(("table", {"headers": ["Джерело", "partial η²", "Висновок"], "rows": pe2_rows}))
             seg.append(("text", "\n"))
 
-            # Table 4 CV (no note)
             seg.append(("text", "ТАБЛИЦЯ 4. Коефіцієнт варіації (CV, %)\n"))
             seg.append(("table", {"headers": ["Елемент", "CV, %"], "rows": cv_rows}))
             seg.append(("text", "\n"))
 
-            # R2 one line
             seg.append(("text", f"Коефіцієнт детермінації:\tR²={fmt_num(R2, 4)}\n\n"))
 
-            # NIR (LSD only)
             tno = 5
             if method == "lsd":
                 nir_rows = []
@@ -1477,7 +1448,6 @@ class SADTk:
                 seg.append(("text", "\n"))
                 tno = 6
 
-            # Factor means
             for f in self.factor_keys:
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
                 rows_f = []
@@ -1489,7 +1459,6 @@ class SADTk:
                 seg.append(("text", "\n"))
                 tno += 1
 
-            # Variant means table (збільшено tab між «Варіант» та «Середнє»)
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень (варіанти)\n"))
             rows_v = []
             for k in variant_order:
@@ -1503,23 +1472,21 @@ class SADTk:
                 "headers": ["Варіант", "Середнє", "± SD", "Істотна різниця"],
                 "rows": rows_v,
                 "padding_px": 32,
-                "extra_gap_after_col": 0,  # після «Варіант»
+                "extra_gap_after_col": 0,
                 "extra_gap_px": 80
             }))
             seg.append(("text", "\n"))
             tno += 1
 
-            # Pairwise
             if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (варіанти)\n"))
                 seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
                 seg.append(("text", "\n"))
 
-        # ---- NONPARAMETRIC SECTION (ANOVA прибрано)
+        # ---- NONPARAMETRIC (ANOVA not shown)
         else:
             tno = 1
 
-            # Factor tables (median + Q1–Q3 + mean rank)
             for f in self.factor_keys:
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика по фактору {f} (непараметрична)\n"))
                 rows = []
@@ -1540,7 +1507,6 @@ class SADTk:
                 seg.append(("text", "\n"))
                 tno += 1
 
-            # Variants (median + IQR + mean rank)
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
             rows = []
             for k in variant_order:
@@ -1567,7 +1533,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
-            # Pairwise (MW/Bonf) + effect
             if method == "kw" and not do_posthoc:
                 seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
             else:
@@ -1576,7 +1541,6 @@ class SADTk:
                     seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
                     seg.append(("text", "\n"))
 
-        # ---- Report creation time (end)
         seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
 
         self.show_report_segments(seg)
@@ -1609,7 +1573,6 @@ class SADTk:
                 txt.insert("end", payload)
                 continue
 
-            # payload can be dict or tuple(headers, rows)
             if isinstance(payload, dict):
                 headers = payload.get("headers", [])
                 rows = payload.get("rows", [])
@@ -1663,5 +1626,6 @@ class SADTk:
 # -------------------------
 if __name__ == "__main__":
     root = tk.Tk()
+    set_window_icon(root)  # ще раз — на випадок пізніх змін cwd/запуску
     app = SADTk(root)
     root.mainloop()
