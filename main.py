@@ -1055,10 +1055,25 @@ class SADTk:
             out["ok"] = True
             dlg.destroy()
 
-        btns = tk.Frame(frm)
-        btns.grid(row=5, column=0, columnspan=2, pady=(12, 0))
-        tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=6)
-        tk.Button(btns, text="Скасувати", width=12, command=lambda: dlg.destroy()).pack(side=tk.LEFT, padx=6)
+        # --- АВТО-АДАПТАЦІЯ РОЗМІРУ ВІКНА ПІД ВМІСТ (щоб усе поміщалось)
+dlg.update_idletasks()
+
+pad = 24  # запас по краях
+req_w = frm.winfo_reqwidth() + pad
+req_h = frm.winfo_reqheight() + pad
+
+sw = dlg.winfo_screenwidth()
+sh = dlg.winfo_screenheight()
+
+# щоб не вилізло за екран
+w = min(req_w, sw - 120)
+h = min(req_h, sh - 120)
+
+dlg.geometry(f"{w}x{h}")
+dlg.minsize(w, h)  # не даємо "стиснути" назад
+
+center_window(dlg)
+
 
         dlg.update_idletasks()
         center_window(dlg)
