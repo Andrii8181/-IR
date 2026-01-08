@@ -4,54 +4,49 @@
 """
 S.A.D. — Статистичний аналіз даних (Tkinter)
 
-Потрібно: Python 3.8+, numpy, scipy, matplotlib
-Встановлення: pip install numpy scipy matplotlib
+Потрібно: Python 3.8+, numpy, scipy, matplotlib, pillow
+Встановлення:
+  pip install numpy scipy matplotlib pillow
 
-ДОДАНО (за вимогами):
-✅ У вікні параметрів звіту: Назва показника + Одиниці + Тип дизайну (CRD / RCBD / Split-plot)
-✅ Якщо обрано Split-plot — з’являється додаткове меню вибору ГОЛОВНОГО фактора (для 1–4 факторів)
-✅ Формуються ДВА звіти:
-   1) Текстовий звіт (як було) з кнопкою «Копіювати звіт»
-   2) Графічний звіт (окреме вікно) — boxplot “блоками” для факторів, з літерами істотності + легенда
-✅ У графічному вікні є кнопка «Копіювати графік (PNG)»
-   - у Windows: копіює у буфер обміну як зображення (PNG через DIB)
-   - в інших ОС: повідомляє, що копіювання зображення в буфер підтримується лише у Windows (можна зберегти PNG)
+Що додано/виправлено:
+✅ Дизайн експерименту: CRD / RCBD / Split-plot (коректно)
+✅ У вікні параметрів звіту додано вибір дизайну + (для Split-plot) вибір головного фактора
+✅ Вікно параметрів автоматично змінює розмір, щоб усе влізло
+✅ Split-plot звіт: %SS, partial η², CV (main-plot і sub-plot)
+✅ Графічний звіт: один графік блоками факторів + літери над верхнім вусом + правильна легенда
+✅ Копіювання графіка в буфер у форматі PNG (через CF_DIB) без помилки GlobalLock
 
-ВАЖЛИВО про Split-plot:
-- Реалізовано типову логіку split-plot з ОДНИМ “головним” фактором (whole-plot factor),
-  який тестується на помилці Block×Main (де Block = повторність/колонка).
-- Усі інші ефекти тестуються на “внутрішній” помилці (залишок).
-- Це працює найкоректніше для збалансованих даних.
-
+(ДОДАНО В ЦІЙ ВЕРСІЇ:)
+✅ Літери по факторах для ВСІХ параметричних методів (LSD / Tukey / Duncan / Bonferroni) — у Частині 2
+✅ Порядок інформації у текстовому звіті як у вашому прикладі — у Частині 2
 """
 
 import os
 import sys
 import math
-import tempfile
-from itertools import combinations
-from collections import defaultdict
-from datetime import datetime
-from typing import Union, Optional, Dict, List, Tuple
-
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter.scrolledtext import ScrolledText
 import tkinter.font as tkfont
+from collections import defaultdict
+from itertools import combinations
+from datetime import datetime
 
 import numpy as np
-
 from scipy.stats import shapiro, t, f as f_dist
 from scipy.stats import mannwhitneyu, kruskal, levene, rankdata
 from scipy.stats import studentized_range
 
+# plotting
 import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+matplotlib.use("TkAgg")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
+from PIL import Image
 
 ALPHA = 0.05
 COL_W = 10
-
 
 # -------------------------
 # DPI awareness (Windows)
@@ -117,7 +112,7 @@ def _find_icon_file():
     return None
 
 
-def set_window_icon(win: Union[tk.Tk, tk.Toplevel]):
+def set_window_icon(win: tk.Tk | tk.Toplevel):
     ico = _find_icon_file()
     if not ico:
         return
@@ -131,72 +126,6 @@ def set_window_icon(win: Union[tk.Tk, tk.Toplevel]):
         return
     except Exception:
         pass
-
-
-# -------------------------
-# Clipboard: copy PNG to clipboard (Windows)
-# -------------------------
-def copy_png_to_clipboard_windows(png_path: str) -> Tuple[bool, str]:
-    """
-    Копіює зображення у буфер обміну Windows як CF_DIB.
-    Потребує Pillow (PIL). Якщо PIL нема — поверне помилку.
-    """
-    if not (sys.platform.startswith("win")):
-        return False, "Копіювання зображення у буфер підтримується лише у Windows."
-
-    try:
-        from PIL import Image  # type: ignore
-    except Exception:
-        return False, "Для копіювання PNG у буфер у Windows потрібна бібліотека Pillow: pip install pillow"
-
-    try:
-        import ctypes
-        import io
-
-        img = Image.open(png_path)
-        # Для CF_DIB потрібен DIB (BMP без перших 14 байтів заголовка файла)
-        with io.BytesIO() as output:
-            # перетворимо в DIB через BMP
-            bmp = img.convert("RGB")
-            bmp.save(output, "BMP")
-            data = output.getvalue()[14:]  # відрізаємо BITMAPFILEHEADER
-
-        CF_DIB = 8
-        GMEM_MOVEABLE = 0x0002
-
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-
-        if not user32.OpenClipboard(None):
-            return False, "Не вдалося відкрити буфер обміну."
-
-        try:
-            user32.EmptyClipboard()
-
-            hglob = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
-            if not hglob:
-                return False, "GlobalAlloc не виділив пам’ять."
-
-            locked = kernel32.GlobalLock(hglob)
-            if not locked:
-                kernel32.GlobalFree(hglob)
-                return False, "GlobalLock не спрацював."
-
-            try:
-                ctypes.memmove(locked, data, len(data))
-            finally:
-                kernel32.GlobalUnlock(hglob)
-
-            if not user32.SetClipboardData(CF_DIB, hglob):
-                kernel32.GlobalFree(hglob)
-                return False, "SetClipboardData не спрацював."
-
-        finally:
-            user32.CloseClipboard()
-
-        return True, ""
-    except Exception as ex:
-        return False, str(ex)
 
 
 # -------------------------
@@ -262,6 +191,18 @@ def median_q1_q3(arr):
     return med, q1, q3
 
 
+def cv_from_ms(ms_error, grand_mean):
+    if ms_error is None or grand_mean is None:
+        return np.nan
+    if any(isinstance(x, float) and math.isnan(x) for x in [ms_error, grand_mean]):
+        return np.nan
+    if grand_mean == 0:
+        return np.nan
+    if ms_error < 0:
+        return np.nan
+    return float((math.sqrt(ms_error) / grand_mean) * 100.0)
+
+
 def cv_percent_from_values(values):
     a = np.array(values, dtype=float)
     a = a[~np.isnan(a)]
@@ -271,17 +212,6 @@ def cv_percent_from_values(values):
     if m == 0:
         return np.nan
     sd = float(np.std(a, ddof=1))
-    return (sd / m) * 100.0
-
-
-def cv_percent_from_level_means(level_means):
-    vals = [float(x) for x in level_means if x is not None and not (isinstance(x, float) and math.isnan(x))]
-    if len(vals) < 2:
-        return np.nan
-    m = float(np.mean(vals))
-    if m == 0:
-        return np.nan
-    sd = float(np.std(vals, ddof=1))
     return (sd / m) * 100.0
 
 
@@ -315,7 +245,6 @@ def cliffs_delta(x, y):
     nx, ny = len(x), len(y)
     if nx == 0 or ny == 0:
         return np.nan
-
     gt = 0
     lt = 0
     for xi in x:
@@ -512,376 +441,6 @@ def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extr
 
 
 # -------------------------
-# ANOVA (CRD/RCBD) 1–4 factors (як було)
-# -------------------------
-def anova_n_way(long, factors, levels_by_factor):
-    N = len(long)
-    values = np.array([r["value"] for r in long], dtype=float)
-    grand_mean = np.nanmean(values)
-
-    k = len(factors)
-    if k < 1 or k > 4:
-        raise ValueError("Підтримуються 1–4 фактори.")
-
-    stats = {}
-    for r in range(1, k + 1):
-        for comb in combinations(factors, r):
-            stats[comb] = subset_stats(long, comb)
-
-    full = tuple(factors)
-    cell_means = {kk: vv[0] for kk, vv in stats[full].items()}
-    cell_counts = {kk: vv[1] for kk, vv in stats[full].items()}
-
-    SS_total = np.nansum((values - grand_mean) ** 2)
-
-    SS_error = 0.0
-    for rec in long:
-        key = tuple(rec.get(f) for f in factors)
-        v = rec.get("value", np.nan)
-        m = cell_means.get(key, np.nan)
-        if not math.isnan(v) and not math.isnan(m):
-            SS_error += (v - m) ** 2
-
-    levels_count = {f: len(levels_by_factor[f]) for f in factors}
-    total_cells = 1
-    for fct in factors:
-        total_cells *= levels_count[fct]
-
-    df_total = N - 1
-    df_error = N - total_cells
-    if df_error <= 0:
-        df_error = max(1, df_error)
-
-    MS_error = SS_error / df_error if df_error > 0 else np.nan
-
-    SS = {}
-    df = {}
-
-    def delta_for_subset(S, levels_S):
-        s_len = len(S)
-        delta = 0.0
-        for rT in range(0, s_len + 1):
-            for T in combinations(S, rT):
-                coef = (-1) ** (s_len - rT)
-                if len(T) == 0:
-                    mu = grand_mean
-                else:
-                    idxs = [S.index(x) for x in T]
-                    levs_T = tuple(levels_S[i] for i in idxs)
-                    mu = stats[T].get(levs_T, (np.nan, 0))[0]
-                if mu is None or (isinstance(mu, float) and math.isnan(mu)):
-                    mu = 0.0
-                delta += coef * mu
-        return delta
-
-    for rS in range(1, k + 1):
-        for S in combinations(factors, rS):
-            d = 1
-            for fct in S:
-                d *= (levels_count[fct] - 1)
-            df[S] = d
-
-            ss = 0.0
-            for levels_S, (mS, nS) in stats[S].items():
-                if nS <= 0 or mS is None or (isinstance(mS, float) and math.isnan(mS)):
-                    continue
-                delta = delta_for_subset(list(S), list(levels_S))
-                ss += nS * (delta ** 2)
-            SS[S] = ss
-
-    def pretty_interaction(subset):
-        if len(subset) == 1:
-            return f"Фактор {subset[0]}"
-        return "Фактор " + "×".join(subset)
-
-    table_rows = []
-    for rS in range(1, k + 1):
-        for S in combinations(factors, rS):
-            name = pretty_interaction(S)
-            SSv = SS.get(S, np.nan)
-            dfv = df.get(S, np.nan)
-            MSv = SSv / dfv if (dfv and not math.isnan(dfv) and dfv > 0) else np.nan
-            Fv = MSv / MS_error if (not math.isnan(MS_error) and MS_error > 0 and not math.isnan(MSv)) else np.nan
-            pv = 1 - f_dist.cdf(Fv, dfv, df_error) if (not math.isnan(Fv) and not math.isnan(dfv)) else np.nan
-            table_rows.append((name, SSv, dfv, MSv, Fv, pv))
-
-    table_rows.append(("Залишок", SS_error, df_error, MS_error, None, None))
-    table_rows.append(("Загальна", SS_total, df_total, None, None, None))
-
-    tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
-    NIR05 = {}
-    n_eff_cells = harmonic_mean([n for n in cell_counts.values() if n and n > 0])
-    nir_all = tval * math.sqrt(2 * MS_error / n_eff_cells) if not any(
-        math.isnan(x) for x in [tval, MS_error, n_eff_cells]
-    ) else np.nan
-    NIR05["Загальна"] = nir_all
-    for fct in factors:
-        marg = subset_stats(long, (fct,))
-        n_eff = harmonic_mean([v[1] for v in marg.values() if v[1] and v[1] > 0])
-        nir = tval * math.sqrt(2 * MS_error / n_eff) if not any(
-            math.isnan(x) for x in [tval, MS_error, n_eff]
-        ) else np.nan
-        NIR05[f"Фактор {fct}"] = nir
-
-    return {
-        "design": "CRD/RCBD",
-        "table": table_rows,
-        "cell_means": cell_means,
-        "cell_counts": cell_counts,
-        "MS_error": MS_error,
-        "df_error": df_error,
-        "NIR05": NIR05,
-        "SS_total": SS_total,
-        "SS_error": SS_error,
-    }
-
-
-# -------------------------
-# Split-plot ANOVA (1–4 factors, 1 головний фактор) з двома помилками:
-# - MS_error_main = MS(Block×Main)
-# - MS_error_sub = MS(Residual)
-# Block = повторність (replicate column)
-# -------------------------
-def splitplot_anova_one_main(long, factors, levels_by_factor, main_factor: str):
-    """
-    Повертає таблицю ANOVA з правильними denominator-ами для F:
-    - Main_factor тестуємо на Error1 = Block×Main
-    - всі інші ефекти (інші фактори та взаємодії) тестуємо на Error2 = Residual
-
-    Очікує, що кожен запис long має 'rep' (блок/повторність).
-    """
-    if "rep" not in long[0]:
-        raise ValueError("Split-plot вимагає наявності блоків/повторностей (rep).")
-
-    if main_factor not in factors:
-        raise ValueError("Невірно задано головний фактор для split-plot.")
-
-    # Підготовка
-    all_factors = list(factors)
-    sub_factors = [f for f in all_factors if f != main_factor]
-    blocks = first_seen_order([r.get("rep") for r in long])
-    a_levels = levels_by_factor.get(main_factor, first_seen_order([r.get(main_factor) for r in long]))
-
-    y = np.array([r["value"] for r in long], dtype=float)
-    grand = float(np.nanmean(y))
-
-    def mean_for(keys: Tuple[str, ...], vals: Tuple):
-        # середнє для комбінації
-        s = 0.0
-        n = 0
-        for r in long:
-            ok = True
-            for k, v in zip(keys, vals):
-                if r.get(k) != v:
-                    ok = False
-                    break
-            if not ok:
-                continue
-            vv = r.get("value", np.nan)
-            if vv is None or math.isnan(vv):
-                continue
-            s += float(vv)
-            n += 1
-        return (s / n) if n > 0 else np.nan, n
-
-    # SS_total
-    SS_total = float(np.nansum((y - grand) ** 2))
-    df_total = len(y) - 1
-
-    # SS_block
-    block_means = {}
-    block_ns = {}
-    for b in blocks:
-        m, n = mean_for(("rep",), (b,))
-        block_means[b] = m
-        block_ns[b] = n
-    SS_block = 0.0
-    for b in blocks:
-        if block_ns[b] > 0 and not math.isnan(block_means[b]):
-            SS_block += block_ns[b] * (block_means[b] - grand) ** 2
-    df_block = max(1, len(blocks) - 1)
-
-    # SS_main
-    main_means = {}
-    main_ns = {}
-    for a in a_levels:
-        m, n = mean_for((main_factor,), (a,))
-        main_means[a] = m
-        main_ns[a] = n
-    SS_main = 0.0
-    for a in a_levels:
-        if main_ns[a] > 0 and not math.isnan(main_means[a]):
-            SS_main += main_ns[a] * (main_means[a] - grand) ** 2
-    df_main = max(1, len(a_levels) - 1)
-
-    # SS_block×main (Error1)
-    # mean for each (block, main)
-    ba_means = {}
-    ba_ns = {}
-    for b in blocks:
-        for a in a_levels:
-            m, n = mean_for(("rep", main_factor), (b, a))
-            ba_means[(b, a)] = m
-            ba_ns[(b, a)] = n
-
-    SS_ba = 0.0
-    for b in blocks:
-        for a in a_levels:
-            n = ba_ns[(b, a)]
-            m = ba_means[(b, a)]
-            if n <= 0 or math.isnan(m):
-                continue
-            mb = block_means.get(b, np.nan)
-            ma = main_means.get(a, np.nan)
-            if math.isnan(mb) or math.isnan(ma):
-                continue
-            term = m - mb - ma + grand
-            SS_ba += n * (term ** 2)
-    df_ba = max(1, df_block * df_main)
-
-    # Далі — “внутрішні” ефекти: усі інші фактори та взаємодії, як звичайно,
-    # але F рахуємо на MS_residual.
-    # Для SS ефектів використовуємо вашу anova_n_way логіку, але треба:
-    # - повний набір факторів = factors
-    # - SS_error2 = “залишок” від повної моделі (всіх факторів)
-    # Проте split-plot має Error1 окремо, а Error2 = внутрішній залишок.
-
-    # Побудуємо повну факторну модель (без rep) щоб отримати SS для ефектів та SS_residual
-    # (аналог вашої anova_n_way, але без взаємодій з rep)
-    levels_count = {f: len(levels_by_factor[f]) for f in factors}
-    # mean for each full cell (factors only)
-    full_cells = groups_by_keys(long, tuple(factors))
-    cell_means = {k: float(np.mean(v)) for k, v in full_cells.items() if v}
-    cell_counts = {k: len(v) for k, v in full_cells.items() if v}
-
-    # Residual2: sum (y - mean_cell)^2
-    SS_res2 = 0.0
-    for r in long:
-        key = tuple(r.get(f) for f in factors)
-        v = r.get("value", np.nan)
-        m = cell_means.get(key, np.nan)
-        if v is None or math.isnan(v) or math.isnan(m):
-            continue
-        SS_res2 += (float(v) - float(m)) ** 2
-
-    # df_res2 = N - (#cells)
-    total_cells = 1
-    for f in factors:
-        total_cells *= max(1, levels_count[f])
-    df_res2 = (len(long) - total_cells)
-    if df_res2 <= 0:
-        df_res2 = 1
-    MS_res2 = SS_res2 / df_res2
-
-    # SS for each effect (factors only) за “класичним” підходом як в anova_n_way
-    stats = {}
-    k = len(factors)
-    for r_ in range(1, k + 1):
-        for comb in combinations(factors, r_):
-            stats[comb] = subset_stats(long, comb)
-
-    SS_eff = {}
-    df_eff = {}
-
-    def delta_for_subset(S, levels_S):
-        s_len = len(S)
-        delta = 0.0
-        for rT in range(0, s_len + 1):
-            for T in combinations(S, rT):
-                coef = (-1) ** (s_len - rT)
-                if len(T) == 0:
-                    mu = grand
-                else:
-                    idxs = [S.index(x) for x in T]
-                    levs_T = tuple(levels_S[i] for i in idxs)
-                    mu = stats[T].get(levs_T, (np.nan, 0))[0]
-                if mu is None or (isinstance(mu, float) and math.isnan(mu)):
-                    mu = 0.0
-                delta += coef * mu
-        return delta
-
-    for rS in range(1, k + 1):
-        for S in combinations(factors, rS):
-            d = 1
-            for fct in S:
-                d *= (levels_count[fct] - 1)
-            df_eff[S] = max(1, d)
-
-            ss = 0.0
-            for levels_S, (mS, nS) in stats[S].items():
-                if nS <= 0 or mS is None or (isinstance(mS, float) and math.isnan(mS)):
-                    continue
-                delta = delta_for_subset(list(S), list(levels_S))
-                ss += nS * (delta ** 2)
-            SS_eff[S] = ss
-
-    def pretty_interaction(subset):
-        if len(subset) == 1:
-            return f"Фактор {subset[0]}"
-        return "Фактор " + "×".join(subset)
-
-    # Формуємо таблицю:
-    # Block, Main, Error1 (Block×Main), решта ефектів, Error2, Total
-    rows = []
-
-    def p_from_f(Fv, dfn, dfd):
-        if any(math.isnan(x) for x in [Fv, dfn, dfd]):
-            return np.nan
-        try:
-            return float(1 - f_dist.cdf(Fv, dfn, dfd))
-        except Exception:
-            return np.nan
-
-    # Block
-    MS_block = SS_block / df_block
-    rows.append(("Блок (повторність)", SS_block, df_block, MS_block, "", "", ""))
-
-    # Main (denominator = MS_ba)
-    MS_main = SS_main / df_main
-    MS_ba = SS_ba / df_ba
-    F_main = (MS_main / MS_ba) if (MS_ba > 0 and not math.isnan(MS_ba)) else np.nan
-    p_main = p_from_f(F_main, df_main, df_ba)
-    concl = f"істотна різниця {significance_mark(p_main)}" if (not math.isnan(p_main) and p_main < ALPHA) else "-"
-    rows.append((f"Фактор {main_factor} (головний)", SS_main, df_main, MS_main, F_main, p_main, concl))
-
-    # Error1
-    rows.append((f"Помилка 1 (Блок×{main_factor})", SS_ba, df_ba, MS_ba, "", "", ""))
-
-    # Інші ефекти: тестуємо на MS_res2
-    for rS in range(1, k + 1):
-        for S in combinations(factors, rS):
-            if len(S) == 1 and S[0] == main_factor:
-                continue  # вже є
-            name = pretty_interaction(S)
-            SSv = SS_eff.get(S, np.nan)
-            dfv = df_eff.get(S, np.nan)
-            MSv = SSv / dfv if dfv and not math.isnan(dfv) and dfv > 0 else np.nan
-            Fv = (MSv / MS_res2) if (MS_res2 > 0 and not math.isnan(MSv)) else np.nan
-            pv = p_from_f(Fv, dfv, df_res2)
-            concl2 = f"істотна різниця {significance_mark(pv)}" if (not math.isnan(pv) and pv < ALPHA) else "-"
-            rows.append((name, SSv, dfv, MSv, Fv, pv, concl2))
-
-    # Error2
-    rows.append(("Помилка 2 (внутрішня)", SS_res2, df_res2, MS_res2, "", "", ""))
-
-    # Total
-    rows.append(("Загальна", SS_total, df_total, "", "", "", ""))
-
-    return {
-        "design": "SPLIT_PLOT",
-        "main_factor": main_factor,
-        "table_rows": rows,
-        "MS_error_main": MS_ba,
-        "df_error_main": df_ba,
-        "MS_error_sub": MS_res2,
-        "df_error_sub": df_res2,
-        "SS_total": SS_total,
-        "SS_error_sub": SS_res2,
-        "cell_means": cell_means,
-    }
-
-
-# -------------------------
 # Brown–Forsythe
 # -------------------------
 def brown_forsythe_from_groups(groups_dict):
@@ -1009,11 +568,11 @@ def pairwise_mw_bonf_with_effect(v_names, groups_dict, alpha=0.05):
 
 
 # -------------------------
-# Effect strength tables (для “звичайної” ANOVA)
+# Effect strength tables
 # -------------------------
 def build_effect_strength_rows(anova_table_rows):
     SS_total = None
-    for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
+    for name, SSv, dfv, MSv, Fv, pv, denom in anova_table_rows:
         if name == "Загальна":
             SS_total = SSv
 
@@ -1021,7 +580,7 @@ def build_effect_strength_rows(anova_table_rows):
         SS_total = np.nan
 
     rows = []
-    for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
+    for name, SSv, dfv, MSv, Fv, pv, denom in anova_table_rows:
         if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
             continue
         if name == "Загальна":
@@ -1032,36 +591,35 @@ def build_effect_strength_rows(anova_table_rows):
     return rows
 
 
-def build_partial_eta2_rows_with_label(anova_table_rows):
-    SS_error = None
-    for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
-        if name == "Залишок":
-            SS_error = SSv
-            break
-
-    if SS_error is None or (isinstance(SS_error, float) and math.isnan(SS_error)) or SS_error <= 0:
-        SS_error = np.nan
-
+def build_partial_eta2_rows_with_label_splitaware(anova_table_rows, ss_error_main, ss_error_sub):
+    """
+    anova_table_rows: [(name, SS, df, MS, F, p, denom)]
+    denom: 'main' or 'sub' or None (для підсумків/блоків)
+    partial η² для split-plot: SS_effect/(SS_effect+SS_error_stratum)
+    """
     rows = []
-    for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
-        if name in ("Залишок", "Загальна"):
+    for name, SSv, dfv, MSv, Fv, pv, denom in anova_table_rows:
+        if name in ("Загальна", "Залишок (sub-plot)", "Залишок (main-plot)", "Блоки"):
             continue
         if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
             continue
 
-        if math.isnan(SS_error):
+        if denom == "main":
+            SSerr = ss_error_main
+        elif denom == "sub":
+            SSerr = ss_error_sub
+        else:
+            SSerr = np.nan
+
+        if SSerr is None or (isinstance(SSerr, float) and math.isnan(SSerr)) or SSerr <= 0:
             pe2 = np.nan
         else:
-            denom = SSv + SS_error
-            pe2 = (SSv / denom) if denom > 0 else np.nan
+            pe2 = SSv / (SSv + SSerr) if (SSv + SSerr) > 0 else np.nan
 
         rows.append([name, fmt_num(pe2, 4), partial_eta2_label(pe2)])
     return rows
 
 
-# -------------------------
-# Ranks
-# -------------------------
 def mean_ranks_by_key(long, key_func):
     vals = []
     keys = []
@@ -1083,104 +641,418 @@ def mean_ranks_by_key(long, key_func):
 
 
 # -------------------------
-# Plot: one canvas, blocks of factor levels with letters + legend
+# Core SS for factorial effects (orthogonal, balanced-ish)
 # -------------------------
-def make_factor_blocks_boxplot_png(
-    factor_keys: List[str],
-    levels_by_factor: Dict[str, List[str]],
-    factor_groups: Dict[str, Dict[str, List[float]]],
-    letters_factor: Dict[str, Dict[str, str]],
-    title: str,
-    ylabel: str,
-    out_path: str,
-    gap: float = 1.5
-) -> Tuple[bool, str]:
+def anova_effect_ss_fixed(long, factors, levels_by_factor):
     """
-    Один графік (одне полотно), на осі X блоками:
-      [рівні фактора A] (пропуск) [рівні фактора B] (пропуск) ...
-    Для кожного рівня — boxplot + літера істотності над коробкою.
+    Повертає SS для всіх ефектів факторів/взаємодій як у звичайній факторній ANOVA.
+    (Блок/повторність тут НЕ враховується: це використовуємо як ортогональну частину treatment SS)
     """
-    # формуємо позиції
-    data = []
-    labels = []
-    positions = []
-    block_centers = []
-    pos = 1.0
+    N = len(long)
+    values = np.array([r["value"] for r in long], dtype=float)
+    grand_mean = np.nanmean(values)
 
-    for f in factor_keys:
-        lvls = levels_by_factor.get(f, [])
-        start_pos = pos
-        for lvl in lvls:
-            arr = factor_groups.get(f, {}).get(lvl, [])
-            arr = [x for x in arr if x is not None and not (isinstance(x, float) and math.isnan(x))]
-            if len(arr) == 0:
-                # якщо порожньо — пропускаємо, але залишаємо місце у вісi (для логіки)
-                arr = []
-            data.append(np.array(arr, dtype=float))
-            labels.append(str(lvl))
-            positions.append(pos)
-            pos += 1.0
-        end_pos = pos - 1.0
-        if end_pos >= start_pos:
-            block_centers.append((f, (start_pos + end_pos) / 2.0))
-        pos += gap
+    k = len(factors)
+    stats = {}
+    for r in range(1, k + 1):
+        for comb in combinations(factors, r):
+            stats[comb] = subset_stats(long, comb)
 
-    if len(data) == 0:
-        return False, "Немає даних для побудови графіка."
+    full = tuple(factors)
+    cell_means = {kk: vv[0] for kk, vv in stats[full].items()}
+    cell_counts = {kk: vv[1] for kk, vv in stats[full].items()}
 
-    # чистимо: matplotlib boxplot не любить повністю порожні масиви — замінимо на [nan]
-    safe_data = []
-    for arr in data:
-        if arr.size == 0:
-            safe_data.append(np.array([np.nan], dtype=float))
-        else:
-            safe_data.append(arr)
+    SS_total = np.nansum((values - grand_mean) ** 2)
 
-    fig_w = max(12, len(labels) * 0.5)
-    fig = plt.figure(figsize=(fig_w, 6))
-    ax = fig.add_subplot(111)
+    # CRD-like residual (не використовуємо для RCBD/Split як error, лише для residuals і нормальності)
+    SS_error_crd = 0.0
+    for rec in long:
+        key = tuple(rec.get(f) for f in factors)
+        v = rec.get("value", np.nan)
+        m = cell_means.get(key, np.nan)
+        if not math.isnan(v) and not math.isnan(m):
+            SS_error_crd += (v - m) ** 2
 
-    bp = ax.boxplot(safe_data, positions=positions, widths=0.6, patch_artist=False, showmeans=True)
+    levels_count = {f: len(levels_by_factor[f]) for f in factors}
 
-    ax.set_title(title)
-    ax.set_ylabel(ylabel)
-    ax.set_xticks(positions)
-    ax.set_xticklabels(labels, rotation=45, ha="right")
+    SS = {}
+    df = {}
 
-    # межі Y для літер
-    all_vals = np.concatenate([a[~np.isnan(a)] for a in safe_data if a is not None and len(a) > 0 and np.any(~np.isnan(a))] or [np.array([0.0])])
-    y_max = float(np.max(all_vals)) if all_vals.size else 0.0
-    y_min = float(np.min(all_vals)) if all_vals.size else 0.0
-    yr = (y_max - y_min) if (y_max - y_min) != 0 else 1.0
-    y_text = y_max + 0.06 * yr
+    def delta_for_subset(S, levels_S):
+        s_len = len(S)
+        delta = 0.0
+        for rT in range(0, s_len + 1):
+            for T in combinations(S, rT):
+                coef = (-1) ** (s_len - rT)
+                if len(T) == 0:
+                    mu = grand_mean
+                else:
+                    idxs = [S.index(x) for x in T]
+                    levs_T = tuple(levels_S[i] for i in idxs)
+                    mu = stats[T].get(levs_T, (np.nan, 0))[0]
+                if mu is None or (isinstance(mu, float) and math.isnan(mu)):
+                    mu = 0.0
+                delta += coef * mu
+        return delta
 
-    # нанести літери (за фактором, по рівнях)
-    idx = 0
-    for f in factor_keys:
-        lvls = levels_by_factor.get(f, [])
-        for lvl in lvls:
-            x = positions[idx]
-            letter = letters_factor.get(f, {}).get(lvl, "")
-            if letter:
-                ax.text(x, y_text, letter, ha="center", va="bottom", fontsize=12)
-            idx += 1
+    for rS in range(1, k + 1):
+        for S in combinations(factors, rS):
+            d = 1
+            for fct in S:
+                d *= (levels_count[fct] - 1)
+            df[S] = d
 
-    # підписи блоків факторів (над віссю X)
-    for f, cx in block_centers:
-        ax.text(cx, 1.02, f"Фактор {f}", transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=12, fontweight="bold")
+            ss = 0.0
+            for levels_S, (mS, nS) in stats[S].items():
+                if nS <= 0 or mS is None or (isinstance(mS, float) and math.isnan(mS)):
+                    continue
+                delta = delta_for_subset(list(S), list(levels_S))
+                ss += nS * (delta ** 2)
+            SS[S] = ss
 
-    # легенда/пояснення
-    legend_text = (
-        "Boxplot: медіана (лінія), Q1–Q3 (коробка), min–max (вуса), середнє (точка)\n"
-        "Літери істотності: різні літери → істотна різниця (p<0.05)"
-    )
-    ax.text(0.01, 0.02, legend_text, transform=ax.transAxes, ha="left", va="bottom", fontsize=10,
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+    return {
+        "SS_total": float(SS_total),
+        "SS_error_crd": float(SS_error_crd),
+        "SS_effects": SS,
+        "df_effects": df,
+        "cell_means": cell_means,
+        "cell_counts": cell_counts,
+        "grand_mean": float(grand_mean),
+    }
 
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=170)
-    plt.close(fig)
-    return True, ""
+
+# -------------------------
+# RCBD model (blocks = repeat columns)
+# -------------------------
+def rcbd_anova(long, factors, levels_by_factor):
+    """
+    RCBD: one observation per treatment combination per block (repeat column).
+    Treatment SS orthogonal to block SS.
+    """
+    blocks = first_seen_order([r.get("BLOCK") for r in long])
+    blocks = [b for b in blocks if b is not None]
+    r = len(blocks)
+    if r < 2:
+        raise ValueError("RCBD потребує щонайменше 2 блоки (повторності).")
+
+    treat_keys = tuple(factors)
+    treat_combos = first_seen_order([tuple(rec.get(f) for f in treat_keys) for rec in long])
+    tcount = len(treat_combos)
+    if tcount < 2:
+        raise ValueError("Недостатньо варіантів для RCBD.")
+
+    values = np.array([rec["value"] for rec in long], dtype=float)
+    grand = float(np.nanmean(values))
+    SS_total = float(np.nansum((values - grand) ** 2))
+
+    block_vals = defaultdict(list)
+    for rec in long:
+        b = rec.get("BLOCK")
+        if b is None:
+            continue
+        v = rec.get("value", np.nan)
+        if v is None or math.isnan(v):
+            continue
+        block_vals[b].append(float(v))
+    block_mean = {b: float(np.mean(block_vals[b])) for b in block_vals if len(block_vals[b]) > 0}
+
+    treat_vals = defaultdict(list)
+    for rec in long:
+        key = tuple(rec.get(f) for f in treat_keys)
+        v = rec.get("value", np.nan)
+        if v is None or math.isnan(v):
+            continue
+        treat_vals[key].append(float(v))
+    treat_mean = {k: float(np.mean(treat_vals[k])) for k in treat_vals if len(treat_vals[k]) > 0}
+
+    SS_block = 0.0
+    for b in blocks:
+        if b in block_mean:
+            SS_block += (block_mean[b] - grand) ** 2
+    SS_block *= tcount
+
+    SS_treat = 0.0
+    for k in treat_combos:
+        if k in treat_mean:
+            SS_treat += (treat_mean[k] - grand) ** 2
+    SS_treat *= r
+
+    SS_error = SS_total - SS_block - SS_treat
+    if SS_error < -1e-9:
+        SS_error = max(0.0, SS_error)
+
+    df_block = r - 1
+    df_treat = tcount - 1
+    df_error = df_block * df_treat
+    if df_error <= 0:
+        df_error = 1
+
+    MS_block = SS_block / df_block if df_block > 0 else np.nan
+    MS_error = SS_error / df_error if df_error > 0 else np.nan
+
+    base = anova_effect_ss_fixed(long, factors, levels_by_factor)
+    SS_eff = base["SS_effects"]
+    df_eff = base["df_effects"]
+
+    def pretty_interaction(subset):
+        if len(subset) == 1:
+            return f"Фактор {subset[0]}"
+        return "Фактор " + "×".join(subset)
+
+    table = []
+    table.append(("Блоки", float(SS_block), float(df_block),
+                  float(MS_block) if df_block > 0 else np.nan, np.nan, np.nan, None))
+
+    for rS in range(1, len(factors) + 1):
+        for S in combinations(factors, rS):
+            name = pretty_interaction(S)
+            SSv = float(SS_eff.get(S, np.nan))
+            dfv = float(df_eff.get(S, np.nan))
+            MSv = SSv / dfv if (dfv and not math.isnan(dfv) and dfv > 0) else np.nan
+            Fv = MSv / MS_error if (not math.isnan(MS_error) and MS_error > 0 and not math.isnan(MSv)) else np.nan
+            pv = 1 - f_dist.cdf(Fv, dfv, df_error) if (not math.isnan(Fv) and not math.isnan(dfv)) else np.nan
+            table.append((name, SSv, dfv, MSv, Fv, pv, "sub"))
+
+    table.append(("Залишок", float(SS_error), float(df_error),
+                  float(MS_error), None, None, None))
+    table.append(("Загальна", float(SS_total), float((r * tcount) - 1), None, None, None, None))
+
+    return {
+        "table": table,
+        "MS_error": float(MS_error),
+        "df_error": int(df_error),
+        "SS_total": float(SS_total),
+        "SS_error": float(SS_error),
+        "grand_mean": grand,
+        "cell_means": base["cell_means"],
+    }
+
+
+# -------------------------
+# Split-plot model
+# -------------------------
+def splitplot_anova(long, factors, levels_by_factor, main_factor):
+    """
+    Split-plot with blocks = repeat columns (BLOCK), main_factor = one of factors.
+    Error terms:
+      - main_factor tested against MS(Block×main_factor)
+      - all other effects tested against MS(subplot error)
+    """
+    if "BLOCK" not in long[0]:
+        raise ValueError("Split-plot потребує поля BLOCK (повторності).")
+
+    if main_factor not in factors:
+        raise ValueError("Невірний головний фактор для split-plot.")
+
+    blocks = first_seen_order([r.get("BLOCK") for r in long])
+    blocks = [b for b in blocks if b is not None]
+    r = len(blocks)
+    if r < 2:
+        raise ValueError("Split-plot потребує щонайменше 2 блоки (повторності).")
+
+    a_levels = levels_by_factor[main_factor]
+    a = len(a_levels)
+    if a < 2:
+        raise ValueError("Головний фактор має мати щонайменше 2 градації.")
+
+    sub_factors = [f for f in factors if f != main_factor]
+    t_sub = 1
+    for f in sub_factors:
+        t_sub *= max(1, len(levels_by_factor[f]))
+
+    values = np.array([rec["value"] for rec in long], dtype=float)
+    grand = float(np.nanmean(values))
+    SS_total = float(np.nansum((values - grand) ** 2))
+
+    block_vals = defaultdict(list)
+    for rec in long:
+        b = rec.get("BLOCK")
+        v = rec.get("value", np.nan)
+        if b is None or v is None or math.isnan(v):
+            continue
+        block_vals[b].append(float(v))
+    block_mean = {b: float(np.mean(block_vals[b])) for b in block_vals if len(block_vals[b]) > 0}
+
+    A_vals = defaultdict(list)
+    for rec in long:
+        av = rec.get(main_factor)
+        v = rec.get("value", np.nan)
+        if av is None or v is None or math.isnan(v):
+            continue
+        A_vals[av].append(float(v))
+    A_mean = {lv: float(np.mean(A_vals[lv])) for lv in A_vals if len(A_vals[lv]) > 0}
+
+    BA_vals = defaultdict(list)
+    for rec in long:
+        b = rec.get("BLOCK")
+        av = rec.get(main_factor)
+        v = rec.get("value", np.nan)
+        if b is None or av is None or v is None or math.isnan(v):
+            continue
+        BA_vals[(b, av)].append(float(v))
+    BA_mean = {k: float(np.mean(BA_vals[k])) for k in BA_vals if len(BA_vals[k]) > 0}
+
+    SS_block = 0.0
+    for b0 in blocks:
+        if b0 in block_mean:
+            SS_block += (block_mean[b0] - grand) ** 2
+    SS_block *= (a * t_sub)
+
+    SS_A = 0.0
+    for lv in a_levels:
+        if lv in A_mean:
+            SS_A += (A_mean[lv] - grand) ** 2
+    SS_A *= (r * t_sub)
+
+    SS_BA = 0.0
+    for b0 in blocks:
+        for lv in a_levels:
+            key = (b0, lv)
+            if key not in BA_mean:
+                continue
+            bm = block_mean.get(b0, np.nan)
+            am = A_mean.get(lv, np.nan)
+            mij = BA_mean[key]
+            if any(isinstance(x, float) and math.isnan(x) for x in [bm, am, mij]):
+                continue
+            SS_BA += (mij - bm - am + grand) ** 2
+    SS_BA *= t_sub
+
+    df_block = r - 1
+    df_A = a - 1
+    df_BA = df_block * df_A
+    if df_BA <= 0:
+        df_BA = 1
+
+    MS_BA = SS_BA / df_BA if df_BA > 0 else np.nan
+
+    base = anova_effect_ss_fixed(long, factors, levels_by_factor)
+    SS_eff = base["SS_effects"]
+    df_eff = base["df_effects"]
+
+    sum_SS_treat_effects = 0.0
+    for S, ss in SS_eff.items():
+        if ss is None or (isinstance(ss, float) and math.isnan(ss)):
+            continue
+        sum_SS_treat_effects += float(ss)
+
+    SS_other = sum_SS_treat_effects - float(SS_eff.get((main_factor,), 0.0))
+    SS_Esub = SS_total - SS_block - SS_A - SS_BA - SS_other
+    if SS_Esub < -1e-9:
+        SS_Esub = max(0.0, SS_Esub)
+
+    df_other = 0
+    for S, d in df_eff.items():
+        if S == (main_factor,):
+            continue
+        df_other += int(d)
+
+    N = len([1 for rec in long if rec.get("value") is not None and not math.isnan(rec.get("value", np.nan))])
+    df_total = N - 1
+    df_Esub = df_total - df_block - df_A - df_BA - df_other
+    if df_Esub <= 0:
+        df_Esub = 1
+
+    MS_Esub = SS_Esub / df_Esub if df_Esub > 0 else np.nan
+
+    def pretty_interaction(subset):
+        if len(subset) == 1:
+            return f"Фактор {subset[0]}"
+        return "Фактор " + "×".join(subset)
+
+    table = []
+    table.append(("Блоки", float(SS_block), float(df_block),
+                  float(SS_block / df_block) if df_block > 0 else np.nan, np.nan, np.nan, None))
+
+    MS_A = SS_A / df_A if df_A > 0 else np.nan
+    F_A = MS_A / MS_BA if (not math.isnan(MS_A) and not math.isnan(MS_BA) and MS_BA > 0) else np.nan
+    p_A = 1 - f_dist.cdf(F_A, df_A, df_BA) if (not math.isnan(F_A)) else np.nan
+    table.append((pretty_interaction((main_factor,)), float(SS_A), float(df_A), float(MS_A), float(F_A), float(p_A), "main"))
+
+    table.append(("Залишок (main-plot)", float(SS_BA), float(df_BA), float(MS_BA), None, None, None))
+
+    for rS in range(1, len(factors) + 1):
+        for S in combinations(factors, rS):
+            if S == (main_factor,):
+                continue
+            name = pretty_interaction(S)
+            SSv = float(SS_eff.get(S, np.nan))
+            dfv = float(df_eff.get(S, np.nan))
+            MSv = SSv / dfv if (dfv and not math.isnan(dfv) and dfv > 0) else np.nan
+            Fv = MSv / MS_Esub if (not math.isnan(MS_Esub) and MS_Esub > 0 and not math.isnan(MSv)) else np.nan
+            pv = 1 - f_dist.cdf(Fv, dfv, df_Esub) if (not math.isnan(Fv) and not math.isnan(dfv)) else np.nan
+            table.append((name, SSv, dfv, MSv, Fv, pv, "sub"))
+
+    table.append(("Залишок (sub-plot)", float(SS_Esub), float(df_Esub), float(MS_Esub), None, None, None))
+    table.append(("Загальна", float(SS_total), float(df_total), None, None, None, None))
+
+    return {
+        "table": table,
+        "MS_error_main": float(MS_BA),
+        "df_error_main": int(df_BA),
+        "SS_error_main": float(SS_BA),
+        "MS_error_sub": float(MS_Esub),
+        "df_error_sub": int(df_Esub),
+        "SS_error_sub": float(SS_Esub),
+        "SS_total": float(SS_total),
+        "grand_mean": grand,
+        "cell_means": base["cell_means"],
+        "main_factor": main_factor,
+    }
+
+
+# -------------------------
+# Clipboard: copy PNG image in Windows via CF_DIB
+# -------------------------
+def copy_png_to_clipboard_windows(png_path: str):
+    """
+    Копіює PNG у буфер Windows так, щоб Word/PowerPoint вставляли як зображення.
+    Робимо CF_DIB (BMP без file header).
+    """
+    if os.name != "nt":
+        raise RuntimeError("Копіювання графіка у буфер підтримується лише у Windows.")
+
+    import io
+    import ctypes
+    from ctypes import wintypes
+
+    CF_DIB = 8
+    GMEM_MOVEABLE = 0x0002
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    img = Image.open(png_path).convert("RGB")
+    bio = io.BytesIO()
+    img.save(bio, "BMP")
+    bmp = bio.getvalue()
+    dib = bmp[14:]  # strip BITMAPFILEHEADER
+
+    if not user32.OpenClipboard(None):
+        raise RuntimeError("Не вдалося відкрити буфер обміну.")
+
+    try:
+        user32.EmptyClipboard()
+
+        hglob = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(dib))
+        if not hglob:
+            raise RuntimeError("GlobalAlloc не спрацював.")
+
+        ptr = kernel32.GlobalLock(hglob)
+        if not ptr:
+            kernel32.GlobalFree(hglob)
+            raise RuntimeError("GlobalLock не спрацював.")
+
+        try:
+            ctypes.memmove(ptr, dib, len(dib))
+        finally:
+            kernel32.GlobalUnlock(hglob)
+
+        if not user32.SetClipboardData(CF_DIB, hglob):
+            kernel32.GlobalFree(hglob)
+            raise RuntimeError("SetClipboardData не спрацював.")
+    finally:
+        user32.CloseClipboard()
 
 
 # -------------------------
@@ -1237,17 +1109,13 @@ class SADTk:
         self.report_win = None
         self.plot_win = None
 
-        # paths for export/copy
-        self._last_plot_png_path = None
-        self._last_plot_error = ""
-
-        # for report button to know last report text
-        self._last_report_text = ""
-
+    # (далі без змін у цій частині: ask_indicator_units_design, choose_method_window,
+    #  open_table, show_about, bind_cell, add_row/delete_row, add_column/delete_column,
+    #  paste/collect_long, show_plot_window, build_factor_block_boxplot_png, show_report_segments)
     # -------------------------
-    # Dialog: indicator + units + design + (splitplot main factor)
+    # Table window / paste / collect_long
     # -------------------------
-    def ask_report_params(self, factor_keys: List[str]):
+    def ask_indicator_units_design(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Параметри звіту")
         dlg.resizable(False, False)
@@ -1264,50 +1132,63 @@ class SADTk:
         e_units = tk.Entry(frm, width=40, fg="#000000")
         e_units.grid(row=1, column=1, pady=6)
 
-        tk.Label(frm, text="Тип дизайну:", fg="#000000").grid(row=2, column=0, sticky="w", pady=6)
+        tk.Label(frm, text="Дизайн експерименту:", fg="#000000").grid(row=2, column=0, sticky="w", pady=6)
+
         design_var = tk.StringVar(value="CRD")
-        cb_design = ttk.Combobox(frm, textvariable=design_var, values=["CRD", "RCBD", "SPLIT_PLOT"], state="readonly", width=37)
-        cb_design.grid(row=2, column=1, pady=6, sticky="w")
+        cb = ttk.Combobox(frm, textvariable=design_var, state="readonly", width=18,
+                          values=["CRD", "RCBD", "Split-plot"])
+        cb.grid(row=2, column=1, sticky="w", pady=6)
 
-        # split-plot main factor (shown only when SPLIT_PLOT)
-        main_row = 3
-        main_frame = tk.Frame(frm)
-        main_frame.grid(row=main_row, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        # Split-plot extra: main factor
+        split_frame = tk.Frame(frm)
+        split_frame.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        split_frame.grid_remove()
 
-        tk.Label(main_frame, text="Головний фактор (Split-plot):", fg="#000000").pack(side=tk.LEFT)
-        main_var = tk.StringVar(value=(factor_keys[0] if factor_keys else "A"))
-        cb_main = ttk.Combobox(main_frame, textvariable=main_var, values=factor_keys, state="readonly", width=8)
-        cb_main.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(split_frame, text="Головний фактор (main-plot):", fg="#000000").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        main_var = tk.StringVar(value="")
+        cb_main = ttk.Combobox(split_frame, textvariable=main_var, state="readonly", width=10,
+                               values=self.factor_keys if hasattr(self, "factor_keys") else ["A"])
+        cb_main.grid(row=0, column=1, sticky="w")
 
-        def update_split_visibility(*_):
-            if design_var.get() == "SPLIT_PLOT":
-                main_frame.grid()
+        def refresh_split_ui(*_):
+            if design_var.get() == "Split-plot":
+                vals = self.factor_keys if hasattr(self, "factor_keys") else ["A"]
+                cb_main.configure(values=vals)
+                if main_var.get() not in vals:
+                    main_var.set(vals[0] if vals else "")
+                split_frame.grid()
             else:
-                main_frame.grid_remove()
+                split_frame.grid_remove()
 
-        cb_design.bind("<<ComboboxSelected>>", lambda e: update_split_visibility())
-        update_split_visibility()
+            dlg.update_idletasks()
+            dlg.geometry("")
+            center_window(dlg)
 
-        out = {"ok": False, "indicator": "", "units": "", "design": "CRD", "main_factor": factor_keys[0] if factor_keys else "A"}
+        cb.bind("<<ComboboxSelected>>", refresh_split_ui)
+
+        out = {"ok": False, "indicator": "", "units": "", "design": "CRD", "main_factor": ""}
 
         def on_ok():
             out["indicator"] = e_ind.get().strip()
             out["units"] = e_units.get().strip()
             out["design"] = design_var.get().strip()
-            out["main_factor"] = main_var.get().strip()
 
             if not out["indicator"] or not out["units"]:
                 messagebox.showwarning("Помилка", "Заповніть назву показника та одиниці виміру.")
                 return
-            if out["design"] == "SPLIT_PLOT":
-                if not out["main_factor"]:
-                    messagebox.showwarning("Помилка", "Оберіть головний фактор для Split-plot.")
+
+            if out["design"] == "Split-plot":
+                mf = main_var.get().strip()
+                if not mf:
+                    messagebox.showwarning("Помилка", "Для Split-plot потрібно обрати головний фактор.")
                     return
+                out["main_factor"] = mf
+
             out["ok"] = True
             dlg.destroy()
 
         btns = tk.Frame(frm)
-        btns.grid(row=10, column=0, columnspan=2, pady=(14, 0))
+        btns.grid(row=4, column=0, columnspan=2, pady=(14, 0))
         tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=6)
         tk.Button(btns, text="Скасувати", width=12, command=lambda: dlg.destroy()).pack(side=tk.LEFT, padx=6)
 
@@ -1461,7 +1342,7 @@ class SADTk:
         messagebox.showinfo(
             "Розробник",
             "S.A.D. — Статистичний аналіз даних\n"
-            "Версія: 1.0\n"
+            "Версія: 1.1\n"
             "Розробик: Чаплоуцький Андрій Миколайович\n"
             "Уманський національний університет"
         )
@@ -1623,10 +1504,20 @@ class SADTk:
         return used
 
     def collect_long(self):
+        """
+        long records:
+          value, A,B,C,D, BLOCK (для RCBD/Split-plot)
+        BLOCK = назва повторності (Повт.1, Повт.2, ...) відповідно до стовпчика
+        """
         long = []
         rep_cols = self.used_repeat_columns()
         if not rep_cols:
             return long, rep_cols
+
+        rep_start = self.factors_count
+        rep_labels = {}
+        for idx, c in enumerate(range(rep_start, self.cols)):
+            rep_labels[c] = f"Повт.{idx+1}"
 
         for i, row in enumerate(self.entries):
             levels = []
@@ -1636,7 +1527,7 @@ class SADTk:
                     v = f"рядок{i+1}"
                 levels.append(v)
 
-            for rep_idx, c in enumerate(rep_cols, start=1):
+            for c in rep_cols:
                 s = row[c].get().strip()
                 if not s:
                     continue
@@ -1645,7 +1536,7 @@ class SADTk:
                 except Exception:
                     continue
 
-                rec = {"value": val, "rep": f"Повт.{rep_idx}"}  # rep потрібен для RCBD/Split-plot
+                rec = {"value": val, "BLOCK": rep_labels.get(c, f"Повт.?")}
                 if self.factors_count >= 1: rec["A"] = levels[0]
                 if self.factors_count >= 2: rec["B"] = levels[1]
                 if self.factors_count >= 3: rec["C"] = levels[2]
@@ -1655,413 +1546,156 @@ class SADTk:
         return long, rep_cols
 
     # -------------------------
-    # MAIN ANALYZE
+    # Graph window
     # -------------------------
-    def analyze(self):
-        created_at = datetime.now()
+    def show_plot_window(self, plot_png_path: str, factor_plot_meta: dict):
+        if self.plot_win and tk.Toplevel.winfo_exists(self.plot_win):
+            self.plot_win.destroy()
 
-        params = self.ask_report_params(self.factor_keys)
-        if not params["ok"]:
-            return
-        indicator = params["indicator"]
-        units = params["units"]
-        design = params["design"]
-        main_factor = params.get("main_factor", self.factor_keys[0] if self.factor_keys else "A")
+        self.plot_win = tk.Toplevel(self.root)
+        self.plot_win.title("Графічний звіт")
+        self.plot_win.geometry("1180x520")
+        set_window_icon(self.plot_win)
 
-        long, used_rep_cols = self.collect_long()
-        if len(long) == 0:
-            messagebox.showwarning("Помилка", "Немає числових даних для аналізу.\nПеревірте повторності та значення.")
-            return
+        top = tk.Frame(self.plot_win, padx=8, pady=8)
+        top.pack(fill=tk.X)
 
-        values = np.array([r["value"] for r in long], dtype=float)
-        if len(values) < 3:
-            messagebox.showinfo("Результат", "Надто мало даних для аналізу.")
-            return
+        fig = Figure(figsize=(10.8, 3.4), dpi=100)
+        ax = fig.add_subplot(111)
+        ax.axis("off")
+        img = Image.open(plot_png_path)
+        ax.imshow(img)
 
-        levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
+        canvas = FigureCanvasTkAgg(fig, master=self.plot_win)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
 
-        # ---- ANOVA selection by design
-        split_res = None
-        res = None
-
-        try:
-            if design == "SPLIT_PLOT":
-                split_res = splitplot_anova_one_main(long, self.factor_keys, levels_by_factor, main_factor=main_factor)
-                # для подальших кроків нам потрібні cell_means для залишків:
-                cell_means = split_res.get("cell_means", {})
-                MS_error_for_letters = split_res.get("MS_error_sub", np.nan)
-                df_error_for_letters = split_res.get("df_error_sub", np.nan)
-            else:
-                # CRD / RCBD зараз рахуються однаково (RCBD можна розширити пізніше окремою таблицею)
-                res = anova_n_way(long, self.factor_keys, levels_by_factor)
-                cell_means = res.get("cell_means", {})
-                MS_error_for_letters = res.get("MS_error", np.nan)
-                df_error_for_letters = res.get("df_error", np.nan)
-        except Exception as ex:
-            messagebox.showerror("Помилка аналізу", str(ex))
-            return
-
-        # residuals for Shapiro
-        residuals = []
-        for rec in long:
-            key = tuple(rec.get(f) for f in self.factor_keys)
-            v = rec.get("value", np.nan)
-            m = cell_means.get(key, np.nan)
-            if not math.isnan(v) and not math.isnan(m):
-                residuals.append(v - m)
-        residuals = np.array(residuals, dtype=float)
-
-        try:
-            W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
-        except Exception:
-            W, p_norm = (np.nan, np.nan)
-
-        choice = self.choose_method_window(p_norm)
-        if not choice["ok"]:
-            return
-        method = choice["method"]
-
-        # ---- groups for factors + variants
-        factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
-        factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
-        factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
-
-        factor_medians = {}
-        factor_q = {}
-        for f in self.factor_keys:
-            factor_medians[f] = {}
-            factor_q[f] = {}
-            for lvl, arr in factor_groups[f].items():
-                med, q1, q3 = median_q1_q3(arr)
-                factor_medians[f][lvl] = med
-                factor_q[f][lvl] = (q1, q3)
-
-        variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
-        v_names = [" | ".join(map(str, k)) for k in variant_order]
-        num_variants = len(variant_order)
-
-        vstats = variant_mean_sd(long, self.factor_keys)
-        v_means = {k: vstats[k][0] for k in vstats.keys()}
-        v_sds = {k: vstats[k][1] for k in vstats.keys()}
-        v_ns = {k: vstats[k][2] for k in vstats.keys()}
-
-        means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
-        ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
-        groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
-
-        ranks_by_variant = mean_ranks_by_key(long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys))
-        ranks_by_factor = {f: mean_ranks_by_key(long, key_func=lambda rec, ff=f: rec.get(ff)) for f in self.factor_keys}
-
-        # ---- letters for factors (по вашій логіці: лише для LSD)
-        letters_factor = {}
-        if method == "lsd":
-            for f in self.factor_keys:
-                lvls = levels_by_factor[f]
-                sig = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error_for_letters, df_error_for_letters, alpha=ALPHA)
-                letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig)
-        else:
-            for f in self.factor_keys:
-                letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
-
-        # ---- posthoc between variants (як було)
-        letters_named = {name: "" for name in v_names}
-        pairwise_rows = []
-        do_posthoc = True
-
-        bf_F, bf_p = (np.nan, np.nan)
-        if method in ("lsd", "tukey", "duncan", "bonferroni"):
-            bf_F, bf_p = brown_forsythe_from_groups(groups1)
-
-        kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
-        if method == "kw":
+        def save_png():
+            fn = filedialog.asksaveasfilename(
+                parent=self.plot_win,
+                defaultextension=".png",
+                filetypes=[("PNG", "*.png")],
+                title="Зберегти графік"
+            )
+            if not fn:
+                return
             try:
-                kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
-                if len(kw_samples) >= 2:
-                    kw_res = kruskal(*kw_samples)
-                    kw_H = float(kw_res.statistic)
-                    kw_p = float(kw_res.pvalue)
-                    kw_df = int(len(kw_samples) - 1)
-                    kw_eps2 = epsilon_squared_kw(kw_H, n=len(long), k=len(kw_samples))
-            except Exception:
-                kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
+                img2 = Image.open(plot_png_path)
+                img2.save(fn, "PNG")
+                messagebox.showinfo("Готово", "Графік збережено.")
+            except Exception as ex:
+                messagebox.showerror("Помилка", str(ex))
 
-        if method == "lsd":
-            sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error_for_letters, df_error_for_letters, alpha=ALPHA)
-            letters_named = cld_multi_letters(v_names, means1, sigv)
-        elif method in ("tukey", "duncan", "bonferroni"):
-            pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error_for_letters, df_error_for_letters, method, alpha=ALPHA)
-            letters_named = cld_multi_letters(v_names, means1, sig)
-        elif method == "kw":
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
-                do_posthoc = False
-            if do_posthoc:
-                pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
-                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-                letters_named = cld_multi_letters(v_names, med_tmp, sig)
-            else:
-                letters_named = {name: "" for name in v_names}
-        elif method == "mw":
-            pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
-            med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-            letters_named = cld_multi_letters(v_names, med_tmp, sig)
+        def copy_png():
+            try:
+                copy_png_to_clipboard_windows(plot_png_path)
+                messagebox.showinfo("Готово", "Графік скопійовано у буфер обміну.\nТепер вставте його у Word/PowerPoint (Ctrl+V).")
+            except Exception as ex:
+                messagebox.showerror("Помилка", str(ex))
 
-        letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
+        tk.Button(top, text="Зберегти графік (PNG)", command=save_png).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Копіювати графік", command=copy_png).pack(side=tk.LEFT, padx=4)
 
-        # ---- CV
-        cv_rows = []
-        for f in self.factor_keys:
-            lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
-            cv_f = cv_percent_from_level_means(lvl_means)
-            cv_rows.append([f"Фактор {f}", fmt_num(cv_f, 2)])
-        cv_total = cv_percent_from_values(values)
-        cv_rows.append(["Загальний", fmt_num(cv_total, 2)])
+    def build_factor_block_boxplot_png(self, long, factor_keys, levels_by_factor, letters_factor,
+                                       indicator, units, design, split_meta=None):
+        """
+        ONE-axis boxplot with blocks per factor.
+        Letters placed above upper whisker.
+        Legend: ▲ mean, ● outliers
+        """
+        x_positions = []
+        data_list = []
+        labels = []
+        factor_block_ranges = []
 
-        # -------------------------
-        # TEXT REPORT segments
-        # -------------------------
-        seg = []
-        seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
-        seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n"))
-        seg.append(("text", f"Дизайн експерименту:\t{design}" + (f" (головний фактор: {main_factor})" if design == "SPLIT_PLOT" else "") + "\n\n"))
-        seg.append(("text", f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
+        pos = 1
+        gap = 1.2
+        for f in factor_keys:
+            lvls = levels_by_factor[f]
+            start = pos
+            for lv in lvls:
+                arr = [r["value"] for r in long if r.get(f) == lv and r.get("value") is not None and not math.isnan(r.get("value", np.nan))]
+                if len(arr) == 0:
+                    arr = [np.nan]
+                x_positions.append(pos)
+                data_list.append(arr)
+                labels.append(str(lv))
+                pos += 1
+            end = pos - 1
+            factor_block_ranges.append((start, end, f))
+            pos += gap
 
-        if not math.isnan(W):
-            seg.append(("text", f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
-        else:
-            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
+        fig = Figure(figsize=(12.5, 3.6), dpi=130)
+        ax = fig.add_subplot(111)
 
-        method_label = {
-            "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
-            "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
-            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
-            "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
-            "kw": "Непараметричний аналіз: Kruskal–Wallis.",
-            "mw": "Непараметричний аналіз: Mann–Whitney.",
-        }.get(method, "")
-
-        if method_label:
-            seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
-
-        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
-        seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
-        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
-
-        nonparam = method in ("mw", "kw")
-
-        if method == "kw":
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)):
-                concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
-                seg.append(("text",
-                            f"Глобальний тест між варіантами (Kruskal–Wallis):\t"
-                            f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n"))
-                seg.append(("text", f"Розмір ефекту (ε²):\t{fmt_num(kw_eps2,4)}\n\n"))
-            else:
-                seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
-
-        # ---- PARAMETRIC ANOVA TABLE
-        if not nonparam:
-            if not any(math.isnan(x) for x in [bf_F, bf_p]):
-                bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
-                seg.append(("text",
-                            f"Перевірка однорідності дисперсій (Brown–Forsythe):\t"
-                            f"F={fmt_num(bf_F,4)}; p={fmt_num(bf_p,4)}\t{bf_concl}\n\n"))
-            else:
-                seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
-
-            # ANOVA table differs for split-plot
-            seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
-
-            if design == "SPLIT_PLOT":
-                rows1 = []
-                for name, SSv, dfv, MSv, Fv, pv, concl in split_res["table_rows"]:
-                    df_txt = str(int(dfv)) if isinstance(dfv, (int, float)) and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
-                    rows1.append([
-                        str(name),
-                        fmt_num(SSv, 2),
-                        df_txt,
-                        fmt_num(MSv, 3) if MSv != "" else "",
-                        fmt_num(Fv, 3) if Fv != "" else "",
-                        fmt_num(pv, 4) if pv != "" else "",
-                        concl
-                    ])
-                seg.append(("table", {
-                    "headers": ["Джерело", "SS", "df", "MS", "F", "p", "Висновок"],
-                    "rows": rows1,
-                    "padding_px": 32,
-                    "extra_gap_after_col": 0,
-                    "extra_gap_px": 60
-                }))
-                seg.append(("text", "\n"))
-                # R2 для split-plot (за внутрішньою помилкою)
-                SS_total = split_res.get("SS_total", np.nan)
-                SS_err = split_res.get("SS_error_sub", np.nan)
-                R2 = (1.0 - (SS_err / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_err]) and SS_total > 0) else np.nan
-                seg.append(("text", f"Коефіцієнт детермінації:\tR²={fmt_num(R2, 4)}\n\n"))
-            else:
-                anova_rows = []
-                for name, SSv, dfv, MSv, Fv, pv in res["table"]:
-                    df_txt = str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""
-                    if name in ("Залишок", "Загальна"):
-                        anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
-                    else:
-                        mark = significance_mark(pv)
-                        concl = f"істотна різниця {mark}" if mark else "-"
-                        anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
-
-                seg.append(("table", {
-                    "headers": ["Джерело", "SS", "df", "MS", "F", "p", "Висновок"],
-                    "rows": anova_rows,
-                    "padding_px": 32,
-                    "extra_gap_after_col": 0,
-                    "extra_gap_px": 60
-                }))
-                seg.append(("text", "\n"))
-
-                eff_rows = build_effect_strength_rows(res["table"])
-                seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів та їх комбінацій (% від SS)\n"))
-                seg.append(("table", {"headers": ["Джерело", "%"], "rows": eff_rows}))
-                seg.append(("text", "\n"))
-
-                pe2_rows = build_partial_eta2_rows_with_label(res["table"])
-                seg.append(("text", "ТАБЛИЦЯ 3. Розмір ефекту (partial η²)\n"))
-                seg.append(("table", {"headers": ["Джерело", "partial η²", "Висновок"], "rows": pe2_rows}))
-                seg.append(("text", "\n"))
-
-                seg.append(("text", "ТАБЛИЦЯ 4. Коефіцієнт варіації (CV, %)\n"))
-                seg.append(("table", {"headers": ["Елемент", "CV, %"], "rows": cv_rows}))
-                seg.append(("text", "\n"))
-
-                SS_total = res.get("SS_total", np.nan)
-                SS_error = res.get("SS_error", np.nan)
-                R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
-                seg.append(("text", f"Коефіцієнт детермінації:\tR²={fmt_num(R2, 4)}\n\n"))
-
-            # Таблиці середніх по факторах (і літери)
-            tno = 2 if design == "SPLIT_PLOT" else 5
-            for f in self.factor_keys:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
-                rows_f = []
-                for lvl in levels_by_factor[f]:
-                    m = factor_means[f].get(lvl, np.nan)
-                    letter = letters_factor[f].get(lvl, "")
-                    rows_f.append([str(lvl), fmt_num(m, 3), (letter if letter else "-")])
-                seg.append(("table", {"headers": [f"Градація {f}", "Середнє", "Істотна різниця"], "rows": rows_f}))
-                seg.append(("text", "\n"))
-                tno += 1
-
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
-            rows_v = []
-            for k in variant_order:
-                name = " | ".join(map(str, k))
-                m = v_means.get(k, np.nan)
-                sd = v_sds.get(k, np.nan)
-                letter = letters_variants.get(k, "")
-                rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), (letter if letter else "-")])
-
-            seg.append(("table", {
-                "headers": ["Варіант", "Середнє", "± SD", "Істотна різниця"],
-                "rows": rows_v,
-                "padding_px": 32,
-                "extra_gap_after_col": 0,
-                "extra_gap_px": 80
-            }))
-            seg.append(("text", "\n"))
-            tno += 1
-
-            if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
-                seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
-                seg.append(("text", "\n"))
-
-        else:
-            # NONPARAMETRIC tables (як було)
-            tno = 1
-            for f in self.factor_keys:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика по фактору {f} (непараметрична)\n"))
-                rows = []
-                for lvl in levels_by_factor[f]:
-                    med = factor_medians[f].get(lvl, np.nan)
-                    q1, q3 = factor_q[f].get(lvl, (np.nan, np.nan))
-                    rank_m = ranks_by_factor[f].get(lvl, np.nan)
-                    letter = letters_factor[f].get(lvl, "")
-                    rows.append([
-                        str(lvl),
-                        str(int(factor_ns[f].get(lvl, 0))),
-                        fmt_num(med, 3),
-                        f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
-                        fmt_num(rank_m, 2),
-                        (letter if letter else "-")
-                    ])
-                seg.append(("table", {"headers": [f"Градація {f}", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"], "rows": rows}))
-                seg.append(("text", "\n"))
-                tno += 1
-
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
-            rows = []
-            for k in variant_order:
-                name = " | ".join(map(str, k))
-                arr = groups1.get(name, [])
-                med, q1, q3 = median_q1_q3(arr)
-                rank_m = ranks_by_variant.get(name, np.nan)
-                letter = letters_variants.get(k, "")
-                rows.append([
-                    name,
-                    str(int(v_ns.get(k, 0))),
-                    fmt_num(med, 3),
-                    f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
-                    fmt_num(rank_m, 2),
-                    (letter if letter else "-")
-                ])
-            seg.append(("table", {
-                "headers": ["Варіант", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"],
-                "rows": rows,
-                "padding_px": 32,
-                "extra_gap_after_col": 0,
-                "extra_gap_px": 80
-            }))
-            seg.append(("text", "\n"))
-            tno += 1
-
-            if method == "kw" and not do_posthoc:
-                seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
-            else:
-                if pairwise_rows:
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння + ефект (Cliff’s δ)\n"))
-                    seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
-                    seg.append(("text", "\n"))
-
-        seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
-
-        # ---- build GRAPHICAL report PNG (factor blocks)
-        tmp_dir = tempfile.gettempdir()
-        safe_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plot_path = os.path.join(tmp_dir, f"SAD_factor_boxplot_{safe_ts}.png")
-
-        okp, perr = make_factor_blocks_boxplot_png(
-            factor_keys=self.factor_keys,
-            levels_by_factor=levels_by_factor,
-            factor_groups=factor_groups,
-            letters_factor=letters_factor,
-            title=f"Boxplot за факторами: {indicator}",
-            ylabel=f"{indicator} ({units})",
-            out_path=plot_path
+        bp = ax.boxplot(
+            data_list,
+            positions=x_positions,
+            widths=0.6,
+            patch_artist=True,
+            showmeans=True,
+            meanprops=dict(marker="^", markersize=6),
+            flierprops=dict(marker="o", markersize=3),
         )
-        self._last_plot_png_path = plot_path if okp else None
-        self._last_plot_error = perr if not okp else ""
 
-        # ---- Show BOTH windows:
-        self.show_report_segments(seg)         # текстовий звіт
-        self.show_plot_window(indicator)       # графічний звіт
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(labels, rotation=0, fontsize=9)
+        ax.set_ylabel(f"{indicator}, {units}")
+        ax.set_title("")
+
+        y_min, y_max = ax.get_ylim()
+        y_text = y_min - (y_max - y_min) * 0.12
+        ax.set_ylim(y_text, y_max)
+
+        for (start, end, f) in factor_block_ranges:
+            mid = (start + end) / 2.0
+            ax.text(mid, y_min - (y_max - y_min) * 0.08, f"Фактор {f}", ha="center", va="top", fontsize=10)
+            ax.axvline(end + 0.5, linewidth=0.6)
+
+        whiskers = bp["whiskers"]
+
+        fl_list = []
+        for f in factor_keys:
+            for lv in levels_by_factor[f]:
+                fl_list.append((f, lv))
+
+        for i, x in enumerate(x_positions):
+            if i >= len(fl_list):
+                continue
+            f, lv = fl_list[i]
+            letter = letters_factor.get(f, {}).get(lv, "")
+            if not letter:
+                continue
+            try:
+                wy = max(whiskers[2*i+1].get_ydata())
+            except Exception:
+                wy = np.nanmax(data_list[i])
+            if wy is None or (isinstance(wy, float) and math.isnan(wy)):
+                continue
+            ax.text(x, wy + (y_max - y_min) * 0.03, letter, ha="center", va="bottom", fontsize=10)
+
+        from matplotlib.lines import Line2D
+        legend_items = [
+            Line2D([0], [0], marker="^", linestyle="None", markersize=7, label="Середнє"),
+            Line2D([0], [0], marker="o", linestyle="None", markersize=5, label="Викиди"),
+        ]
+        ax.legend(handles=legend_items, loc="upper right", frameon=True)
+
+        out_dir = _script_dir()
+        out_path = os.path.join(out_dir, "SAD_boxplot_factors.png")
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=150)
+        return out_path
 
     # -------------------------
-    # TEXT report window
+    # Report window
     # -------------------------
-    def show_report_segments(self, segments):
+    def show_report_segments(self, segments, plot_png_path=None, plot_meta=None):
         if self.report_win and tk.Toplevel.winfo_exists(self.report_win):
             self.report_win.destroy()
 
         self.report_win = tk.Toplevel(self.root)
-        self.report_win.title("Звіт (текстовий)")
+        self.report_win.title("Звіт")
         self.report_win.geometry("1180x760")
         set_window_icon(self.report_win)
 
@@ -2112,20 +1746,21 @@ class SADTk:
             end = txt.index("end")
             txt.tag_add(tag, start, end)
 
-        self._last_report_text = txt.get("1.0", "end-1c")
-
         def copy_report():
             self.report_win.clipboard_clear()
-            self.report_win.clipboard_append(self._last_report_text)
+            self.report_win.clipboard_append(txt.get("1.0", "end-1c"))
             messagebox.showinfo("Готово", "Звіт скопійовано в буфер обміну.")
 
         tk.Button(top, text="Копіювати звіт", command=copy_report).pack(side=tk.LEFT, padx=4)
+
+        if plot_png_path:
+            self.show_plot_window(plot_png_path, plot_meta or {})
 
         def on_ctrl_c(event=None):
             try:
                 sel = txt.get("sel.first", "sel.last")
             except Exception:
-                sel = self._last_report_text
+                sel = txt.get("1.0", "end-1c")
             self.report_win.clipboard_clear()
             self.report_win.clipboard_append(sel)
             return "break"
@@ -2133,100 +1768,429 @@ class SADTk:
         txt.bind("<Control-c>", on_ctrl_c)
         txt.bind("<Control-C>", on_ctrl_c)
 
-    # -------------------------
-    # GRAPHICAL report window
-    # -------------------------
-    def show_plot_window(self, indicator: str):
-        # якщо вже є — знищимо і відкриємо нове поруч
-        if self.plot_win and tk.Toplevel.winfo_exists(self.plot_win):
-            self.plot_win.destroy()
+    # =========================================================
+    # ГОЛОВНІ ПРАВКИ — analyze():
+    # 1) Літери по факторах для ВСІХ параметричних методів:
+    #    LSD / Tukey / Duncan / Bonferroni (із CLD)
+    # 2) Порядок текстових блоків у звіті як у вашому прикладі
+    # =========================================================
+    def analyze(self):
+        created_at = datetime.now()
 
-        self.plot_win = tk.Toplevel(self.root)
-        self.plot_win.title("Звіт (графічний)")
-        self.plot_win.geometry("1100x720")
-        set_window_icon(self.plot_win)
-
-        top = tk.Frame(self.plot_win, padx=8, pady=8)
-        top.pack(fill=tk.X)
-
-        def copy_graph():
-            if not self._last_plot_png_path or not os.path.exists(self._last_plot_png_path):
-                messagebox.showwarning("Графік", self._last_plot_error or "Графік не сформовано.")
-                return
-
-            ok, err = copy_png_to_clipboard_windows(self._last_plot_png_path)
-            if ok:
-                messagebox.showinfo("Готово", "Графік скопійовано у буфер обміну як зображення.\nТепер можна вставляти у Word/PowerPoint.")
-            else:
-                messagebox.showwarning("Буфер обміну", err)
-
-        def save_png():
-            if not self._last_plot_png_path or not os.path.exists(self._last_plot_png_path):
-                messagebox.showwarning("Графік", self._last_plot_error or "Графік не сформовано.")
-                return
-            out = filedialog.asksaveasfilename(
-                title="Зберегти графік (PNG)",
-                defaultextension=".png",
-                filetypes=[("PNG image", "*.png")]
-            )
-            if not out:
-                return
-            try:
-                with open(self._last_plot_png_path, "rb") as fsrc:
-                    data = fsrc.read()
-                with open(out, "wb") as fdst:
-                    fdst.write(data)
-                messagebox.showinfo("Готово", "Графік збережено у PNG.")
-            except Exception as ex:
-                messagebox.showerror("Помилка", str(ex))
-
-        tk.Button(top, text="Копіювати графік (PNG)", command=copy_graph).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Зберегти PNG…", command=save_png).pack(side=tk.LEFT, padx=4)
-
-        # показати саму картинку у вікні
-        body = tk.Frame(self.plot_win, padx=8, pady=8)
-        body.pack(fill=tk.BOTH, expand=True)
-
-        canvas = tk.Canvas(body, bg="white")
-        canvas.pack(fill=tk.BOTH, expand=True)
-
-        if not self._last_plot_png_path or not os.path.exists(self._last_plot_png_path):
-            canvas.create_text(20, 20, anchor="nw", text=(self._last_plot_error or "Графік не сформовано."), fill="black")
+        params = self.ask_indicator_units_design()
+        if not params["ok"]:
             return
 
-        # Tk PhotoImage підтримує PNG у Tk 8.6+
+        indicator = params["indicator"]
+        units = params["units"]
+        design = params["design"]
+        main_factor = params.get("main_factor", "")
+
+        long, used_rep_cols = self.collect_long()
+        if len(long) == 0:
+            messagebox.showwarning("Помилка", "Немає числових даних для аналізу.\nПеревірте повторності та значення.")
+            return
+
+        values = np.array([r["value"] for r in long], dtype=float)
+        if len(values) < 3:
+            messagebox.showinfo("Результат", "Надто мало даних для аналізу.")
+            return
+
+        levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
+
+        # Residuals for Shapiro: use cell means (no-block means)
+        base = anova_effect_ss_fixed(long, self.factor_keys, levels_by_factor)
+        cell_means = base.get("cell_means", {})
+        residuals = []
+        for rec in long:
+            key = tuple(rec.get(f) for f in self.factor_keys)
+            v = rec.get("value", np.nan)
+            m = cell_means.get(key, np.nan)
+            if not math.isnan(v) and not math.isnan(m):
+                residuals.append(v - m)
+        residuals = np.array(residuals, dtype=float)
+
         try:
-            img = tk.PhotoImage(file=self._last_plot_png_path)
-        except Exception as ex:
-            canvas.create_text(20, 20, anchor="nw", text=f"Не вдалося відобразити PNG у Tk: {ex}", fill="black")
+            W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
+        except Exception:
+            W, p_norm = (np.nan, np.nan)
+
+        choice = self.choose_method_window(p_norm)
+        if not choice["ok"]:
             return
+        method = choice["method"]
 
-        # keep reference
-        canvas._img_ref = img  # type: ignore
+        # Variant order for summary table
+        variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
+        v_names = [" | ".join(map(str, k)) for k in variant_order]
+        num_variants = len(variant_order)
 
-        # fit by scrolling if large
-        w = img.width()
-        h = img.height()
-        canvas.config(scrollregion=(0, 0, w, h))
-        canvas.create_image(0, 0, anchor="nw", image=img)
+        vstats = variant_mean_sd(long, self.factor_keys)
+        v_means = {k: vstats[k][0] for k in vstats.keys()}
+        v_sds = {k: vstats[k][1] for k in vstats.keys()}
+        v_ns = {k: vstats[k][2] for k in vstats.keys()}
 
-        xsb = ttk.Scrollbar(body, orient="horizontal", command=canvas.xview)
-        ysb = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
-        canvas.configure(xscrollcommand=xsb.set, yscrollcommand=ysb.set)
-        xsb.pack(side=tk.BOTTOM, fill=tk.X)
-        ysb.pack(side=tk.RIGHT, fill=tk.Y)
+        means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
+        ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
+        groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
 
-    # -------------------------
-    # Run helpers
-    # -------------------------
-    def bind_cell(self, e: tk.Entry):
-        e.bind("<Return>", self.on_enter)
-        e.bind("<Up>", self.on_arrow)
-        e.bind("<Down>", self.on_arrow)
-        e.bind("<Left>", self.on_arrow)
-        e.bind("<Right>", self.on_arrow)
-        e.bind("<Control-v>", self.on_paste)
-        e.bind("<Control-V>", self.on_paste)
+        # Factor means + ns (for letters)
+        factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
+        factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
+        factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
+
+        # Choose model by design
+        split_meta = None
+        if design == "CRD":
+            SS_eff = base["SS_effects"]
+            df_eff = base["df_effects"]
+            SS_total = base["SS_total"]
+
+            total_cells = 1
+            for f in self.factor_keys:
+                total_cells *= len(levels_by_factor[f])
+            N = len(values)
+            df_total = N - 1
+            df_error = max(1, N - total_cells)
+
+            SS_error = base["SS_error_crd"]
+            MS_error = SS_error / df_error if df_error > 0 else np.nan
+
+            table = []
+            def pretty_interaction(subset):
+                if len(subset) == 1:
+                    return f"Фактор {subset[0]}"
+                return "Фактор " + "×".join(subset)
+
+            for rS in range(1, len(self.factor_keys) + 1):
+                for S in combinations(self.factor_keys, rS):
+                    name = pretty_interaction(S)
+                    SSv = float(SS_eff.get(S, np.nan))
+                    dfv = float(df_eff.get(S, np.nan))
+                    MSv = SSv / dfv if (dfv and dfv > 0) else np.nan
+                    Fv = MSv / MS_error if (MS_error and MS_error > 0 and not math.isnan(MSv)) else np.nan
+                    pv = 1 - f_dist.cdf(Fv, dfv, df_error) if (not math.isnan(Fv)) else np.nan
+                    table.append((name, SSv, dfv, MSv, Fv, pv, "sub"))
+
+            table.append(("Залишок", float(SS_error), float(df_error), float(MS_error), None, None, None))
+            table.append(("Загальна", float(SS_total), float(df_total), None, None, None, None))
+
+            model = {
+                "table": table,
+                "MS_error": float(MS_error),
+                "df_error": int(df_error),
+                "SS_total": float(SS_total),
+                "SS_error": float(SS_error),
+                "grand_mean": float(base["grand_mean"]),
+            }
+
+            ms_for_factor_letters = {f: (model["MS_error"], model["df_error"]) for f in self.factor_keys}
+
+        elif design == "RCBD":
+            model = rcbd_anova(long, self.factor_keys, levels_by_factor)
+            ms_for_factor_letters = {f: (model["MS_error"], model["df_error"]) for f in self.factor_keys}
+
+        else:
+            model = splitplot_anova(long, self.factor_keys, levels_by_factor, main_factor=main_factor)
+            split_meta = {
+                "main_factor": model["main_factor"],
+                "df_error_main": model["df_error_main"],
+                "df_error_sub": model["df_error_sub"],
+            }
+            ms_for_factor_letters = {}
+            for f in self.factor_keys:
+                if f == model["main_factor"]:
+                    ms_for_factor_letters[f] = (model["MS_error_main"], model["df_error_main"])
+                else:
+                    ms_for_factor_letters[f] = (model["MS_error_sub"], model["df_error_sub"])
+
+        nonparam = method in ("mw", "kw")
+
+        # Homogeneity test (Brown–Forsythe) for parametric methods
+        bf_F, bf_p = (np.nan, np.nan)
+        if not nonparam and method in ("lsd", "tukey", "duncan", "bonferroni"):
+            bf_F, bf_p = brown_forsythe_from_groups(groups1)
+
+        # =========================
+        # ЛІТЕРИ ПО ФАКТОРАХ (NEW):
+        # =========================
+        letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
+
+        if (not nonparam) and (method in ("lsd", "tukey", "duncan", "bonferroni")):
+            for f in self.factor_keys:
+                lvls = levels_by_factor[f]
+                MS_e, df_e = ms_for_factor_letters.get(f, (np.nan, np.nan))
+
+                # prepare per-factor means/ns dict keyed by level names (strings)
+                means_f = {str(lvl): factor_means[f].get(lvl, np.nan) for lvl in lvls}
+                ns_f = {str(lvl): factor_ns[f].get(lvl, 0) for lvl in lvls}
+                lvls_str = [str(lvl) for lvl in lvls]
+
+                sig = {}
+                if method == "lsd":
+                    sig = lsd_sig_matrix(lvls_str, means_f, ns_f, MS_e, df_e, alpha=ALPHA)
+
+                elif method in ("tukey", "duncan"):
+                    # reuse studentized_range-based engine:
+                    _rows_tmp, sig = pairwise_param_short_variants_pm(
+                        lvls_str, means_f, ns_f, MS_e, df_e, method, alpha=ALPHA
+                    )
+
+                elif method == "bonferroni":
+                    # strict Bonferroni t-tests using same engine:
+                    _rows_tmp, sig = pairwise_param_short_variants_pm(
+                        lvls_str, means_f, ns_f, MS_e, df_e, "bonferroni", alpha=ALPHA
+                    )
+
+                letters_map = cld_multi_letters(lvls_str, means_f, sig)
+                # write back using original level objects:
+                for lvl in lvls:
+                    letters_factor[f][lvl] = letters_map.get(str(lvl), "")
+
+        # =========================
+        # Letters for variants (existing + unchanged logic)
+        # =========================
+        letters_named = {name: "" for name in v_names}
+        pairwise_rows = []
+        do_posthoc = True
+
+        kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
+        if method == "kw":
+            try:
+                kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
+                if len(kw_samples) >= 2:
+                    kw_res = kruskal(*kw_samples)
+                    kw_H = float(kw_res.statistic)
+                    kw_p = float(kw_res.pvalue)
+                    kw_df = int(len(kw_samples) - 1)
+                    kw_eps2 = epsilon_squared_kw(kw_H, n=len(long), k=len(kw_samples))
+            except Exception:
+                kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
+
+        if not nonparam:
+            if design == "Split-plot":
+                MS_e_var = model["MS_error_sub"]
+                df_e_var = model["df_error_sub"]
+            else:
+                MS_e_var = model["MS_error"]
+                df_e_var = model["df_error"]
+
+            if method == "lsd":
+                sigv = lsd_sig_matrix(v_names, means1, ns1, MS_e_var, df_e_var, alpha=ALPHA)
+                letters_named = cld_multi_letters(v_names, means1, sigv)
+            elif method in ("tukey", "duncan", "bonferroni"):
+                pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_e_var, df_e_var, method, alpha=ALPHA)
+                letters_named = cld_multi_letters(v_names, means1, sig)
+        else:
+            if method == "kw":
+                if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
+                    do_posthoc = False
+                if do_posthoc:
+                    pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
+                    med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
+                    letters_named = cld_multi_letters(v_names, med_tmp, sig)
+                else:
+                    letters_named = {name: "" for name in v_names}
+            elif method == "mw":
+                pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
+                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
+                letters_named = cld_multi_letters(v_names, med_tmp, sig)
+
+        letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
+
+        # =========================
+        # REPORT segments — порядок як у вашому прикладі
+        # =========================
+        seg = []
+        seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
+        seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n"))
+        seg.append(("text", f"Дизайн експерименту:\t{design}\n"))
+        if design == "Split-plot":
+            seg.append(("text", f"Split-plot: головний фактор (main-plot):\t{main_factor}\n"))
+        seg.append(("text", "\n"))
+
+        # 1) Кількості
+        seg.append(("text",
+                    f"Кількість варіантів:\t{num_variants}\n"
+                    f"Кількість повторностей:\t{len(used_rep_cols)}\n"
+                    f"Загальна кількість облікових значень:\t{len(long)}\n"))
+
+        # 2) Виконуваний аналіз
+        method_label = {
+            "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
+            "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
+            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
+            "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
+            "kw": "Непараметричний аналіз: Kruskal–Wallis.",
+            "mw": "Непараметричний аналіз: Mann–Whitney.",
+        }.get(method, "")
+        if method_label:
+            seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
+
+        # 3) Пояснення
+        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
+        seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
+        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
+
+        # 4) Нормальність
+        if not math.isnan(W):
+            seg.append(("text",
+                        f"Перевірка нормальності залишків (Shapiro–Wilk):\t"
+                        f"{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
+        else:
+            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
+
+        # 5) Однорідність (як у прикладі: з крапкою в кінці фрази)
+        if not nonparam:
+            if not any(math.isnan(x) for x in [bf_F, bf_p]):
+                bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
+                seg.append(("text",
+                            f"Перевірка однорідності дисперсій (Brown–Forsythe):\t"
+                            f"F={fmt_num(bf_F,4)}; p={fmt_num(bf_p,4)}\t{bf_concl}.\n\n"))
+            else:
+                seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
+
+        # Nonparam global test line
+        if method == "kw":
+            if not (isinstance(kw_p, float) and math.isnan(kw_p)):
+                concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
+                seg.append(("text",
+                            f"Глобальний тест між варіантами (Kruskal–Wallis):\t"
+                            f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n"))
+                seg.append(("text", f"Розмір ефекту (ε²):\t{fmt_num(kw_eps2,4)}\n\n"))
+
+        # =========================
+        # PARAMETRIC report
+        # =========================
+        if not nonparam:
+            anova_rows = []
+            for name, SSv, dfv, MSv, Fv, pv, denom in model["table"]:
+                df_txt = str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""
+                if name.startswith("Залишок") or name in ("Загальна", "Блоки"):
+                    anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
+                else:
+                    mark = significance_mark(pv)
+                    concl = f"істотна різниця {mark}" if mark else "-"
+                    anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
+
+            seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
+            seg.append(("table", {
+                "headers": ["Джерело", "SS", "df", "MS", "F", "p", "Висновок"],
+                "rows": anova_rows,
+                "padding_px": 32,
+                "extra_gap_after_col": 0,
+                "extra_gap_px": 60
+            }))
+            seg.append(("text", "\n"))
+
+            eff_rows = build_effect_strength_rows(model["table"])
+            seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу (% від SS)\n"))
+            seg.append(("table", {"headers": ["Джерело", "%"], "rows": eff_rows}))
+            seg.append(("text", "\n"))
+
+            if design == "Split-plot":
+                pe2_rows = build_partial_eta2_rows_with_label_splitaware(
+                    model["table"], model["SS_error_main"], model["SS_error_sub"]
+                )
+            else:
+                SS_error = model["SS_error"]
+                pe2_rows = []
+                for name, SSv, dfv, MSv, Fv, pv, denom in model["table"]:
+                    if name in ("Залишок", "Загальна", "Блоки"):
+                        continue
+                    if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
+                        continue
+                    denom2 = SSv + SS_error
+                    pe2 = (SSv / denom2) if denom2 > 0 else np.nan
+                    pe2_rows.append([name, fmt_num(pe2, 4), partial_eta2_label(pe2)])
+
+            seg.append(("text", "ТАБЛИЦЯ 3. Розмір ефекту (partial η²)\n"))
+            seg.append(("table", {"headers": ["Джерело", "partial η²", "Висновок"], "rows": pe2_rows}))
+            seg.append(("text", "\n"))
+
+            gmean = model.get("grand_mean", float(np.mean(values)))
+            cv_rows = []
+            if design == "Split-plot":
+                cv_main = cv_from_ms(model["MS_error_main"], gmean)
+                cv_sub = cv_from_ms(model["MS_error_sub"], gmean)
+                cv_total = cv_percent_from_values(values)
+                cv_rows.append(["Main-plot (за MS Block×A)", fmt_num(cv_main, 2)])
+                cv_rows.append(["Sub-plot (за MS залишку)", fmt_num(cv_sub, 2)])
+                cv_rows.append(["Загальний (за даними)", fmt_num(cv_total, 2)])
+            else:
+                cv_model = cv_from_ms(model["MS_error"], gmean)
+                cv_total = cv_percent_from_values(values)
+                cv_rows.append(["Модельний (за MS_error)", fmt_num(cv_model, 2)])
+                cv_rows.append(["Загальний (за даними)", fmt_num(cv_total, 2)])
+
+            seg.append(("text", "ТАБЛИЦЯ 4. Коефіцієнт варіації (CV, %)\n"))
+            seg.append(("table", {"headers": ["Елемент", "CV, %"], "rows": cv_rows}))
+            seg.append(("text", "\n"))
+
+            # Means per factor with letters (NOW works for ALL parametric)
+            tno = 5
+            for f in self.factor_keys:
+                seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
+                rows_f = []
+                for lvl in levels_by_factor[f]:
+                    m = factor_means[f].get(lvl, np.nan)
+                    letter = letters_factor[f].get(lvl, "")
+                    rows_f.append([str(lvl), fmt_num(m, 3), (letter if letter else "-")])
+                seg.append(("table", {"headers": [f"Градація {f}", "Середнє", "Істотна різниця"], "rows": rows_f}))
+                seg.append(("text", "\n"))
+                tno += 1
+
+            seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
+            rows_v = []
+            for k in variant_order:
+                name = " | ".join(map(str, k))
+                m = v_means.get(k, np.nan)
+                sd = v_sds.get(k, np.nan)
+                letter = letters_variants.get(k, "")
+                rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), (letter if letter else "-")])
+
+            seg.append(("table", {
+                "headers": ["Варіант", "Середнє", "± SD", "Істотна різниця"],
+                "rows": rows_v,
+                "padding_px": 32,
+                "extra_gap_after_col": 0,
+                "extra_gap_px": 80
+            }))
+            seg.append(("text", "\n"))
+            tno += 1
+
+            if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
+                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
+                seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
+                seg.append(("text", "\n"))
+
+        # =========================
+        # NONPARAMETRIC report
+        # =========================
+        else:
+            seg.append(("text", "Непараметричний звіт подається у спрощеному вигляді.\n"))
+            if method == "kw" and not do_posthoc:
+                seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
+            else:
+                if pairwise_rows:
+                    seg.append(("text", "ТАБЛИЦЯ. Парні порівняння + ефект (Cliff’s δ)\n"))
+                    seg.append(("table", {"headers": ["Комбінація", "U", "p (Bonf.)", "Істотна", "δ", "Висновок"], "rows": pairwise_rows}))
+                    seg.append(("text", "\n"))
+
+        seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
+
+        plot_png = self.build_factor_block_boxplot_png(
+            long=long,
+            factor_keys=self.factor_keys,
+            levels_by_factor=levels_by_factor,
+            letters_factor=letters_factor,
+            indicator=indicator,
+            units=units,
+            design=design,
+            split_meta=split_meta
+        )
+
+        self.show_report_segments(seg, plot_png_path=plot_png, plot_meta={"design": design, "split": split_meta})
 
 
 # -------------------------
