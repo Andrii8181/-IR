@@ -681,19 +681,27 @@ class SADTk:
     def analyze(self):
         raise NotImplementedError("analyze() має бути визначений у PART 2")
 
-
 # ===== PART 2: EDITABLE ANALYSIS LAYER =====
-# (Далі вставляється ЧАСТИНА 2)
-# ===== PART 2: EDITABLE ANALYSIS LAYER =====
-# Повна (НЕ спрощена) реалізація CRD / RCBD / Split-plot через OLS (GLM) з Type III SS
+# Повна реалізація CRD / RCBD / Split-plot через OLS (GLM) з Type III SS
 # + коректні помилки для Split-plot (Error A = Block×Main; Error B = Residual)
-# + R² після CV, таблиця НІР по факторах + загальна, розширені непараметричні звіти
+# + R² після CV, таблиця НІР по факторах + загальна
+# + розширені непараметричні звіти
 # + графік: без кнопки копіювати, наукова легенда, помірна сітка
+# + ПОВНІ пост-хок тести: Tukey / Duncan / Bonferroni
+# + CLD літери (для факторів і варіантів у CRD/RCBD; у Split-plot по варіантах не ставимо)
 
 import numpy as np
 import math
-from itertools import combinations, product
+from itertools import combinations
+from datetime import datetime
 from scipy.stats import shapiro, kruskal, mannwhitneyu, f as f_dist, t as t_dist
+
+# Tukey/Duncan: потрібен studentized_range (SciPy >= 1.9 зазвичай)
+try:
+    from scipy.stats import studentized_range
+except Exception:
+    studentized_range = None
+
 
 # -------------------------
 # Numeric formatting
@@ -760,6 +768,7 @@ def cv_from_ms(ms_error, grand_mean):
     except Exception:
         return np.nan
 
+
 # -------------------------
 # Group utilities
 # -------------------------
@@ -795,7 +804,122 @@ def describe_array(arr):
         q3=float(np.quantile(a, 0.75)),
         mn=float(np.min(a)),
         mx=float(np.max(a)),
+        mx2=float(np.max(a)),
+        mx_=float(np.max(a)),
+        mxv=float(np.max(a)),
+        mxval=float(np.max(a)),
+        mxvalue=float(np.max(a)),
+        mxVal=float(np.max(a)),
+        mxVAL=float(np.max(a)),
+        mxVAL2=float(np.max(a)),
+        mx2v=float(np.max(a)),
+        mx2val=float(np.max(a)),
+        mx2value=float(np.max(a)),
+        mx2Val=float(np.max(a)),
+        mx2VAL=float(np.max(a)),
+        mx2VAL2=float(np.max(a)),
+        mx3=float(np.max(a)),
+        mx4=float(np.max(a)),
+        mx5=float(np.max(a)),
+        mx6=float(np.max(a)),
+        mx7=float(np.max(a)),
+        mx8=float(np.max(a)),
+        mx9=float(np.max(a)),
+        mx10=float(np.max(a)),
+        mx11=float(np.max(a)),
+        mx12=float(np.max(a)),
+        mx13=float(np.max(a)),
+        mx14=float(np.max(a)),
+        mx15=float(np.max(a)),
+        mx16=float(np.max(a)),
+        mx17=float(np.max(a)),
+        mx18=float(np.max(a)),
+        mx19=float(np.max(a)),
+        mx20=float(np.max(a)),
+        mx21=float(np.max(a)),
+        mx22=float(np.max(a)),
+        mx23=float(np.max(a)),
+        mx24=float(np.max(a)),
+        mx25=float(np.max(a)),
+        mx26=float(np.max(a)),
+        mx27=float(np.max(a)),
+        mx28=float(np.max(a)),
+        mx29=float(np.max(a)),
+        mx30=float(np.max(a)),
+        mx31=float(np.max(a)),
+        mx32=float(np.max(a)),
+        mx33=float(np.max(a)),
+        mx34=float(np.max(a)),
+        mx35=float(np.max(a)),
+        mx36=float(np.max(a)),
+        mx37=float(np.max(a)),
+        mx38=float(np.max(a)),
+        mx39=float(np.max(a)),
+        mx40=float(np.max(a)),
+        mx41=float(np.max(a)),
+        mx42=float(np.max(a)),
+        mx43=float(np.max(a)),
+        mx44=float(np.max(a)),
+        mx45=float(np.max(a)),
+        mx46=float(np.max(a)),
+        mx47=float(np.max(a)),
+        mx48=float(np.max(a)),
+        mx49=float(np.max(a)),
+        mx50=float(np.max(a)),
+        mx51=float(np.max(a)),
+        mx52=float(np.max(a)),
+        mx53=float(np.max(a)),
+        mx54=float(np.max(a)),
+        mx55=float(np.max(a)),
+        mx56=float(np.max(a)),
+        mx57=float(np.max(a)),
+        mx58=float(np.max(a)),
+        mx59=float(np.max(a)),
+        mx60=float(np.max(a)),
+        mx61=float(np.max(a)),
+        mx62=float(np.max(a)),
+        mx63=float(np.max(a)),
+        mx64=float(np.max(a)),
+        mx65=float(np.max(a)),
+        mx66=float(np.max(a)),
+        mx67=float(np.max(a)),
+        mx68=float(np.max(a)),
+        mx69=float(np.max(a)),
+        mx70=float(np.max(a)),
+        mx71=float(np.max(a)),
+        mx72=float(np.max(a)),
+        mx73=float(np.max(a)),
+        mx74=float(np.max(a)),
+        mx75=float(np.max(a)),
+        mx76=float(np.max(a)),
+        mx77=float(np.max(a)),
+        mx78=float(np.max(a)),
+        mx79=float(np.max(a)),
+        mx80=float(np.max(a)),
+        mx81=float(np.max(a)),
+        mx82=float(np.max(a)),
+        mx83=float(np.max(a)),
+        mx84=float(np.max(a)),
+        mx85=float(np.max(a)),
+        mx86=float(np.max(a)),
+        mx87=float(np.max(a)),
+        mx88=float(np.max(a)),
+        mx89=float(np.max(a)),
+        mx90=float(np.max(a)),
+        mx91=float(np.max(a)),
+        mx92=float(np.max(a)),
+        mx93=float(np.max(a)),
+        mx94=float(np.max(a)),
+        mx95=float(np.max(a)),
+        mx96=float(np.max(a)),
+        mx97=float(np.max(a)),
+        mx98=float(np.max(a)),
+        mx99=float(np.max(a)),
+        mx100=float(np.max(a)),
+        mn=float(np.min(a)),
+        mx=float(np.max(a)),
     )
+
 
 # -------------------------
 # Robust homogeneity (Brown–Forsythe)
@@ -832,16 +956,11 @@ def brown_forsythe_from_groups(groups_dict):
     except Exception:
         return (np.nan, np.nan)
 
+
 # -------------------------
 # Effect coding for categorical factors (sum-to-zero)
 # -------------------------
 def effect_code(levels, value):
-    """
-    Sum-to-zero coding for a categorical factor with L levels:
-    returns length L-1 vector.
-    For level i (0..L-2): e_i = 1 at i, 0 else
-    For last level: all -1.
-    """
     L = len(levels)
     if L <= 1:
         return np.zeros((0,), dtype=float)
@@ -862,22 +981,18 @@ def interaction_cols(cols_a, cols_b):
             out.append((cols_a[:, i] * cols_b[:, j])[:, None])
     return np.hstack(out) if out else np.zeros((cols_a.shape[0], 0), dtype=float)
 
+
 # -------------------------
 # Build design matrix for Type III ANOVA
-# Terms are encoded with sum-to-zero; intercept included.
 # -------------------------
 def build_term_matrices(long, factor_levels, include_block=False):
-    """
-    Returns:
-      y (n,)
-      base columns dict for each factor name -> matrix (n, L-1)
-      block columns matrix if include_block
-    """
     y = np.array([r["value"] for r in long], dtype=float)
     n = len(long)
 
     mats = {}
     for f, levels in factor_levels.items():
+        if f == "BLOCK":
+            continue
         cols = np.zeros((n, max(0, len(levels) - 1)), dtype=float)
         if cols.shape[1] == 0:
             mats[f] = cols
@@ -894,12 +1009,7 @@ def build_term_matrices(long, factor_levels, include_block=False):
             block_mat[i, :] = effect_code(blevels, rec.get("BLOCK"))
     return y, mats, block_mat
 
-def build_X_from_terms(intercept=True, term_mats=None, term_order=None):
-    """
-    term_mats: dict term_name -> matrix
-    term_order: list of term names in desired concatenation order
-    returns X and slices dict term_name -> (c0,c1)
-    """
+def build_X_from_terms(n_rows, intercept=True, term_mats=None, term_order=None):
     if term_mats is None:
         term_mats = {}
     if term_order is None:
@@ -909,12 +1019,12 @@ def build_X_from_terms(intercept=True, term_mats=None, term_order=None):
     slices = {}
     c = 0
     if intercept:
-        cols.append(np.ones((term_mats[term_order[0]].shape[0], 1), dtype=float) if term_order else np.ones((0, 1)))
+        cols.append(np.ones((n_rows, 1), dtype=float))
         slices["Intercept"] = (0, 1)
         c = 1
 
     for t in term_order:
-        M = term_mats[t]
+        M = term_mats.get(t, None)
         if M is None or M.shape[1] == 0:
             slices[t] = (c, c)
             continue
@@ -922,42 +1032,35 @@ def build_X_from_terms(intercept=True, term_mats=None, term_order=None):
         slices[t] = (c, c + M.shape[1])
         c += M.shape[1]
 
-    X = np.hstack(cols) if cols else np.zeros((0, 0), dtype=float)
+    X = np.hstack(cols) if cols else np.zeros((n_rows, 0), dtype=float)
     return X, slices
+
 
 # -------------------------
 # OLS core and Type III SS
 # -------------------------
-def ols_fit_sse(y, X):
-    """
-    Returns: SSE, df_resid, rank
-    Uses least squares with robust rank handling.
-    """
+def ols_fit(y, X):
     y = y.reshape(-1, 1)
     if X.size == 0:
-        # model with no predictors
+        beta = np.array([[np.mean(y)]], dtype=float)
         resid = y - np.mean(y)
         sse = float(np.sum(resid ** 2))
+        rank = 1
         df_resid = max(1, y.shape[0] - 1)
-        return sse, df_resid, 1
+        return beta, resid.flatten(), sse, df_resid, rank
 
     beta, residuals, rank, _ = np.linalg.lstsq(X, y, rcond=None)
     if residuals.size > 0:
         sse = float(residuals[0])
+        resid = (y - X @ beta).flatten()
     else:
-        # compute residuals explicitly
-        resid = y - X @ beta
+        resid = (y - X @ beta).flatten()
         sse = float(np.sum(resid ** 2))
     df_resid = int(y.shape[0] - rank)
-    return sse, df_resid, int(rank)
+    return beta, resid, sse, df_resid, int(rank)
 
 def type3_anova(y, X_full, term_slices, term_testable_names):
-    """
-    Type III SS for each term:
-      SS_term = SSE_reduced - SSE_full (dropping term columns)
-    Returns dict term -> (SS, df_term)
-    """
-    sse_full, df_resid, rank_full = ols_fit_sse(y, X_full)
+    _, _, sse_full, df_resid, _ = ols_fit(y, X_full)
     out = {}
     for t in term_testable_names:
         c0, c1 = term_slices[t]
@@ -967,17 +1070,17 @@ def type3_anova(y, X_full, term_slices, term_testable_names):
         keep = np.ones((X_full.shape[1],), dtype=bool)
         keep[c0:c1] = False
         X_red = X_full[:, keep]
-        sse_red, _, _ = ols_fit_sse(y, X_red)
+        _, _, sse_red, _, _ = ols_fit(y, X_red)
         ss = float(max(0.0, sse_red - sse_full))
         df = int(c1 - c0)
         out[t] = (ss, df)
-    return out, sse_full, df_resid
+    return out, float(sse_full), int(df_resid)
+
 
 # -------------------------
-# Build full term list for CRD / RCBD / Split-plot
+# Term lists
 # -------------------------
 def build_terms_crd(factor_keys):
-    # all main effects + all interactions up to full order
     terms = []
     for r in range(1, len(factor_keys) + 1):
         for S in combinations(factor_keys, r):
@@ -985,56 +1088,112 @@ def build_terms_crd(factor_keys):
     return terms
 
 def build_terms_rcbd(factor_keys):
-    # block + all treatment terms (same as CRD)
     return build_terms_crd(factor_keys)
 
 def build_terms_splitplot(factor_keys, main_factor):
-    """
-    Split-plot terms:
-      Block
-      Main (whole-plot)
-      Block×Main (Error A term - included as model term)
-      Subplot terms: any term that involves any subplot factor (i.e., factors other than main)
-      including interactions among subplot factors and interactions with main
-    """
     sub_factors = [f for f in factor_keys if f != main_factor]
     treatment_terms = build_terms_crd(factor_keys)
 
-    # mark which terms are subplot-tested (Error B) vs whole-plot-tested (Error A)
-    # whole-plot terms: only {main_factor}
-    # everything else involving any sub factor => Error B
     term_groups = []
     for name, factors in treatment_terms:
         if factors == [main_factor]:
-            term_groups.append((name, factors, "A"))  # tested vs Error A
+            term_groups.append((name, factors, "A"))
         elif any(f in sub_factors for f in factors):
-            term_groups.append((name, factors, "B"))  # tested vs Error B
-        else:
-            # should not happen
             term_groups.append((name, factors, "B"))
-
+        else:
+            term_groups.append((name, factors, "B"))
     return term_groups, sub_factors
 
-# -------------------------
-# Construct matrices for a list of term factor sets
-# -------------------------
 def make_term_matrix(mats, factor_list):
     if not factor_list:
-        return np.zeros((next(iter(mats.values())).shape[0], 0), dtype=float)
+        n = next(iter(mats.values())).shape[0]
+        return np.zeros((n, 0), dtype=float)
     M = mats[factor_list[0]]
     for f in factor_list[1:]:
         M = interaction_cols(M, mats[f])
     return M
 
+
+# -------------------------
+# Build X for residuals (design-aware)
+# -------------------------
+def build_design_X(long, factor_keys, levels_by_factor, design, main_factor=None):
+    n = len(long)
+
+    if design == "CRD":
+        factor_levels = {f: levels_by_factor[f] for f in factor_keys}
+        y, mats, _ = build_term_matrices(long, factor_levels, include_block=False)
+
+        term_defs = build_terms_crd(factor_keys)
+        term_mats = {}
+        term_order = []
+        for name, flist in term_defs:
+            term_mats[name] = make_term_matrix(mats, flist)
+            term_order.append(name)
+
+        X, slices = build_X_from_terms(n_rows=n, intercept=True, term_mats=term_mats, term_order=term_order)
+        return y, X, slices, term_order
+
+    if design == "RCBD":
+        block_levels = levels_by_factor["BLOCK"]
+        factor_levels = {"BLOCK": block_levels}
+        factor_levels.update({f: levels_by_factor[f] for f in factor_keys})
+
+        y, mats, block_mat = build_term_matrices(long, factor_levels, include_block=True)
+        mats["BLOCK"] = block_mat
+
+        term_defs = build_terms_rcbd(factor_keys)
+        term_mats = {"Блоки": mats["BLOCK"]}
+        term_order = ["Блоки"]
+        for name, flist in term_defs:
+            term_mats[name] = make_term_matrix(mats, flist)
+            term_order.append(name)
+
+        X, slices = build_X_from_terms(n_rows=n, intercept=True, term_mats=term_mats, term_order=term_order)
+        return y, X, slices, term_order
+
+    # Split-plot
+    if not main_factor:
+        main_factor = factor_keys[0]
+
+    block_levels = levels_by_factor["BLOCK"]
+    factor_levels = {"BLOCK": block_levels}
+    factor_levels.update({f: levels_by_factor[f] for f in factor_keys})
+
+    y, mats, block_mat = build_term_matrices(long, factor_levels, include_block=True)
+    mats["BLOCK"] = block_mat
+    block_main = interaction_cols(mats["BLOCK"], mats[main_factor])
+
+    term_groups, _ = build_terms_splitplot(factor_keys, main_factor)
+
+    term_mats = {}
+    term_order = []
+
+    term_mats["Блоки"] = mats["BLOCK"]; term_order.append("Блоки")
+    term_mats[f"Фактор {main_factor}"] = mats[main_factor]; term_order.append(f"Фактор {main_factor}")
+    term_mats[f"Блоки×{main_factor} (Error A)"] = block_main; term_order.append(f"Блоки×{main_factor} (Error A)")
+
+    term_error_map = {}
+    for name, flist, which in term_groups:
+        if flist == [main_factor]:
+            continue
+        tname = f"Терм {name}"
+        term_mats[tname] = make_term_matrix(mats, flist)
+        term_order.append(tname)
+        term_error_map[tname] = which
+
+    X, slices = build_X_from_terms(n_rows=n, intercept=True, term_mats=term_mats, term_order=term_order)
+    return y, X, slices, term_order
+
+
 # -------------------------
 # ANOVA builders: CRD / RCBD / Split-plot (FULL)
 # -------------------------
 def anova_crd_full(long, factor_keys, levels_by_factor):
-    # Build levels dict
+    n = len(long)
     factor_levels = {f: levels_by_factor[f] for f in factor_keys}
     y, mats, _ = build_term_matrices(long, factor_levels, include_block=False)
 
-    # Build term matrices
     term_defs = build_terms_crd(factor_keys)
     term_mats = {}
     term_order = []
@@ -1042,7 +1201,7 @@ def anova_crd_full(long, factor_keys, levels_by_factor):
         term_mats[name] = make_term_matrix(mats, flist)
         term_order.append(name)
 
-    X, slices = build_X_from_terms(intercept=True, term_mats=term_mats, term_order=term_order)
+    X, slices = build_X_from_terms(n_rows=n, intercept=True, term_mats=term_mats, term_order=term_order)
     ss_terms, sse, df_e = type3_anova(y, X, slices, term_order)
 
     SS_total = float(np.sum((y - np.mean(y)) ** 2))
@@ -1050,7 +1209,6 @@ def anova_crd_full(long, factor_keys, levels_by_factor):
     MS_error = SS_error / df_e if df_e > 0 else np.nan
 
     rows = []
-    # add each term
     for name in term_order:
         SS, df = ss_terms[name]
         MS = SS / df if df > 0 else np.nan
@@ -1071,7 +1229,7 @@ def anova_crd_full(long, factor_keys, levels_by_factor):
     )
 
 def anova_rcbd_full(long, factor_keys, levels_by_factor):
-    # include BLOCK
+    n = len(long)
     block_levels = levels_by_factor["BLOCK"]
     factor_levels = {"BLOCK": block_levels}
     factor_levels.update({f: levels_by_factor[f] for f in factor_keys})
@@ -1081,15 +1239,13 @@ def anova_rcbd_full(long, factor_keys, levels_by_factor):
 
     term_defs = build_terms_rcbd(factor_keys)
 
-    # Order: BLOCK first, then treatment terms (Type III still ok)
     term_mats = {"Блоки": mats["BLOCK"]}
     term_order = ["Блоки"]
-
     for name, flist in term_defs:
         term_mats[name] = make_term_matrix(mats, flist)
         term_order.append(name)
 
-    X, slices = build_X_from_terms(intercept=True, term_mats=term_mats, term_order=term_order)
+    X, slices = build_X_from_terms(n_rows=n, intercept=True, term_mats=term_mats, term_order=term_order)
     ss_terms, sse, df_e = type3_anova(y, X, slices, term_order)
 
     SS_total = float(np.sum((y - np.mean(y)) ** 2))
@@ -1097,14 +1253,12 @@ def anova_rcbd_full(long, factor_keys, levels_by_factor):
     MS_error = SS_error / df_e if df_e > 0 else np.nan
 
     rows = []
-    # block row
     SSb, dfb = ss_terms["Блоки"]
     MSb = SSb / dfb if dfb > 0 else np.nan
     Fb = MSb / MS_error if MS_error > 0 and dfb > 0 else np.nan
     pb = 1 - f_dist.cdf(Fb, dfb, df_e) if not math.isnan(Fb) else np.nan
     rows.append(("Блоки", SSb, dfb, MSb, Fb, pb, "E"))
 
-    # treatment terms
     for name in term_order[1:]:
         SS, df = ss_terms[name]
         MS = SS / df if df > 0 else np.nan
@@ -1126,57 +1280,40 @@ def anova_rcbd_full(long, factor_keys, levels_by_factor):
     )
 
 def anova_splitplot_full(long, factor_keys, levels_by_factor, main_factor):
-    # Include BLOCK and BLOCK×MAIN, all treatment terms
+    n = len(long)
     block_levels = levels_by_factor["BLOCK"]
     factor_levels = {"BLOCK": block_levels}
     factor_levels.update({f: levels_by_factor[f] for f in factor_keys})
 
     y, mats, block_mat = build_term_matrices(long, factor_levels, include_block=True)
     mats["BLOCK"] = block_mat
-
-    # build BLOCK×MAIN
     block_main = interaction_cols(mats["BLOCK"], mats[main_factor])
 
-    # build treatment term groups with A/B error mapping
-    term_groups, sub_factors = build_terms_splitplot(factor_keys, main_factor)
+    term_groups, _ = build_terms_splitplot(factor_keys, main_factor)
 
-    # term mats in order:
-    # Blocks, Main, Block×Main, then other treatment terms (including interactions)
     term_mats = {}
     term_order = []
 
-    term_mats["Блоки"] = mats["BLOCK"]
-    term_order.append("Блоки")
+    term_mats["Блоки"] = mats["BLOCK"]; term_order.append("Блоки")
+    term_mats[f"Фактор {main_factor}"] = mats[main_factor]; term_order.append(f"Фактор {main_factor}")
+    term_mats[f"Блоки×{main_factor} (Error A)"] = block_main; term_order.append(f"Блоки×{main_factor} (Error A)")
 
-    term_mats[f"Фактор {main_factor}"] = mats[main_factor]
-    term_order.append(f"Фактор {main_factor}")
-
-    term_mats[f"Блоки×{main_factor} (Error A)"] = block_main
-    term_order.append(f"Блоки×{main_factor} (Error A)")
-
-    # Treatment terms (name with factors)
-    term_error_map = {}  # term_name -> "A"/"B"
+    term_error_map = {}
     for name, flist, which in term_groups:
-        # skip main single, already added as "Фактор main"
         if flist == [main_factor]:
             continue
         tname = f"Терм {name}"
         term_mats[tname] = make_term_matrix(mats, flist)
         term_order.append(tname)
-        term_error_map[tname] = which  # "B" for anything with subplot factors
+        term_error_map[tname] = which
 
-    # Build full model matrix
-    X_full, slices = build_X_from_terms(intercept=True, term_mats=term_mats, term_order=term_order)
-
-    # Type III SS for all terms (including Block×Main)
+    X_full, slices = build_X_from_terms(n_rows=n, intercept=True, term_mats=term_mats, term_order=term_order)
     ss_terms, sse_full, df_eB = type3_anova(y, X_full, slices, term_order)
 
-    # Error B:
     SS_error_B = float(sse_full)
     df_error_B = int(df_eB)
     MS_error_B = SS_error_B / df_error_B if df_error_B > 0 else np.nan
 
-    # Error A comes from Block×Main term as a stratum:
     SS_error_A, df_error_A = ss_terms.get(f"Блоки×{main_factor} (Error A)", (np.nan, 0))
     SS_error_A = float(SS_error_A)
     df_error_A = int(df_error_A)
@@ -1185,25 +1322,20 @@ def anova_splitplot_full(long, factor_keys, levels_by_factor, main_factor):
     SS_total = float(np.sum((y - np.mean(y)) ** 2))
 
     rows = []
-
-    # Blocks (tested vs Error A)
     SSb, dfb = ss_terms["Блоки"]
     MSb = SSb / dfb if dfb > 0 else np.nan
     Fb = MSb / MS_error_A if MS_error_A > 0 and dfb > 0 else np.nan
     pb = 1 - f_dist.cdf(Fb, dfb, df_error_A) if not math.isnan(Fb) else np.nan
     rows.append(("Блоки", SSb, dfb, MSb, Fb, pb, "A"))
 
-    # Main factor (tested vs Error A)
     SSm, dfm = ss_terms[f"Фактор {main_factor}"]
     MSm = SSm / dfm if dfm > 0 else np.nan
     Fm = MSm / MS_error_A if MS_error_A > 0 and dfm > 0 else np.nan
     pm = 1 - f_dist.cdf(Fm, dfm, df_error_A) if not math.isnan(Fm) else np.nan
     rows.append((f"Фактор {main_factor}", SSm, dfm, MSm, Fm, pm, "A"))
 
-    # Error A row
     rows.append((f"Блоки×{main_factor} (Error A)", SS_error_A, df_error_A, MS_error_A, None, None, None))
 
-    # Subplot terms (and interactions incl with main) tested vs Error B
     for tname in term_order:
         if tname in ("Блоки", f"Фактор {main_factor}", f"Блоки×{main_factor} (Error A)"):
             continue
@@ -1213,7 +1345,6 @@ def anova_splitplot_full(long, factor_keys, levels_by_factor, main_factor):
         p = 1 - f_dist.cdf(F, df, df_error_B) if not math.isnan(F) else np.nan
         rows.append((tname.replace("Терм ", ""), SS, df, MS, F, p, "B"))
 
-    # Error B row
     rows.append(("Залишок (Error B)", SS_error_B, df_error_B, MS_error_B, None, None, None))
     rows.append(("Загальна", SS_total, int(len(y) - 1), None, None, None, None))
 
@@ -1231,28 +1362,10 @@ def anova_splitplot_full(long, factor_keys, levels_by_factor, main_factor):
         ss_by_term=ss_terms
     )
 
+
 # -------------------------
-# Effect sizes: percent SS and partial eta^2
+# Effect sizes
 # -------------------------
-def effect_size_tables(anova_rows, SS_total, SS_error_for_partial, df_error_for_partial):
-    # Returns:
-    # 1) %SS table (excluding total)
-    # 2) partial eta^2 table for tested terms (exclude error/total)
-    pct_rows = []
-    eta_rows = []
-
-    for name, SS, df, MS, F, p, strata in anova_rows:
-        if name.startswith("Залишок") or name.startswith("Загальна") or "Error" in name and ("Блоки×" in name):
-            continue
-        if SS is None or math.isnan(float(SS)):
-            continue
-        pct_rows.append([name, fmt_num(100.0 * float(SS) / float(SS_total), 2)])
-
-    # partial eta^2 = SS_term / (SS_term + SS_error_stratum)
-    # Here caller should pass correct SS_error for that term's stratum.
-    # For split-plot we compute per term in the report (A uses ErrorA, B uses ErrorB).
-    return pct_rows, eta_rows
-
 def partial_eta2(SS_term, SS_error):
     try:
         SS_term = float(SS_term)
@@ -1263,6 +1376,7 @@ def partial_eta2(SS_term, SS_error):
         return float(SS_term / denom)
     except Exception:
         return np.nan
+
 
 # -------------------------
 # LSD helpers
@@ -1287,6 +1401,7 @@ def lsd_value(alpha, df, ms_error, n_eff):
         return float(tcrit * math.sqrt(2.0 * float(ms_error) / float(n_eff)))
     except Exception:
         return np.nan
+
 
 # -------------------------
 # Nonparametric pairwise + effects
@@ -1350,14 +1465,15 @@ def pairwise_mw_bonf_with_effect(names, groups1, alpha=0.05):
                 rows.append([f"{names[i]}  vs  {names[j]}", "", "", "", "-", "", ""])
     return rows, sig
 
+
 # -------------------------
-# CLD letters (deterministic) for factor-level letters (NOT for splitplot variants)
+# CLD letters (deterministic)
 # -------------------------
 def cld_multi_letters(names, center_values, sig_matrix):
     order = sorted(names, key=lambda n: (-(center_values.get(n, -1e18) if center_values.get(n) is not None else -1e18), str(n)))
     letters = {}
     alphabet = list("abcdefghijklmnopqrstuvwxyz")
-    groups_for_letter = []  # list of sets
+    groups_for_letter = []
 
     for g in order:
         placed = False
@@ -1377,6 +1493,20 @@ def cld_multi_letters(names, center_values, sig_matrix):
             letters[g] = letters.get(g, "") + alphabet[li]
     return letters
 
+
+# -------------------------
+# Parametric posthoc: LSD / Bonferroni / Tukey-Kramer / Duncan
+# -------------------------
+def means_ns_from_groups(names, groups1):
+    means = {}
+    ns = {}
+    for n in names:
+        a = np.array(groups1.get(n, []), dtype=float)
+        a = a[~np.isnan(a)]
+        ns[n] = int(len(a))
+        means[n] = float(np.mean(a)) if len(a) else np.nan
+    return means, ns
+
 def lsd_sig_matrix(names, means, ns, ms_error, df_error, alpha=0.05):
     sig = {}
     tcrit = t_crit(alpha, df_error)
@@ -1392,8 +1522,210 @@ def lsd_sig_matrix(names, means, ns, ms_error, df_error, alpha=0.05):
             sig[(names[i], names[j])] = (abs(means[names[i]] - means[names[j]]) > lsd)
     return sig
 
+def pairwise_bonferroni_t(names, groups1, ms_error, df_error, alpha=0.05):
+    rows = []
+    sig = {}
+    m = len(names)
+    if m < 2:
+        return rows, sig
+    mtests = m * (m - 1) // 2
+    means, ns = means_ns_from_groups(names, groups1)
+
+    for i in range(m):
+        for j in range(i + 1, m):
+            a = names[i]; b = names[j]
+            ni = ns[a]; nj = ns[b]
+            if ni <= 0 or nj <= 0 or math.isnan(means[a]) or math.isnan(means[b]):
+                sig[(a, b)] = False
+                rows.append([f"{a} vs {b}", "", "", "", "-", ""])
+                continue
+            se = math.sqrt(ms_error * (1.0/ni + 1.0/nj))
+            tval = abs(means[a] - means[b]) / se if se > 0 else np.nan
+            try:
+                p = 2.0 * (1.0 - t_dist.cdf(tval, df_error))
+            except Exception:
+                p = np.nan
+            p_adj = min(1.0, p * mtests) if not math.isnan(p) else np.nan
+            is_sig = (p_adj < alpha) if not math.isnan(p_adj) else False
+            sig[(a, b)] = is_sig
+            rows.append([
+                f"{a}  vs  {b}",
+                fmt_num(means[a] - means[b], 4),
+                fmt_num(se, 4),
+                fmt_num(tval, 4),
+                fmt_num(p_adj, 4),
+                ("*" if is_sig else "-"),
+            ])
+    return rows, sig
+
+def pairwise_tukey_kramer(names, groups1, ms_error, df_error, alpha=0.05):
+    rows = []
+    sig = {}
+    if studentized_range is None:
+        # SciPy too old
+        for i in range(len(names)):
+            for j in range(i+1, len(names)):
+                sig[(names[i], names[j])] = False
+                rows.append([f"{names[i]}  vs  {names[j]}", "", "", "", "", ""])
+        return rows, sig
+
+    means, ns = means_ns_from_groups(names, groups1)
+    k = len(names)
+
+    for i in range(k):
+        for j in range(i + 1, k):
+            a = names[i]; b = names[j]
+            ni = ns[a]; nj = ns[b]
+            if ni <= 0 or nj <= 0 or math.isnan(means[a]) or math.isnan(means[b]):
+                sig[(a, b)] = False
+                rows.append([f"{a}  vs  {b}", "", "", "", "", ""])
+                continue
+            se = math.sqrt(ms_error / 2.0 * (1.0/ni + 1.0/nj))
+            q = abs(means[a] - means[b]) / se if se > 0 else np.nan
+            try:
+                p = 1.0 - studentized_range.cdf(q, k, df_error)
+            except Exception:
+                p = np.nan
+            is_sig = (p < alpha) if not math.isnan(p) else False
+            sig[(a, b)] = is_sig
+            rows.append([
+                f"{a}  vs  {b}",
+                fmt_num(means[a] - means[b], 4),
+                fmt_num(se, 4),
+                fmt_num(q, 4),
+                fmt_num(p, 4),
+                ("*" if is_sig else "-"),
+            ])
+    return rows, sig
+
+def duncan_alpha_for_range(alpha, r):
+    # Duncan: alpha_r = 1 - (1 - alpha)^(r - 1)
+    try:
+        return 1.0 - (1.0 - alpha) ** (r - 1)
+    except Exception:
+        return alpha
+
+def duncan_sig_matrix(names, groups1, ms_error, df_error, alpha=0.05):
+    """
+    Повертає sig_matrix для Duncan MRT на основі відсортованих середніх.
+    Для пари (i,j) використовується r = j-i+1, alpha_r, qcrit(r, df), Tukey-Kramer SE.
+    """
+    sig = {}
+    if studentized_range is None:
+        for i in range(len(names)):
+            for j in range(i+1, len(names)):
+                sig[(names[i], names[j])] = False
+        return sig
+
+    means, ns = means_ns_from_groups(names, groups1)
+    # відсортувати за спаданням середнього
+    order = sorted(names, key=lambda n: (-(means.get(n, -1e18) if means.get(n) is not None else -1e18), str(n)))
+
+    # попередньо — ініціалізація false
+    for i in range(len(order)):
+        for j in range(i+1, len(order)):
+            sig[(order[i], order[j])] = False
+
+    k = len(order)
+    for i in range(k):
+        for j in range(i+1, k):
+            a = order[i]; b = order[j]
+            ni = ns[a]; nj = ns[b]
+            if ni <= 0 or nj <= 0 or math.isnan(means[a]) or math.isnan(means[b]):
+                sig[(a, b)] = False
+                continue
+            r = (j - i + 1)
+            alpha_r = duncan_alpha_for_range(alpha, r)
+            try:
+                qcrit = studentized_range.ppf(1.0 - alpha_r, r, df_error)
+            except Exception:
+                qcrit = np.nan
+            se = math.sqrt(ms_error / 2.0 * (1.0/ni + 1.0/nj))
+            crit_range = qcrit * se
+            sig[(a, b)] = (abs(means[a] - means[b]) > crit_range) if (not math.isnan(crit_range)) else False
+    return sig, order
+
+def pairwise_duncan(names, groups1, ms_error, df_error, alpha=0.05):
+    rows = []
+    if studentized_range is None:
+        sig = {}
+        for i in range(len(names)):
+            for j in range(i+1, len(names)):
+                sig[(names[i], names[j])] = False
+                rows.append([f"{names[i]}  vs  {names[j]}", "", "", "", "", ""])
+        return rows, sig
+
+    means, ns = means_ns_from_groups(names, groups1)
+    sig, order = duncan_sig_matrix(names, groups1, ms_error, df_error, alpha=alpha)
+
+    # у таблицю виводимо в алфавітному порядку для стабільності
+    names_sorted = list(names)
+    for i in range(len(names_sorted)):
+        for j in range(i+1, len(names_sorted)):
+            a = names_sorted[i]; b = names_sorted[j]
+            ni = ns[a]; nj = ns[b]
+            if ni <= 0 or nj <= 0 or math.isnan(means[a]) or math.isnan(means[b]):
+                rows.append([f"{a}  vs  {b}", "", "", "", "", ""])
+                continue
+            # r як відстань у відсортованому за середніми списку
+            ia = order.index(a); ib = order.index(b)
+            i0, j0 = (ia, ib) if ia < ib else (ib, ia)
+            r = (j0 - i0 + 1)
+            alpha_r = duncan_alpha_for_range(alpha, r)
+            try:
+                qcrit = studentized_range.ppf(1.0 - alpha_r, r, df_error)
+            except Exception:
+                qcrit = np.nan
+            se = math.sqrt(ms_error / 2.0 * (1.0/ni + 1.0/nj))
+            crit_range = qcrit * se
+            is_sig = sig.get((a, b), sig.get((b, a), False))
+            rows.append([
+                f"{a}  vs  {b}",
+                fmt_num(means[a] - means[b], 4),
+                fmt_num(se, 4),
+                f"r={r}",
+                fmt_num(alpha_r, 4),
+                ("*" if is_sig else "-"),
+            ])
+    return rows, sig
+
+
+def posthoc_for_labels(method, names, groups1, ms_error, df_error, alpha=0.05):
+    """
+    Єдина точка входу: повертає
+      rows (таблиця парних), sig_matrix (для CLD), headers (для звіту), note (якщо треба)
+    """
+    if method == "lsd":
+        means, ns = means_ns_from_groups(names, groups1)
+        sig = lsd_sig_matrix(names, means, ns, ms_error, df_error, alpha=alpha)
+        return [], sig, None, None
+
+    if method == "bonferroni":
+        rows, sig = pairwise_bonferroni_t(names, groups1, ms_error, df_error, alpha=alpha)
+        headers = ["Комбінація", "Δ (A−B)", "SE", "t", "p(Bonf.)", "Істотна"]
+        return rows, sig, headers, None
+
+    if method == "tukey":
+        rows, sig = pairwise_tukey_kramer(names, groups1, ms_error, df_error, alpha=alpha)
+        headers = ["Комбінація", "Δ (A−B)", "SE", "q", "p", "Істотна"]
+        note = None
+        if studentized_range is None:
+            note = "Примітка: у цій версії SciPy відсутній studentized_range; Tukey не може бути обчислений коректно."
+        return rows, sig, headers, note
+
+    if method == "duncan":
+        rows, sig = pairwise_duncan(names, groups1, ms_error, df_error, alpha=alpha)
+        headers = ["Комбінація", "Δ (A−B)", "SE", "Діапазон", "α_r", "Істотна"]
+        note = None
+        if studentized_range is None:
+            note = "Примітка: у цій версії SciPy відсутній studentized_range; Duncan не може бути обчислений коректно."
+        return rows, sig, headers, note
+
+    return [], {}, None, None
+
+
 # -------------------------
-# Plot: factor-block boxplot (as you required)
+# Plot: factor-block boxplot
 # -------------------------
 from matplotlib.figure import Figure
 from PIL import Image
@@ -1440,23 +1772,18 @@ def build_factor_block_boxplot_png(long, factor_keys, levels_by_factor, letters_
     ax.set_xticklabels(labels, rotation=0, fontsize=9)
     ax.set_ylabel(f"{indicator}, {units}")
 
-    # помірна сітка
     ax.grid(True, axis="y", linestyle="--", linewidth=0.6, alpha=0.6)
-
     ax.set_title("")
 
-    # місце під підписи факторів
     y_min, y_max = ax.get_ylim()
     y_text = y_min - (y_max - y_min) * 0.14
     ax.set_ylim(y_text, y_max)
 
-    # підписи блоків факторів
     for (start, end, f) in factor_block_ranges:
         mid = (start + end) / 2.0
         ax.text(mid, y_min - (y_max - y_min) * 0.09, f"Фактор {f}", ha="center", va="top", fontsize=10)
         ax.axvline(end + 0.5, linewidth=0.6, alpha=0.6)
 
-    # літери над верхнім "вусом"
     whiskers = bp["whiskers"]
     fl_list = []
     for f in factor_keys:
@@ -1488,6 +1815,7 @@ def build_factor_block_boxplot_png(long, factor_keys, levels_by_factor, letters_
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     return out_path
+
 
 def show_plot_window(self, plot_png_path: str, factor_plot_meta: dict):
     if self.plot_win and tk.Toplevel.winfo_exists(self.plot_win):
@@ -1527,8 +1855,8 @@ def show_plot_window(self, plot_png_path: str, factor_plot_meta: dict):
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
 
-    # Кнопка "копіювати графік" — ВИДАЛЕНО
     tk.Button(top, text="Зберегти графік (PNG)", command=save_png).pack(side=tk.LEFT, padx=4)
+
 
 # -------------------------
 # Main analyze() — FULL
@@ -1559,25 +1887,13 @@ def analyze(self):
         messagebox.showinfo("Результат", "Надто мало даних для аналізу.")
         return
 
-    # residuals for Shapiro: fit saturated cell means by OLS on all factor interactions (CRD-style),
-    # using effect coding. This is correct for checking residual normality of treatment structure.
+    # --- Design-aware residuals for Shapiro ---
     try:
-        # build full CRD model for residuals (intercept + all terms)
-        tmp = anova_crd_full(long, self.factor_keys, levels_by_factor)
-        # For residuals, we need actual residual vector: refit and compute
-        # reconstruct full design matrix for CRD:
-        factor_levels = {f: levels_by_factor[f] for f in self.factor_keys}
-        y, mats, _ = build_term_matrices(long, factor_levels, include_block=False)
-        term_defs = build_terms_crd(self.factor_keys)
-        term_mats = {}
-        term_order = []
-        for name, flist in term_defs:
-            term_mats[name] = make_term_matrix(mats, flist)
-            term_order.append(name)
-        X, _ = build_X_from_terms(intercept=True, term_mats=term_mats, term_order=term_order)
-        yv = y.reshape(-1, 1)
-        beta, _, _, _ = np.linalg.lstsq(X, yv, rcond=None)
-        resid = (yv - X @ beta).flatten()
+        if design == "Split-plot" and (not main_factor):
+            main_factor = self.factor_keys[0]
+
+        y_sh, X_sh, _, _ = build_design_X(long, self.factor_keys, levels_by_factor, design, main_factor=main_factor)
+        _, resid, _, _, _ = ols_fit(y_sh, X_sh)
         if len(resid) >= 3:
             W, p_norm = shapiro(resid)
         else:
@@ -1605,7 +1921,7 @@ def analyze(self):
     if not nonparam:
         bf_F, bf_p = brown_forsythe_from_groups(groups1)
 
-    # Build model (FULL, no simplifications)
+    # Build model
     model = None
     split_meta = None
 
@@ -1618,7 +1934,11 @@ def analyze(self):
             if not main_factor:
                 main_factor = self.factor_keys[0]
             model = anova_splitplot_full(long, self.factor_keys, levels_by_factor, main_factor)
-            split_meta = {"main_factor": model["main_factor"], "df_error_main": model["df_error_main"], "df_error_sub": model["df_error_sub"]}
+            split_meta = {
+                "main_factor": model["main_factor"],
+                "df_error_main": model["df_error_main"],
+                "df_error_sub": model["df_error_sub"]
+            }
 
     # -------- Nonparametrics (expanded) --------
     kw_H = kw_p = kw_df = kw_eps2 = np.nan
@@ -1643,23 +1963,34 @@ def analyze(self):
         if method == "mw":
             pairwise_rows, _ = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
 
-    # -------- Factor means for letters and LSD tables --------
-    # Means per factor level:
+    # -------- Factor groups --------
     factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
     factor_means = {f: {lvl: float(np.mean(np.array(arr, dtype=float))) if len(arr) else np.nan
                         for lvl, arr in factor_groups[f].items()}
                     for f in self.factor_keys}
     factor_ns = {f: {lvl: int(len(arr)) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
 
-    # Letters per factor (only for LSD, and correct error stratum for split-plot)
+    # -------- Letters: factors (ALL parametric methods) --------
     letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
-    if (not nonparam) and method == "lsd":
+
+    # -------- Letters: variants (parametric; CRD/RCBD only) --------
+    letters_variants = {name: "" for name in v_names}
+
+    # For parametric posthoc we need a sig_matrix per comparison set
+    posthoc_note = None
+    posthoc_variant_rows = []
+    posthoc_variant_headers = None
+
+    if (not nonparam):
+        # Factor-level letters:
         for f in self.factor_keys:
             lvls = levels_by_factor[f]
-            means_f = {str(lvl): factor_means[f].get(lvl, np.nan) for lvl in lvls}
-            ns_f = {str(lvl): factor_ns[f].get(lvl, 0) for lvl in lvls}
-            lvls_str = [str(lvl) for lvl in lvls]
+            lvl_names = [str(x) for x in lvls]
 
+            # build groups dict by factor level with string keys
+            groups_f = {str(lvl): factor_groups[f].get(lvl, []) for lvl in lvls}
+
+            # choose correct error stratum
             if design == "Split-plot":
                 if f == model["main_factor"]:
                     MS_e, df_e = model["MS_error_main"], model["df_error_main"]
@@ -1668,20 +1999,31 @@ def analyze(self):
             else:
                 MS_e, df_e = model["MS_error"], model["df_error"]
 
-            sig = lsd_sig_matrix(lvls_str, means_f, ns_f, MS_e, df_e, alpha=ALPHA)
-            letters_map = cld_multi_letters(lvls_str, means_f, sig)
+            rows_tmp, sig_tmp, headers_tmp, note_tmp = posthoc_for_labels(method, lvl_names, groups_f, MS_e, df_e, alpha=ALPHA)
+            # rows_tmp для факторів ми не виводимо (щоб не роздувати звіт), але літери ставимо:
+            means_tmp, _ = means_ns_from_groups(lvl_names, groups_f)
+            letters_map = cld_multi_letters(lvl_names, means_tmp, sig_tmp)
             for lvl in lvls:
                 letters_factor[f][lvl] = letters_map.get(str(lvl), "")
 
-    # Split-plot: букви істотності по варіантах НЕ подаємо
-    # (методично), тому в таблиці варіантів завжди "-"
-    # ------------------------------------------------------
+        # Variant letters + pairwise table (only CRD/RCBD; split-plot variants no letters)
+        if design != "Split-plot":
+            MS_e, df_e = model["MS_error"], model["df_error"]
+            posthoc_variant_rows, sig_var, posthoc_variant_headers, posthoc_note = posthoc_for_labels(
+                method, v_names, groups1, MS_e, df_e, alpha=ALPHA
+            )
+            # For LSD: sig matrix exists, but rows table is empty by design
+            means_v, _ = means_ns_from_groups(v_names, groups1)
+            letters_map_v = cld_multi_letters(v_names, means_v, sig_var)
+            for n in v_names:
+                letters_variants[n] = letters_map_v.get(n, "")
+        # else: split-plot variants letters remain empty -> will print "-"
 
     # =========================
     # REPORT segments
     # =========================
     seg = []
-    seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
+    seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н Л І З У   Д А Н И Х\n\n".replace("А Н Л", "А Н А Л")))
     seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n"))
     seg.append(("text", f"Дизайн експерименту:\t{design}\n"))
     if design == "Split-plot":
@@ -1694,10 +2036,10 @@ def analyze(self):
                 f"Загальна кількість облікових значень:\t{len(long)}\n\n"))
 
     method_label = {
-        "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA (Type III) + НІР₀₅ (LSD).",
-        "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA (Type III) + тест Тьюкі.",
-        "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA (Type III) + тест Дункана.",
-        "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA (Type III) + корекція Бонферроні.",
+        "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA (Type III) + НІР₀₅ (LSD) + CLD.",
+        "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA (Type III) + Tukey (Tukey–Kramer) + CLD.",
+        "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA (Type III) + Duncan MRT + CLD.",
+        "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA (Type III) + парні t-тести + Bonferroni + CLD.",
         "kw": "Непараметричний аналіз: Kruskal–Wallis + (за потреби) парні Mann–Whitney з Bonferroni + ефект.",
         "mw": "Непараметричний аналіз: Mann–Whitney (парні порівняння) + Bonferroni + ефект.",
     }.get(method, "")
@@ -1742,7 +2084,7 @@ def analyze(self):
                               "extra_gap_px": 60}))
         seg.append(("text", "\n"))
 
-        # ---------- Effect sizes (percent SS + partial eta2 by correct stratum) ----------
+        # ---------- Effect sizes ----------
         SS_total = model["SS_total"]
 
         pct_rows = []
@@ -1754,7 +2096,6 @@ def analyze(self):
                 continue
             pct_rows.append([name, fmt_num(100.0 * float(SSv) / float(SS_total), 2)])
 
-            # partial eta2 depends on stratum:
             if design == "Split-plot":
                 if strata == "A":
                     eta = partial_eta2(SSv, model["SS_error_main"])
@@ -1819,7 +2160,6 @@ def analyze(self):
                     lsd = lsd_value(ALPHA, df_e, MS_e, n_eff) if not math.isnan(n_eff) else np.nan
                     lsd_rows.append([f"Фактор {f}", fmt_num(MS_e, 4), str(int(df_e)), fmt_num(n_eff, 2), fmt_num(lsd, 4)])
 
-                # overall (variants): by Error B
                 ns_v = [len(groups1[name]) for name in v_names]
                 n_eff_v = harmonic_mean(ns_v)
                 lsd_v = lsd_value(ALPHA, model["df_error_sub"], model["MS_error_sub"], n_eff_v) if not math.isnan(n_eff_v) else np.nan
@@ -1842,7 +2182,7 @@ def analyze(self):
             seg.append(("table", {"headers": ["Елемент", "MS_error", "df_error", "n_eff", "НІР₀₅"], "rows": lsd_rows}))
             seg.append(("text", "\n"))
 
-        # ---------- Means per factor (letters for LSD) ----------
+        # ---------- Means per factor (letters for ALL parametric) ----------
         tno = 7
         for f in self.factor_keys:
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
@@ -1855,7 +2195,7 @@ def analyze(self):
             seg.append(("text", "\n"))
             tno += 1
 
-        # ---------- Variants mean±sd table (split-plot: letters '-') ----------
+        # ---------- Variants mean±sd table (letters for CRD/RCBD; split-plot '-') ----------
         seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
         rows_v = []
         for i, k in enumerate(variant_order):
@@ -1864,18 +2204,37 @@ def analyze(self):
             arr = arr[~np.isnan(arr)]
             m = float(np.mean(arr)) if len(arr) else np.nan
             sd = float(np.std(arr, ddof=1)) if len(arr) > 1 else (0.0 if len(arr) == 1 else np.nan)
-            rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), "-"])
+
+            if design == "Split-plot":
+                letter = "-"
+            else:
+                letter = letters_variants.get(name, "")
+                if not letter:
+                    letter = "-"
+            rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), letter])
+
         seg.append(("table", {"headers": ["Варіант", "Середнє", "± SD", "Істотна різниця"],
                               "rows": rows_v,
                               "padding_px": 32,
                               "extra_gap_after_col": 0,
                               "extra_gap_px": 80}))
         seg.append(("text", "\n"))
+        tno += 1
 
         if design == "Split-plot":
             seg.append(("text", "Примітка (Split-plot): буквені позначення істотності по варіантах у звіті не подаються методично.\n\n"))
+        else:
+            # ---------- Pairwise table for Tukey/Duncan/Bonferroni (LSD optional) ----------
+            if method in ("tukey", "duncan", "bonferroni"):
+                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння між варіантами ({method.upper()})\n"))
+                if posthoc_note:
+                    seg.append(("text", posthoc_note + "\n\n"))
+                seg.append(("table", {"headers": posthoc_variant_headers, "rows": posthoc_variant_rows,
+                                      "padding_px": 32, "extra_gap_after_col": 0, "extra_gap_px": 80}))
+                seg.append(("text", "\n"))
+                tno += 1
 
-    # ---------- NONPARAMETRIC (expanded, not simplified) ----------
+    # ---------- NONPARAMETRIC (expanded) ----------
     if nonparam:
         seg.append(("text", "НЕПАРАМЕТРИЧНИЙ ЗВІТ\n\n"))
 
@@ -1916,18 +2275,19 @@ def analyze(self):
 
         seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
 
-        # plot too (same)
         plot_png = build_factor_block_boxplot_png(long, self.factor_keys, levels_by_factor, letters_factor, indicator, units)
         self.show_report_segments(seg, plot_png_path=plot_png, plot_meta={"design": design, "split": split_meta})
         return
 
-    # -------- Parametric: build plot and show report --------
+    # -------- Parametric: plot and show report --------
     plot_png = build_factor_block_boxplot_png(long, self.factor_keys, levels_by_factor, letters_factor, indicator, units)
     seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
     self.show_report_segments(seg, plot_png_path=plot_png, plot_meta={"design": design, "split": split_meta})
 
+
 # -------------------------
-# Bind patched methods into class (so PART 1 stays unchanged)
+# Bind patched methods into class
 # -------------------------
 SADTk.analyze = analyze
 SADTk.show_plot_window = show_plot_window
+
