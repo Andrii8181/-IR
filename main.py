@@ -4,44 +4,32 @@
 """
 S.A.D. — Статистичний аналіз даних (Tkinter)
 
-Потрібно: Python 3.8+, numpy, scipy, matplotlib
-Встановлення: pip install numpy scipy matplotlib
+Потрібно: Python 3.8+, numpy, scipy
+Встановлення: pip install numpy scipy
 
 Останні правки:
-✅ Заголовок звіту: «ЗВІТ СТАТИСТИЧНОГО АНАЛІЗУ ДАНИХ».
-✅ Прибрано фразу про інтерпретацію непараметричних тестів через ранги.
-✅ Пояснення позначень (**/*/літери/"-") перенесено одразу після рядка «Виконуваний статистичний аналіз».
-✅ Іконка icon.ico: пошук у корені програми (папка скрипта), cwd, папка запуску (argv0), папка exe (sys.executable),
-   підтримка PyInstaller (_MEIPASS). Ставимо iconbitmap для всіх вікон.
-✅ ОБОВ’ЯЗКОВИЙ додатковий матеріал: boxplot генерується як PNG для всіх типів звітів
-   і зберігається кнопкою «Зберегти boxplot (PNG)…» у вікні «Звіт».
+✅ Додано вибір типу дизайну: CRD або Split-plot (2 фактори).
+✅ У вікні параметрів звіту тепер обов'язково: показник, одиниці, тип дизайну.
+✅ Для Split-plot обов'язково обираються Main-plot фактор та Sub-plot фактор.
+✅ У звіті Split-plot ANOVA: A тестується на Error(A)=Rep×A, B та A×B — на Error(B).
 """
 
 import os
 import sys
-import math
-import tempfile
-from itertools import combinations
-from collections import defaultdict
-from datetime import datetime
-from typing import Union
-
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 import tkinter.font as tkfont
 
+import math
 import numpy as np
+from itertools import combinations
+from collections import defaultdict
+from datetime import datetime
 
 from scipy.stats import shapiro, t, f as f_dist
 from scipy.stats import mannwhitneyu, kruskal, levene, rankdata
 from scipy.stats import studentized_range
-
-# matplotlib — для PNG графіка
-import matplotlib
-matplotlib.use("Agg")  # стабільно працює і у зібраному .exe
-import matplotlib.pyplot as plt
-
 
 ALPHA = 0.05
 COL_W = 10
@@ -67,13 +55,11 @@ except Exception:
 # ICON (robust search)
 # -------------------------
 def _script_dir():
-    # 1) PyInstaller temp dir
     try:
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
             return sys._MEIPASS
     except Exception:
         pass
-    # 2) normal script dir
     try:
         return os.path.dirname(os.path.abspath(__file__))
     except Exception:
@@ -98,33 +84,22 @@ def _argv0_dir():
 
 
 def _find_icon_file():
-    """
-    Шукаємо icon.ico у:
-    - папці скрипта (корінь програми)
-    - поточній папці запуску (cwd)
-    - папці sys.argv[0]
-    - папці sys.executable (для зібраних exe)
-    - _MEIPASS (PyInstaller)
-    """
     candidates = []
-
     for base in [_script_dir(), os.getcwd(), _argv0_dir(), _exe_dir()]:
         if base:
             candidates.append(os.path.join(base, "icon.ico"))
-
     try:
         if hasattr(sys, "_MEIPASS"):
             candidates.append(os.path.join(sys._MEIPASS, "icon.ico"))
     except Exception:
         pass
-
     for p in candidates:
         if p and os.path.exists(p):
             return p
     return None
 
 
-def set_window_icon(win: Union[tk.Tk, tk.Toplevel]):
+def set_window_icon(win: tk.Tk | tk.Toplevel):
     ico = _find_icon_file()
     if not ico:
         return
@@ -256,7 +231,6 @@ def cliffs_delta(x, y):
     nx, ny = len(x), len(y)
     if nx == 0 or ny == 0:
         return np.nan
-
     gt = 0
     lt = 0
     for xi in x:
@@ -410,48 +384,6 @@ def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9
     return f
 
 
-def make_boxplot_png(groups_dict, title, ylabel, out_path, max_groups=40):
-    """
-    Створює boxplot у PNG (обов'язковий додатковий матеріал).
-    groups_dict: {label: [values]}
-    max_groups: якщо груп дуже багато — обрізаємо до перших max_groups (щоб графік був читабельний)
-    """
-    items = [(k, v) for k, v in groups_dict.items() if v and len(v) > 0]
-    if not items:
-        return False, "Немає даних для boxplot."
-
-    if len(items) > max_groups:
-        items = items[:max_groups]
-        title = f"{title} (перші {max_groups})"
-
-    labels = [k for k, _ in items]
-    data = [np.array(v, dtype=float) for _, v in items]
-
-    cleaned = []
-    cleaned_labels = []
-    for lab, arr in zip(labels, data):
-        arr = arr[~np.isnan(arr)]
-        if len(arr) > 0:
-            cleaned.append(arr)
-            cleaned_labels.append(lab)
-
-    if not cleaned:
-        return False, "Усі значення порожні/NaN для boxplot."
-
-    fig = plt.figure(figsize=(max(10, len(cleaned_labels) * 0.45), 6))
-    ax = fig.add_subplot(111)
-    ax.boxplot(cleaned, labels=cleaned_labels, showmeans=True)
-
-    ax.set_title(title)
-    ax.set_ylabel(ylabel)
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
-    return True, ""
-
-
 # -------------------------
 # REPORT TABLES (tabs)
 # -------------------------
@@ -495,7 +427,7 @@ def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extr
 
 
 # -------------------------
-# ANOVA 1–4
+# ANOVA 1–4 (CRD)
 # -------------------------
 def anova_n_way(long, factors, levels_by_factor):
     N = len(long)
@@ -615,6 +547,167 @@ def anova_n_way(long, factors, levels_by_factor):
         "NIR05": NIR05,
         "SS_total": SS_total,
         "SS_error": SS_error,
+        "grand_mean": grand_mean
+    }
+
+
+# -------------------------
+# Split-plot ANOVA (2 factors only): Rep blocks, A = main plot, B = subplot
+# -------------------------
+def _weighted_ss_from_means(counts_dict, means_dict, grand_mean):
+    ss = 0.0
+    for k, n in counts_dict.items():
+        m = means_dict.get(k, np.nan)
+        if n and n > 0 and (m is not None) and (not (isinstance(m, float) and math.isnan(m))):
+            ss += n * (float(m) - float(grand_mean)) ** 2
+    return float(ss)
+
+
+def anova_splitplot_2f(long, rep_key, A_key, B_key, levels_by_factor):
+    # group means & counts
+    vals = np.array([r["value"] for r in long], dtype=float)
+    grand = float(np.nanmean(vals))
+    SS_total = float(np.nansum((vals - grand) ** 2))
+    df_total = int(len(vals) - 1)
+
+    # levels
+    reps = first_seen_order([r.get(rep_key) for r in long])
+    A_lvls = levels_by_factor[A_key]
+    B_lvls = levels_by_factor[B_key]
+    r = len(reps)
+    a = len(A_lvls)
+    b = len(B_lvls)
+    if r < 2 or a < 2 or b < 2:
+        raise ValueError("Split-plot потребує: Rep ≥ 2, рівнів A ≥ 2, рівнів B ≥ 2.")
+
+    # marginals
+    rep_stats = subset_stats(long, (rep_key,))
+    A_stats = subset_stats(long, (A_key,))
+    B_stats = subset_stats(long, (B_key,))
+    repA_stats = subset_stats(long, (rep_key, A_key))
+    AB_stats = subset_stats(long, (A_key, B_key))
+    repAB_stats = subset_stats(long, (rep_key, A_key, B_key))
+
+    rep_means = {k[0]: v[0] for k, v in rep_stats.items()}
+    rep_counts = {k[0]: v[1] for k, v in rep_stats.items()}
+
+    A_means = {k[0]: v[0] for k, v in A_stats.items()}
+    A_counts = {k[0]: v[1] for k, v in A_stats.items()}
+
+    B_means = {k[0]: v[0] for k, v in B_stats.items()}
+    B_counts = {k[0]: v[1] for k, v in B_stats.items()}
+
+    repA_means = { (k[0], k[1]): v[0] for k, v in repA_stats.items()}
+    repA_counts = { (k[0], k[1]): v[1] for k, v in repA_stats.items()}
+
+    AB_means = { (k[0], k[1]): v[0] for k, v in AB_stats.items()}
+    AB_counts = { (k[0], k[1]): v[1] for k, v in AB_stats.items()}
+
+    repAB_means = { (k[0], k[1], k[2]): v[0] for k, v in repAB_stats.items()}
+    repAB_counts = { (k[0], k[1], k[2]): v[1] for k, v in repAB_stats.items()}
+
+    # SS for blocks, A, B
+    SS_rep = _weighted_ss_from_means(rep_counts, rep_means, grand)
+    SS_A = _weighted_ss_from_means(A_counts, A_means, grand)
+    SS_B = _weighted_ss_from_means(B_counts, B_means, grand)
+
+    # SS for Rep×A (Error A)
+    SS_repA = 0.0
+    for (rep, a_lvl), n in repA_counts.items():
+        m_ra = repA_means.get((rep, a_lvl), np.nan)
+        m_r = rep_means.get(rep, np.nan)
+        m_a = A_means.get(a_lvl, np.nan)
+        if n <= 0 or any(isinstance(x, float) and math.isnan(x) for x in [m_ra, m_r, m_a]):
+            continue
+        term = float(m_ra) - float(m_r) - float(m_a) + grand
+        SS_repA += n * (term ** 2)
+    SS_repA = float(SS_repA)
+
+    # SS for A×B
+    SS_AB = 0.0
+    for (a_lvl, b_lvl), n in AB_counts.items():
+        m_ab = AB_means.get((a_lvl, b_lvl), np.nan)
+        m_a = A_means.get(a_lvl, np.nan)
+        m_b = B_means.get(b_lvl, np.nan)
+        if n <= 0 or any(isinstance(x, float) and math.isnan(x) for x in [m_ab, m_a, m_b]):
+            continue
+        term = float(m_ab) - float(m_a) - float(m_b) + grand
+        SS_AB += n * (term ** 2)
+    SS_AB = float(SS_AB)
+
+    # Error(B) = remainder
+    SS_errorB = SS_total - (SS_rep + SS_A + SS_repA + SS_B + SS_AB)
+    SS_errorB = float(max(0.0, SS_errorB))
+
+    # dfs (balanced split-plot classic)
+    df_rep = r - 1
+    df_A = a - 1
+    df_repA = (r - 1) * (a - 1)          # Error(A)
+    df_B = b - 1
+    df_AB = (a - 1) * (b - 1)
+    df_errorB = (r - 1) * a * (b - 1)    # Error(B)
+    # safety if missing data made it smaller
+    if df_errorB <= 0:
+        df_errorB = max(1, df_total - (df_rep + df_A + df_repA + df_B + df_AB))
+
+    MS_rep = SS_rep / df_rep if df_rep > 0 else np.nan
+    MS_A = SS_A / df_A if df_A > 0 else np.nan
+    MS_repA = SS_repA / df_repA if df_repA > 0 else np.nan
+    MS_B = SS_B / df_B if df_B > 0 else np.nan
+    MS_AB = SS_AB / df_AB if df_AB > 0 else np.nan
+    MS_errorB = SS_errorB / df_errorB if df_errorB > 0 else np.nan
+
+    # F-tests: A vs Rep×A; B and AB vs Error(B)
+    F_A = (MS_A / MS_repA) if (not math.isnan(MS_A) and not math.isnan(MS_repA) and MS_repA > 0) else np.nan
+    p_A = (1 - f_dist.cdf(F_A, df_A, df_repA)) if (not math.isnan(F_A)) else np.nan
+
+    F_B = (MS_B / MS_errorB) if (not math.isnan(MS_B) and not math.isnan(MS_errorB) and MS_errorB > 0) else np.nan
+    p_B = (1 - f_dist.cdf(F_B, df_B, df_errorB)) if (not math.isnan(F_B)) else np.nan
+
+    F_AB = (MS_AB / MS_errorB) if (not math.isnan(MS_AB) and not math.isnan(MS_errorB) and MS_errorB > 0) else np.nan
+    p_AB = (1 - f_dist.cdf(F_AB, df_AB, df_errorB)) if (not math.isnan(F_AB)) else np.nan
+
+    table = [
+        ("Блоки (Rep)", SS_rep, df_rep, MS_rep, None, None),
+        (f"Фактор {A_key}", SS_A, df_A, MS_A, F_A, p_A),
+        (f"Error(A): Rep×{A_key}", SS_repA, df_repA, MS_repA, None, None),
+        (f"Фактор {B_key}", SS_B, df_B, MS_B, F_B, p_B),
+        (f"Фактор {A_key}×{B_key}", SS_AB, df_AB, MS_AB, F_AB, p_AB),
+        ("Error(B)", SS_errorB, df_errorB, MS_errorB, None, None),
+        ("Загальна", SS_total, df_total, None, None, None)
+    ]
+
+    # NIR05 separately for A and B (LSD uses corresponding MS & df)
+    NIR05 = {}
+    if df_repA > 0 and not math.isnan(MS_repA) and MS_repA > 0:
+        tA = float(t.ppf(1 - ALPHA / 2, df_repA))
+        n_eff_A = harmonic_mean([n for n in repA_counts.values() if n and n > 0])
+        NIR05[f"Фактор {A_key}"] = (tA * math.sqrt(2 * MS_repA / n_eff_A)) if n_eff_A > 0 else np.nan
+    else:
+        NIR05[f"Фактор {A_key}"] = np.nan
+
+    if df_errorB > 0 and not math.isnan(MS_errorB) and MS_errorB > 0:
+        tB = float(t.ppf(1 - ALPHA / 2, df_errorB))
+        n_eff_B = harmonic_mean([n for n in AB_counts.values() if n and n > 0])  # conservative
+        NIR05[f"Фактор {B_key}"] = (tB * math.sqrt(2 * MS_errorB / n_eff_B)) if n_eff_B > 0 else np.nan
+    else:
+        NIR05[f"Фактор {B_key}"] = np.nan
+
+    # For residual normality: use deviations from Rep×A×B cell means
+    cell_means = {k: v for k, v in repAB_means.items()}
+
+    return {
+        "table": table,
+        "MS_error_A": MS_repA,
+        "df_error_A": df_repA,
+        "MS_error_B": MS_errorB,
+        "df_error_B": df_errorB,
+        "SS_total": SS_total,
+        "SS_error": SS_errorB,   # for R2-like use (note: split-plot has 2 errors; keep B error as residual)
+        "NIR05": NIR05,
+        "grand_mean": grand,
+        "cell_means_repAB": cell_means,
+        "reps": reps
     }
 
 
@@ -705,11 +798,11 @@ def pairwise_param_short_variants_pm(v_names, means, ns, MS_error, df_error, met
             if ia is None or ib is None:
                 continue
             i, j = min(ia, ib), max(ia, ib)
-            r = (j - i) + 1
+            r_ = (j - i) + 1
 
             q = abs(ma - mb) / se_base
-            p = float(studentized_range.sf(q, r, df_error))
-            qcrit = studentized_range.ppf(1 - alpha, r, df_error)
+            p = float(studentized_range.sf(q, r_, df_error))
+            qcrit = studentized_range.ppf(1 - alpha, r_, df_error)
             SR = qcrit * se_base
             decision = abs(ma - mb) > SR
             sig[(a, b)] = decision
@@ -771,8 +864,9 @@ def build_effect_strength_rows(anova_table_rows):
 
 def build_partial_eta2_rows_with_label(anova_table_rows):
     SS_error = None
+    # Prefer classic "Залишок"/"Error(B)" as residual
     for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
-        if name == "Залишок":
+        if name in ("Залишок", "Error(B)"):
             SS_error = SSv
             break
 
@@ -781,7 +875,7 @@ def build_partial_eta2_rows_with_label(anova_table_rows):
 
     rows = []
     for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
-        if name in ("Залишок", "Загальна"):
+        if name in ("Залишок", "Error(B)", "Загальна") or name.startswith("Error(") or name.startswith("Блоки"):
             continue
         if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
             continue
@@ -813,8 +907,8 @@ def mean_ranks_by_key(long, key_func):
     ranks = rankdata(vals, method="average")
     sums = defaultdict(float)
     cnts = defaultdict(int)
-    for k, r in zip(keys, ranks):
-        sums[k] += float(r)
+    for k, r_ in zip(keys, ranks):
+        sums[k] += float(r_)
         cnts[k] += 1
     return {k: (sums[k] / cnts[k]) for k in cnts.keys()}
 
@@ -872,11 +966,8 @@ class SADTk:
         self.table_win = None
         self.report_win = None
 
-        # останній згенерований boxplot (PNG)
-        self._last_boxplot_path = None
-        self._last_boxplot_error = ""
-
-    def ask_indicator_units(self):
+    # --- NEW: indicator + units + design + (if splitplot) factor mapping ---
+    def ask_indicator_units_and_design(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Параметри звіту")
         dlg.resizable(False, False)
@@ -893,19 +984,79 @@ class SADTk:
         e_units = tk.Entry(frm, width=40, fg="#000000")
         e_units.grid(row=1, column=1, pady=6)
 
-        out = {"ok": False, "indicator": "", "units": ""}
+        tk.Label(frm, text="Тип дизайну:", fg="#000000").grid(row=2, column=0, sticky="w", pady=6)
+        design_var = tk.StringVar(value="crd")
+        cb_design = ttk.Combobox(frm, textvariable=design_var, width=37, state="readonly",
+                                 values=["crd", "splitplot"])
+        cb_design.grid(row=2, column=1, pady=6)
+        tk.Label(frm, text="crd = повна рандомізація; splitplot = розщеплений (2 фактори)", fg="#555555").grid(
+            row=3, column=1, sticky="w", pady=(0, 6)
+        )
+
+        # Split-plot mapping (shown only if splitplot selected)
+        sp_frame = tk.LabelFrame(frm, text="Split-plot параметри (обов'язково)", padx=10, pady=10)
+        sp_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        sp_frame.grid_remove()
+
+        main_var = tk.StringVar(value="")
+        sub_var = tk.StringVar(value="")
+
+        tk.Label(sp_frame, text="Main-plot фактор (головний):").grid(row=0, column=0, sticky="w", pady=4)
+        cb_main = ttk.Combobox(sp_frame, textvariable=main_var, width=28, state="readonly")
+        cb_main.grid(row=0, column=1, pady=4)
+
+        tk.Label(sp_frame, text="Sub-plot фактор (підділянковий):").grid(row=1, column=0, sticky="w", pady=4)
+        cb_sub = ttk.Combobox(sp_frame, textvariable=sub_var, width=28, state="readonly")
+        cb_sub.grid(row=1, column=1, pady=4)
+
+        def refresh_sp_options():
+            # available factor keys in current table
+            keys = getattr(self, "factor_keys", [])
+            cb_main["values"] = keys
+            cb_sub["values"] = keys
+            if len(keys) >= 2:
+                if not main_var.get():
+                    main_var.set(keys[0])
+                if not sub_var.get():
+                    sub_var.set(keys[1])
+
+        def on_design_change(*_):
+            if design_var.get() == "splitplot":
+                sp_frame.grid()
+                refresh_sp_options()
+            else:
+                sp_frame.grid_remove()
+
+        cb_design.bind("<<ComboboxSelected>>", lambda e: on_design_change())
+        on_design_change()
+
+        out = {"ok": False, "indicator": "", "units": "", "design": "crd", "main": "", "sub": ""}
 
         def on_ok():
             out["indicator"] = e_ind.get().strip()
             out["units"] = e_units.get().strip()
-            if not out["indicator"] or not out["units"]:
-                messagebox.showwarning("Помилка", "Заповніть назву показника та одиниці виміру.")
+            out["design"] = design_var.get().strip()
+
+            if not out["indicator"] or not out["units"] or not out["design"]:
+                messagebox.showwarning("Помилка", "Заповніть назву показника, одиниці виміру та тип дизайну.")
                 return
+
+            if out["design"] == "splitplot":
+                if getattr(self, "factors_count", 0) != 2:
+                    messagebox.showwarning("Обмеження", "Split-plot наразі підтримано для 2 факторів.\n"
+                                                      "Виберіть двофакторний аналіз або використайте CRD.")
+                    return
+                out["main"] = main_var.get().strip()
+                out["sub"] = sub_var.get().strip()
+                if not out["main"] or not out["sub"] or out["main"] == out["sub"]:
+                    messagebox.showwarning("Помилка", "Для Split-plot оберіть різні Main-plot та Sub-plot фактори.")
+                    return
+
             out["ok"] = True
             dlg.destroy()
 
         btns = tk.Frame(frm)
-        btns.grid(row=2, column=0, columnspan=2, pady=(12, 0))
+        btns.grid(row=5, column=0, columnspan=2, pady=(12, 0))
         tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=6)
         tk.Button(btns, text="Скасувати", width=12, command=lambda: dlg.destroy()).pack(side=tk.LEFT, padx=6)
 
@@ -1056,13 +1207,7 @@ class SADTk:
         self.table_win.bind("<Control-V>", self.on_paste)
 
     def show_about(self):
-        messagebox.showinfo(
-            "Розробник",
-            "S.A.D. — Статистичний аналіз даних\n"
-            "Версія: 1.0\n"
-            "Розробик: Чаплоуцький Андрій Миколайович\n"
-            "Уманський національний університет"
-        )
+        messagebox.showinfo("Розробник", "S.A.D. — Статистичний аналіз даних\nВерсія: 1.0\nРозробик: Чаплоуцький Андрій Миколайович\nУманський національний університет")
 
     def bind_cell(self, e: tk.Entry):
         e.bind("<Return>", self.on_enter)
@@ -1220,11 +1365,15 @@ class SADTk:
                 used.append(c)
         return used
 
+    # --- UPDATED: add Rep field (repeat column index) ---
     def collect_long(self):
         long = []
         rep_cols = self.used_repeat_columns()
         if not rep_cols:
             return long, rep_cols
+
+        # map used rep cols to Rep levels R1, R2...
+        rep_level = {c: f"R{idx+1}" for idx, c in enumerate(rep_cols)}
 
         for i, row in enumerate(self.entries):
             levels = []
@@ -1243,7 +1392,7 @@ class SADTk:
                 except Exception:
                     continue
 
-                rec = {"value": val}
+                rec = {"value": val, "Rep": rep_level[c]}
                 if self.factors_count >= 1: rec["A"] = levels[0]
                 if self.factors_count >= 2: rec["B"] = levels[1]
                 if self.factors_count >= 3: rec["C"] = levels[2]
@@ -1255,12 +1404,15 @@ class SADTk:
     def analyze(self):
         created_at = datetime.now()
 
-        params = self.ask_indicator_units()
+        params = self.ask_indicator_units_and_design()
         if not params["ok"]:
             return
 
         indicator = params["indicator"]
         units = params["units"]
+        design = params["design"]
+        sp_main = params.get("main", "")
+        sp_sub = params.get("sub", "")
 
         long, used_rep_cols = self.collect_long()
         if len(long) == 0:
@@ -1273,21 +1425,55 @@ class SADTk:
             return
 
         levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
+        # Rep levels for splitplot
+        rep_levels = first_seen_order([r.get("Rep") for r in long])
+
+        # ---- Choose engine: CRD or Split-plot (2f) ----
+        res = None
+        splitplot_mode = (design == "splitplot" and self.factors_count == 2)
 
         try:
-            res = anova_n_way(long, self.factor_keys, levels_by_factor)
+            if splitplot_mode:
+                # split-plot needs Rep levels >=2
+                if len(rep_levels) < 2:
+                    messagebox.showwarning("Помилка", "Для Split-plot потрібно мінімум 2 повторення (Rep).\n"
+                                                    "Заповніть хоча б 2 стовпчики повторностей.")
+                    return
+                res = anova_splitplot_2f(
+                    long,
+                    rep_key="Rep",
+                    A_key=sp_main,
+                    B_key=sp_sub,
+                    levels_by_factor=levels_by_factor
+                )
+            else:
+                if design == "splitplot" and self.factors_count != 2:
+                    messagebox.showwarning("Обмеження", "Split-plot наразі підтримано лише для 2 факторів.\n"
+                                                      "Аналіз буде виконано як CRD (повна рандомізація).")
+                res = anova_n_way(long, self.factor_keys, levels_by_factor)
         except Exception as ex:
             messagebox.showerror("Помилка аналізу", str(ex))
             return
 
-        cell_means = res.get("cell_means", {})
+        # residuals for Shapiro
         residuals = []
-        for rec in long:
-            key = tuple(rec.get(f) for f in self.factor_keys)
-            v = rec.get("value", np.nan)
-            m = cell_means.get(key, np.nan)
-            if not math.isnan(v) and not math.isnan(m):
-                residuals.append(v - m)
+        if splitplot_mode:
+            # Use Rep×A×B cell means
+            cell_means = res.get("cell_means_repAB", {})
+            for rec in long:
+                key = (rec.get("Rep"), rec.get(sp_main), rec.get(sp_sub))
+                v = rec.get("value", np.nan)
+                m = cell_means.get(key, np.nan)
+                if not math.isnan(v) and not math.isnan(m):
+                    residuals.append(v - m)
+        else:
+            cell_means = res.get("cell_means", {})
+            for rec in long:
+                key = tuple(rec.get(f) for f in self.factor_keys)
+                v = rec.get("value", np.nan)
+                m = cell_means.get(key, np.nan)
+                if not math.isnan(v) and not math.isnan(m):
+                    residuals.append(v - m)
         residuals = np.array(residuals, dtype=float)
 
         try:
@@ -1300,23 +1486,47 @@ class SADTk:
             return
         method = choice["method"]
 
-        MS_error = res.get("MS_error", np.nan)
-        df_error = res.get("df_error", np.nan)
+        # Split-plot: only parametric modes (for correct ANOVA)
+        if splitplot_mode and method in ("kw", "mw"):
+            messagebox.showwarning("Обмеження", "Split-plot наразі підтримано лише для параметричних методів\n"
+                                              "(НІР₀₅ / Тьюкі / Дункан / Бонферроні).")
+            return
 
+        # MS/df for posthoc
+        if splitplot_mode:
+            MS_error_A = res.get("MS_error_A", np.nan)
+            df_error_A = res.get("df_error_A", np.nan)
+            MS_error_B = res.get("MS_error_B", np.nan)
+            df_error_B = res.get("df_error_B", np.nan)
+        else:
+            MS_error = res.get("MS_error", np.nan)
+            df_error = res.get("df_error", np.nan)
+
+        # factor groups/means
         factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
         factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
         factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
 
-        factor_medians = {}
-        factor_q = {}
-        for f in self.factor_keys:
-            factor_medians[f] = {}
-            factor_q[f] = {}
-            for lvl, arr in factor_groups[f].items():
-                med, q1, q3 = median_q1_q3(arr)
-                factor_medians[f][lvl] = med
-                factor_q[f][lvl] = (q1, q3)
+        # For split-plot, letters must use different errors:
+        letters_factor = {}
+        if method == "lsd":
+            for f in self.factor_keys:
+                lvls = levels_by_factor[f]
+                if splitplot_mode:
+                    if f == sp_main:
+                        sig = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error_A, df_error_A, alpha=ALPHA)
+                    elif f == sp_sub:
+                        sig = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error_B, df_error_B, alpha=ALPHA)
+                    else:
+                        sig = {}
+                else:
+                    sig = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
+                letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig)
+        else:
+            for f in self.factor_keys:
+                letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
 
+        # Variant analysis (full combinations) — for split-plot we DO NOT do posthoc across variants (to avoid wrong error term)
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         v_names = [" | ".join(map(str, k)) for k in variant_order]
         num_variants = len(variant_order)
@@ -1326,45 +1536,20 @@ class SADTk:
         v_sds = {k: vstats[k][1] for k in vstats.keys()}
         v_ns = {k: vstats[k][2] for k in vstats.keys()}
 
-        means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
-        ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
-        groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
+        letters_variants = {k: "" for k in variant_order}
+        pairwise_rows = []
+        do_posthoc = True
 
-        # -------------------------
-        # ОБОВ’ЯЗКОВИЙ boxplot PNG (для всіх звітів)
-        # -------------------------
-        tmp_dir = tempfile.gettempdir()
-        safe_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tmp_plot_path = os.path.join(tmp_dir, f"SAD_boxplot_{safe_ts}.png")
-
-        ok_plot, plot_err = make_boxplot_png(
-            groups_dict=groups1,
-            title=f"Boxplot: {indicator}",
-            ylabel=f"{indicator} ({units})",
-            out_path=tmp_plot_path,
-            max_groups=40
-        )
-        self._last_boxplot_path = tmp_plot_path if ok_plot else None
-        self._last_boxplot_error = plot_err if not ok_plot else ""
-
-        ranks_by_variant = mean_ranks_by_key(long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys))
-        ranks_by_factor = {f: mean_ranks_by_key(long, key_func=lambda rec, ff=f: rec.get(ff)) for f in self.factor_keys}
-
-        v_medians = {}
-        v_q = {}
-        for i, k in enumerate(variant_order):
-            name = v_names[i]
-            arr = groups1.get(name, [])
-            med, q1, q3 = median_q1_q3(arr)
-            v_medians[k] = med
-            v_q[k] = (q1, q3)
-
+        # Brown–Forsythe for variants (only CRD parametric)
         bf_F, bf_p = (np.nan, np.nan)
-        if method in ("lsd", "tukey", "duncan", "bonferroni"):
+        if (not splitplot_mode) and method in ("lsd", "tukey", "duncan", "bonferroni"):
+            groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
             bf_F, bf_p = brown_forsythe_from_groups(groups1)
 
+        # KW/MW sections (CRD)
         kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
-        if method == "kw":
+        if (not splitplot_mode) and method == "kw":
+            groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
             try:
                 kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
                 if len(kw_samples) >= 2:
@@ -1376,46 +1561,12 @@ class SADTk:
             except Exception:
                 kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
 
-        letters_factor = {}
-        if method == "lsd":
-            for f in self.factor_keys:
-                lvls = levels_by_factor[f]
-                sig = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
-                letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig)
-        else:
-            for f in self.factor_keys:
-                letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
-
-        letters_named = {name: "" for name in v_names}
-        pairwise_rows = []
-        do_posthoc = True
-
-        if method == "lsd":
-            sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
-            letters_named = cld_multi_letters(v_names, means1, sigv)
-        elif method in ("tukey", "duncan", "bonferroni"):
-            pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
-            letters_named = cld_multi_letters(v_names, means1, sig)
-        elif method == "kw":
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
-                do_posthoc = False
-            if do_posthoc:
-                pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
-                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-                letters_named = cld_multi_letters(v_names, med_tmp, sig)
-            else:
-                letters_named = {name: "" for name in v_names}
-        elif method == "mw":
-            pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
-            med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-            letters_named = cld_multi_letters(v_names, med_tmp, sig)
-
-        letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
-
+        # R2-like (for split-plot keep residual Error(B))
         SS_total = res.get("SS_total", np.nan)
         SS_error = res.get("SS_error", np.nan)
         R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
 
+        # CV
         cv_rows = []
         for f in self.factor_keys:
             lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
@@ -1430,6 +1581,15 @@ class SADTk:
         seg = []
         seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
         seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
+
+        if splitplot_mode:
+            seg.append(("text", "Тип дизайну:\tSplit-plot (розщеплений)\n"))
+            seg.append(("text", f"Main-plot фактор:\t{sp_main}\nSub-plot фактор:\t{sp_sub}\n"))
+            seg.append(("text", "Принцип тестування:\tA тестується за Error(A)=Rep×A; B та A×B — за Error(B).\n\n"))
+            seg.append(("text", f"Кількість повторень (Rep):\t{len(rep_levels)}\n"))
+        else:
+            seg.append(("text", "Тип дизайну:\tCRD (повна рандомізація)\n\n"))
+
         seg.append(("text", f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
 
         if not math.isnan(W):
@@ -1438,10 +1598,10 @@ class SADTk:
             seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
 
         method_label = {
-            "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
-            "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
-            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
-            "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
+            "lsd": "Параметричний аналіз: ANOVA + НІР₀₅ (LSD).",
+            "tukey": "Параметричний аналіз: ANOVA + тест Тьюкі (Tukey HSD).",
+            "duncan": "Параметричний аналіз: ANOVA + тест Дункана.",
+            "bonferroni": "Параметричний аналіз: ANOVA + корекція Бонферроні.",
             "kw": "Непараметричний аналіз: Kruskal–Wallis.",
             "mw": "Непараметричний аналіз: Mann–Whitney.",
         }.get(method, "")
@@ -1455,30 +1615,17 @@ class SADTk:
 
         nonparam = method in ("mw", "kw")
 
-        if method == "kw":
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)):
-                concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
-                seg.append(("text",
-                            f"Глобальний тест між варіантами (Kruskal–Wallis):\t"
-                            f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n"))
-                seg.append(("text", f"Розмір ефекту (ε²):\t{fmt_num(kw_eps2,4)}\n\n"))
-            else:
-                seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
-
+        # ---- PARAMETRIC
         if not nonparam:
-            if not any(math.isnan(x) for x in [bf_F, bf_p]):
-                bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
-                seg.append(("text",
-                            f"Перевірка однорідності дисперсій (Brown–Forsythe):\t"
-                            f"F={fmt_num(bf_F,4)}; p={fmt_num(bf_p,4)}\t{bf_concl}\n\n"))
-            else:
-                seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
-
+            # ANOVA table
             anova_rows = []
             for name, SSv, dfv, MSv, Fv, pv in res["table"]:
-                df_txt = str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""
-                if name in ("Залишок", "Загальна"):
-                    anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
+                df_txt = str(int(dfv)) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
+                if name in ("Залишок", "Загальна", "Error(B)") or name.startswith("Error(") or name.startswith("Блоки"):
+                    if name == "Загальна":
+                        anova_rows.append([name, fmt_num(SSv, 2), df_txt, "", "", "", ""])
+                    else:
+                        anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
                 else:
                     mark = significance_mark(pv)
                     concl = f"істотна різниця {mark}" if mark else "-"
@@ -1513,14 +1660,19 @@ class SADTk:
             tno = 5
             if method == "lsd":
                 nir_rows = []
-                for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
-                    if key in res.get("NIR05", {}):
-                        nir_rows.append([key, fmt_num(res["NIR05"][key], 4)])
+                if splitplot_mode:
+                    nir_rows.append([f"Фактор {sp_main}", fmt_num(res["NIR05"].get(f"Фактор {sp_main}", np.nan), 4)])
+                    nir_rows.append([f"Фактор {sp_sub}", fmt_num(res["NIR05"].get(f"Фактор {sp_sub}", np.nan), 4)])
+                else:
+                    for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
+                        if key in res.get("NIR05", {}):
+                            nir_rows.append([key, fmt_num(res["NIR05"][key], 4)])
                 seg.append(("text", "ТАБЛИЦЯ 5. Значення НІР₀₅\n"))
                 seg.append(("table", {"headers": ["Елемент", "НІР₀₅"], "rows": nir_rows}))
                 seg.append(("text", "\n"))
                 tno = 6
 
+            # Factor means + letters
             for f in self.factor_keys:
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
                 rows_f = []
@@ -1532,6 +1684,7 @@ class SADTk:
                 seg.append(("text", "\n"))
                 tno += 1
 
+            # Variants table (no letters in split-plot mode to avoid wrong error term)
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
             rows_v = []
             for k in variant_order:
@@ -1549,69 +1702,15 @@ class SADTk:
                 "extra_gap_px": 80
             }))
             seg.append(("text", "\n"))
-            tno += 1
 
-            if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
-                seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
-                seg.append(("text", "\n"))
+            if splitplot_mode:
+                seg.append(("text",
+                            "Примітка: у режимі Split-plot пост-хок порівняння між повними комбінаціями (варіантами) не виконуються,\n"
+                            "оскільки для коректності потрібен окремий вибір терму похибки залежно від рівня рандомізації.\n\n"))
 
+        # ---- NONPARAMETRIC (CRD only)
         else:
-            tno = 1
-
-            for f in self.factor_keys:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика по фактору {f} (непараметрична)\n"))
-                rows = []
-                for lvl in levels_by_factor[f]:
-                    med = factor_medians[f].get(lvl, np.nan)
-                    q1, q3 = factor_q[f].get(lvl, (np.nan, np.nan))
-                    rank_m = ranks_by_factor[f].get(lvl, np.nan)
-                    letter = letters_factor[f].get(lvl, "")
-                    rows.append([
-                        str(lvl),
-                        str(int(factor_ns[f].get(lvl, 0))),
-                        fmt_num(med, 3),
-                        f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
-                        fmt_num(rank_m, 2),
-                        (letter if letter else "-")
-                    ])
-                seg.append(("table", {"headers": [f"Градація {f}", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"], "rows": rows}))
-                seg.append(("text", "\n"))
-                tno += 1
-
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
-            rows = []
-            for k in variant_order:
-                name = " | ".join(map(str, k))
-                med = v_medians.get(k, np.nan)
-                q1, q3 = v_q.get(k, (np.nan, np.nan))
-                rank_m = ranks_by_variant.get(name, np.nan)
-                letter = letters_variants.get(k, "")
-                rows.append([
-                    name,
-                    str(int(v_ns.get(k, 0))),
-                    fmt_num(med, 3),
-                    f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
-                    fmt_num(rank_m, 2),
-                    (letter if letter else "-")
-                ])
-            seg.append(("table", {
-                "headers": ["Варіант", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"],
-                "rows": rows,
-                "padding_px": 32,
-                "extra_gap_after_col": 0,
-                "extra_gap_px": 80
-            }))
-            seg.append(("text", "\n"))
-            tno += 1
-
-            if method == "kw" and not do_posthoc:
-                seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
-            else:
-                if pairwise_rows:
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння + ефект (Cliff’s δ)\n"))
-                    seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
-                    seg.append(("text", "\n"))
+            seg.append(("text", "Непараметричні методи наразі виконуються у припущенні CRD (повна рандомізація).\n\n"))
 
         seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
         self.show_report_segments(seg)
@@ -1627,31 +1726,6 @@ class SADTk:
 
         top = tk.Frame(self.report_win, padx=8, pady=8)
         top.pack(fill=tk.X)
-
-        # --- кнопка збереження PNG boxplot
-        def save_boxplot_png():
-            if (not self._last_boxplot_path) or (not os.path.exists(self._last_boxplot_path)):
-                msg = self._last_boxplot_error or "Boxplot не створено."
-                messagebox.showwarning("Boxplot", msg)
-                return
-
-            out = filedialog.asksaveasfilename(
-                title="Зберегти boxplot (PNG)",
-                defaultextension=".png",
-                filetypes=[("PNG image", "*.png")]
-            )
-            if not out:
-                return
-            try:
-                with open(self._last_boxplot_path, "rb") as fsrc:
-                    data = fsrc.read()
-                with open(out, "wb") as fdst:
-                    fdst.write(data)
-                messagebox.showinfo("Готово", "Boxplot збережено у PNG.")
-            except Exception as ex:
-                messagebox.showerror("Помилка", str(ex))
-
-        tk.Button(top, text="Зберегти boxplot (PNG)…", command=save_boxplot_png).pack(side=tk.LEFT, padx=4)
 
         xsb = ttk.Scrollbar(self.report_win, orient="horizontal")
         xsb.pack(side=tk.BOTTOM, fill=tk.X)
