@@ -4,8 +4,8 @@
 """
 S.A.D. — Статистичний аналіз даних (Tkinter)
 
-Потрібно: Python 3.8+, numpy, scipy
-Встановлення: pip install numpy scipy
+Потрібно: Python 3.8+, numpy, scipy, matplotlib
+Встановлення: pip install numpy scipy matplotlib
 
 Останні правки:
 ✅ Заголовок звіту: «ЗВІТ СТАТИСТИЧНОГО АНАЛІЗУ ДАНИХ».
@@ -13,24 +13,35 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 ✅ Пояснення позначень (**/*/літери/"-") перенесено одразу після рядка «Виконуваний статистичний аналіз».
 ✅ Іконка icon.ico: пошук у корені програми (папка скрипта), cwd, папка запуску (argv0), папка exe (sys.executable),
    підтримка PyInstaller (_MEIPASS). Ставимо iconbitmap для всіх вікон.
+✅ ОБОВ’ЯЗКОВИЙ додатковий матеріал: boxplot генерується як PNG для всіх типів звітів
+   і зберігається кнопкою «Зберегти boxplot (PNG)…» у вікні «Звіт».
 """
 
 import os
 import sys
-import tkinter as tk
-from tkinter import ttk, messagebox
-from tkinter.scrolledtext import ScrolledText
-import tkinter.font as tkfont
-
 import math
-import numpy as np
+import tempfile
 from itertools import combinations
 from collections import defaultdict
 from datetime import datetime
+from typing import Union
+
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from tkinter.scrolledtext import ScrolledText
+import tkinter.font as tkfont
+
+import numpy as np
 
 from scipy.stats import shapiro, t, f as f_dist
 from scipy.stats import mannwhitneyu, kruskal, levene, rankdata
 from scipy.stats import studentized_range
+
+# matplotlib — для PNG графіка
+import matplotlib
+matplotlib.use("Agg")  # стабільно працює і у зібраному .exe
+import matplotlib.pyplot as plt
+
 
 ALPHA = 0.05
 COL_W = 10
@@ -101,7 +112,6 @@ def _find_icon_file():
         if base:
             candidates.append(os.path.join(base, "icon.ico"))
 
-    # У PyInstaller _script_dir() може бути _MEIPASS; все одно дублюємо надійно
     try:
         if hasattr(sys, "_MEIPASS"):
             candidates.append(os.path.join(sys._MEIPASS, "icon.ico"))
@@ -114,11 +124,10 @@ def _find_icon_file():
     return None
 
 
-def set_window_icon(win: tk.Tk | tk.Toplevel):
+def set_window_icon(win: Union[tk.Tk, tk.Toplevel]):
     ico = _find_icon_file()
     if not ico:
         return
-    # Найнадійніше у Windows:
     try:
         win.iconbitmap(ico)
         return
@@ -399,6 +408,48 @@ def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9
         size -= 1
         f.configure(size=size)
     return f
+
+
+def make_boxplot_png(groups_dict, title, ylabel, out_path, max_groups=40):
+    """
+    Створює boxplot у PNG (обов'язковий додатковий матеріал).
+    groups_dict: {label: [values]}
+    max_groups: якщо груп дуже багато — обрізаємо до перших max_groups (щоб графік був читабельний)
+    """
+    items = [(k, v) for k, v in groups_dict.items() if v and len(v) > 0]
+    if not items:
+        return False, "Немає даних для boxplot."
+
+    if len(items) > max_groups:
+        items = items[:max_groups]
+        title = f"{title} (перші {max_groups})"
+
+    labels = [k for k, _ in items]
+    data = [np.array(v, dtype=float) for _, v in items]
+
+    cleaned = []
+    cleaned_labels = []
+    for lab, arr in zip(labels, data):
+        arr = arr[~np.isnan(arr)]
+        if len(arr) > 0:
+            cleaned.append(arr)
+            cleaned_labels.append(lab)
+
+    if not cleaned:
+        return False, "Усі значення порожні/NaN для boxplot."
+
+    fig = plt.figure(figsize=(max(10, len(cleaned_labels) * 0.45), 6))
+    ax = fig.add_subplot(111)
+    ax.boxplot(cleaned, labels=cleaned_labels, showmeans=True)
+
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+    return True, ""
 
 
 # -------------------------
@@ -821,6 +872,10 @@ class SADTk:
         self.table_win = None
         self.report_win = None
 
+        # останній згенерований boxplot (PNG)
+        self._last_boxplot_path = None
+        self._last_boxplot_error = ""
+
     def ask_indicator_units(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Параметри звіту")
@@ -932,7 +987,6 @@ class SADTk:
         self.factor_names = [f"Фактор {self.factor_keys[i]}" for i in range(factors_count)]
         self.column_names = self.factor_names + [f"Повт.{i+1}" for i in range(self.repeat_count)]
 
-        # Buttons row (compact + auto font)
         ctl = tk.Frame(self.table_win, padx=6, pady=6)
         ctl.pack(fill=tk.X)
 
@@ -1002,7 +1056,13 @@ class SADTk:
         self.table_win.bind("<Control-V>", self.on_paste)
 
     def show_about(self):
-        messagebox.showinfo("Розробник", "S.A.D. — Статистичний аналіз даних\nВерсія: 1.0\nРозробик: Чаплоуцький Андрій Миколайович\nУманський національний університет")
+        messagebox.showinfo(
+            "Розробник",
+            "S.A.D. — Статистичний аналіз даних\n"
+            "Версія: 1.0\n"
+            "Розробик: Чаплоуцький Андрій Миколайович\n"
+            "Уманський національний університет"
+        )
 
     def bind_cell(self, e: tk.Entry):
         e.bind("<Return>", self.on_enter)
@@ -1270,6 +1330,23 @@ class SADTk:
         ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
         groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
 
+        # -------------------------
+        # ОБОВ’ЯЗКОВИЙ boxplot PNG (для всіх звітів)
+        # -------------------------
+        tmp_dir = tempfile.gettempdir()
+        safe_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tmp_plot_path = os.path.join(tmp_dir, f"SAD_boxplot_{safe_ts}.png")
+
+        ok_plot, plot_err = make_boxplot_png(
+            groups_dict=groups1,
+            title=f"Boxplot: {indicator}",
+            ylabel=f"{indicator} ({units})",
+            out_path=tmp_plot_path,
+            max_groups=40
+        )
+        self._last_boxplot_path = tmp_plot_path if ok_plot else None
+        self._last_boxplot_error = plot_err if not ok_plot else ""
+
         ranks_by_variant = mean_ranks_by_key(long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys))
         ranks_by_factor = {f: mean_ranks_by_key(long, key_func=lambda rec, ff=f: rec.get(ff)) for f in self.factor_keys}
 
@@ -1372,14 +1449,12 @@ class SADTk:
         if method_label:
             seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
 
-        # ✅ Пояснення позначень — одразу після назви аналізу (як просив)
         seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
         seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
         seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
 
         nonparam = method in ("mw", "kw")
 
-        # Nonparam global test line
         if method == "kw":
             if not (isinstance(kw_p, float) and math.isnan(kw_p)):
                 concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
@@ -1390,7 +1465,6 @@ class SADTk:
             else:
                 seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
 
-        # ---- PARAMETRIC
         if not nonparam:
             if not any(math.isnan(x) for x in [bf_F, bf_p]):
                 bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
@@ -1400,7 +1474,6 @@ class SADTk:
             else:
                 seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
 
-            # ANOVA table with extra gap after "Джерело"
             anova_rows = []
             for name, SSv, dfv, MSv, Fv, pv in res["table"]:
                 df_txt = str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""
@@ -1483,7 +1556,6 @@ class SADTk:
                 seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
                 seg.append(("text", "\n"))
 
-        # ---- NONPARAMETRIC (ANOVA not shown)
         else:
             tno = 1
 
@@ -1542,7 +1614,6 @@ class SADTk:
                     seg.append(("text", "\n"))
 
         seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
-
         self.show_report_segments(seg)
 
     def show_report_segments(self, segments):
@@ -1556,6 +1627,31 @@ class SADTk:
 
         top = tk.Frame(self.report_win, padx=8, pady=8)
         top.pack(fill=tk.X)
+
+        # --- кнопка збереження PNG boxplot
+        def save_boxplot_png():
+            if (not self._last_boxplot_path) or (not os.path.exists(self._last_boxplot_path)):
+                msg = self._last_boxplot_error or "Boxplot не створено."
+                messagebox.showwarning("Boxplot", msg)
+                return
+
+            out = filedialog.asksaveasfilename(
+                title="Зберегти boxplot (PNG)",
+                defaultextension=".png",
+                filetypes=[("PNG image", "*.png")]
+            )
+            if not out:
+                return
+            try:
+                with open(self._last_boxplot_path, "rb") as fsrc:
+                    data = fsrc.read()
+                with open(out, "wb") as fdst:
+                    fdst.write(data)
+                messagebox.showinfo("Готово", "Boxplot збережено у PNG.")
+            except Exception as ex:
+                messagebox.showerror("Помилка", str(ex))
+
+        tk.Button(top, text="Зберегти boxplot (PNG)…", command=save_boxplot_png).pack(side=tk.LEFT, padx=4)
 
         xsb = ttk.Scrollbar(self.report_win, orient="horizontal")
         xsb.pack(side=tk.BOTTOM, fill=tk.X)
@@ -1626,6 +1722,6 @@ class SADTk:
 # -------------------------
 if __name__ == "__main__":
     root = tk.Tk()
-    set_window_icon(root)  # ще раз — на випадок пізніх змін cwd/запуску
+    set_window_icon(root)
     app = SADTk(root)
     root.mainloop()
