@@ -1751,12 +1751,7 @@ class SADTk:
         seg.append(("text",
                     f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
 
-        if not math.isnan(W):
-            seg.append(("text", f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
-        else:
-            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
-
-        method_label = {
+               method_label = {
             "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
             "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
             "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
@@ -1776,6 +1771,11 @@ class SADTk:
 
         nonparam = method in ("mw", "kw", "friedman", "wilcoxon")
 
+        if not math.isnan(W):
+            seg.append(("text", f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
+        else:
+            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
+           
         # ---- CRD nonparam global test
         if method == "kw":
             if not (isinstance(kw_p, float) and math.isnan(kw_p)):
