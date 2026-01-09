@@ -7,15 +7,18 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 Потрібно: Python 3.8+, numpy, scipy
 Встановлення: pip install numpy scipy
 
-ЗМІНИ (лише за твоїм завданням):
-✅ Додано вибір дизайну експерименту у вікні «Параметри звіту»: CRD / RCBD.
+Останні правки:
+✅ Заголовок звіту: «ЗВІТ СТАТИСТИЧНОГО АНАЛІЗУ ДАНИХ».
+✅ Прибрано фразу про інтерпретацію непараметричних тестів через ранги.
+✅ Пояснення позначень (**/*/літери/"-") перенесено одразу після рядка «Виконуваний статистичний аналіз».
+✅ Іконка icon.ico: пошук у корені програми (папка скрипта), cwd, папка запуску (argv0), папка exe (sys.executable),
+   підтримка PyInstaller (_MEIPASS). Ставимо iconbitmap для всіх вікон.
+
+✅ Додано вибір дизайну: CRD (повна рандомізація) / RCBD (блочна).
 ✅ Для RCBD:
-   - Нормальність (Shapiro–Wilk) рахується по залишках МОДЕЛІ RCBD (із вилученням ефекту блоку).
-   - Параметричні аналізи (LSD/Tukey/Duncan/Bonferroni) враховують блоки:
-       SS_error = SS_total - SS_treat - SS_block; df_error = df_total - df_treat - df_block.
-   - Непараметричні: замість KW/MW використовуються Friedman (>=3 варіанти) або Wilcoxon (2 варіанти),
-     з відповідними звітами (mean ranks по блоках, Kendall’s W, парні Wilcoxon+Bonferroni при потребі).
-✅ KW/MW залишені лише для CRD.
+   - Параметрика: ANOVA з блоками як додатковим джерелом варіації, залишки моделі для Shapiro.
+   - Непараметрика: Friedman (k>2) або Wilcoxon signed-rank (k=2).
+✅ У звітах змінено порядок рядків (як ти вимагав).
 """
 
 import os
@@ -34,9 +37,7 @@ from datetime import datetime
 from scipy.stats import shapiro, t, f as f_dist
 from scipy.stats import mannwhitneyu, kruskal, levene, rankdata
 from scipy.stats import studentized_range
-
-# ✅ нове (для RCBD непараметричних)
-from scipy.stats import friedmanchisquare, wilcoxon
+from scipy.stats import friedmanchisquare, wilcoxon, norm
 
 ALPHA = 0.05
 COL_W = 10
@@ -241,6 +242,17 @@ def epsilon_squared_kw(H: float, n: int, k: int) -> float:
     if n <= k or k < 2:
         return np.nan
     return float((H - k + 1.0) / (n - k))
+
+
+def kendalls_w_from_friedman(chisq: float, n_blocks: int, k_treat: int) -> float:
+    # Kendall's W = chi^2 / (n*(k-1))
+    if any(x is None for x in [chisq, n_blocks, k_treat]):
+        return np.nan
+    if isinstance(chisq, float) and math.isnan(chisq):
+        return np.nan
+    if n_blocks <= 0 or k_treat <= 1:
+        return np.nan
+    return float(chisq / (n_blocks * (k_treat - 1)))
 
 
 def cliffs_delta(x, y):
@@ -448,7 +460,7 @@ def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extr
 
 
 # -------------------------
-# ANOVA 1–4 (CRD base)
+# CRD ANOVA 1–4 (як було)
 # -------------------------
 def anova_n_way(long, factors, levels_by_factor):
     N = len(long)
@@ -568,6 +580,233 @@ def anova_n_way(long, factors, levels_by_factor):
         "NIR05": NIR05,
         "SS_total": SS_total,
         "SS_error": SS_error,
+        "yhat": None,
+        "residuals": None,
+        "rankX": None,
+    }
+
+
+# -------------------------
+# RCBD ANOVA через OLS (блоки + фактори, без блокових взаємодій)
+# SS термів через SSE(reduced) - SSE(full)
+# -------------------------
+def _dummy_matrix_from_levels(levels_list, drop_first=True):
+    # levels_list: список категорій довжини N
+    uniq = first_seen_order(levels_list)
+    if len(uniq) <= 1:
+        return np.zeros((len(levels_list), 0)), []
+    base = uniq[0] if drop_first else None
+    cols = []
+    names = []
+    for u in uniq:
+        if drop_first and u == base:
+            continue
+        col = np.array([1.0 if x == u else 0.0 for x in levels_list], dtype=float)
+        cols.append(col)
+        names.append(str(u))
+    X = np.column_stack(cols) if cols else np.zeros((len(levels_list), 0))
+    return X, names
+
+
+def _interaction_cols(mats, names_lists, term):
+    # term: tuple of factor names already mapped outside
+    # mats: dict factor -> (X, colnames)
+    # Build all pairwise products of columns across factors in term
+    if len(term) == 0:
+        return np.zeros((mats[next(iter(mats))][0].shape[0], 0)), []
+    Xs = [mats[f][0] for f in term]
+    Ns = [mats[f][1] for f in term]
+    if any(X.shape[1] == 0 for X in Xs):
+        return np.zeros((Xs[0].shape[0], 0)), []
+    # Start with first factor cols
+    Xcur = Xs[0]
+    ncur = Ns[0]
+    for i in range(1, len(term)):
+        Xnext = Xs[i]
+        nnext = Ns[i]
+        new_cols = []
+        new_names = []
+        for a_i in range(Xcur.shape[1]):
+            for b_j in range(Xnext.shape[1]):
+                new_cols.append(Xcur[:, a_i] * Xnext[:, b_j])
+                new_names.append(f"{ncur[a_i]}×{nnext[b_j]}")
+        Xcur = np.column_stack(new_cols) if new_cols else np.zeros((Xcur.shape[0], 0))
+        ncur = new_names
+    return Xcur, ncur
+
+
+def ols_sse_rank(y, X):
+    # returns SSE, rank, yhat, residuals
+    # Solve via lstsq (handles non-square)
+    if X.size == 0:
+        yhat = np.mean(y) * np.ones_like(y)
+        resid = y - yhat
+        sse = float(np.sum(resid ** 2))
+        return sse, 1, yhat, resid
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    yhat = X @ beta
+    resid = y - yhat
+    sse = float(np.sum(resid ** 2))
+    rank = int(np.linalg.matrix_rank(X))
+    return sse, rank, yhat, resid
+
+
+def anova_rcbd_ols(long, treat_factors, levels_by_factor, block_key="BLOCK"):
+    # treat_factors: ["A","B","C","D"] (subset)
+    # Model: intercept + BLOCK + all treatment terms among treat_factors (main + interactions), no BLOCK interactions
+    y = np.array([r["value"] for r in long], dtype=float)
+    N = len(y)
+
+    # levels
+    blocks = [r.get(block_key) for r in long]
+    if any(b is None for b in blocks):
+        raise ValueError("Для RCBD потрібні блоки (BLOCK).")
+
+    mats = {}
+    # BLOCK
+    Xb, bn = _dummy_matrix_from_levels(blocks, drop_first=True)
+    mats[block_key] = (Xb, [f"Блок:{x}" for x in bn])
+
+    # treatment main dummies
+    for f in treat_factors:
+        levels = [r.get(f) for r in long]
+        Xf, fn = _dummy_matrix_from_levels(levels, drop_first=True)
+        mats[f] = (Xf, [f"{f}:{x}" for x in fn])
+
+    # Terms list: block main + treatment terms (all combos of treat factors)
+    term_cols = {}
+    term_order = []
+
+    # block term
+    term_order.append((block_key,))
+    term_cols[(block_key,)] = mats[block_key]
+
+    # treatment terms (main + interactions)
+    for rnk in range(1, len(treat_factors) + 1):
+        for comb in combinations(treat_factors, rnk):
+            Xterm, nterm = _interaction_cols(mats, None, comb) if len(comb) > 1 else mats[comb[0]]
+            term_cols[comb] = (Xterm, nterm if len(comb) > 1 else mats[comb[0]][1])
+            term_order.append(comb)
+
+    # Build full X: intercept + block + all treat terms
+    X_parts = [np.ones((N, 1), dtype=float)]
+    part_map = []  # (term, start, end)
+    cur = 1
+    for term in term_order:
+        Xterm = term_cols[term][0]
+        if Xterm.shape[1] == 0:
+            part_map.append((term, cur, cur))
+            continue
+        X_parts.append(Xterm)
+        part_map.append((term, cur, cur + Xterm.shape[1]))
+        cur += Xterm.shape[1]
+    X_full = np.hstack(X_parts) if X_parts else np.ones((N, 1), dtype=float)
+
+    SSE_full, rank_full, yhat, resid = ols_sse_rank(y, X_full)
+    df_total = N - 1
+    df_error = N - rank_full
+    if df_error <= 0:
+        df_error = 1
+    MS_error = SSE_full / df_error
+
+    grand_mean = float(np.mean(y))
+    SS_total = float(np.sum((y - grand_mean) ** 2))
+
+    # SS for each term via reduced model (drop term columns)
+    SS = {}
+    df = {}
+    table_rows = []
+
+    def term_pretty(term):
+        if term == (block_key,):
+            return "Блоки"
+        if len(term) == 1:
+            return f"Фактор {term[0]}"
+        return "Фактор " + "×".join(term)
+
+    # precompute full columns indices per term from part_map
+    for term, s, e in part_map:
+        df_term = max(0, e - s)
+        df[term] = df_term
+
+    for term, s, e in part_map:
+        if term == (block_key,):
+            pass
+        df_term = df[term]
+        if df_term <= 0:
+            SS[term] = 0.0
+            continue
+
+        keep_cols = list(range(X_full.shape[1]))
+        # remove [s, e)
+        for idx in range(e - 1, s - 1, -1):
+            if idx in keep_cols:
+                keep_cols.remove(idx)
+        X_red = X_full[:, keep_cols]
+        SSE_red, rank_red, _, _ = ols_sse_rank(y, X_red)
+        ss_term = float(SSE_red - SSE_full)
+        if ss_term < 0 and abs(ss_term) < 1e-9:
+            ss_term = 0.0
+        SS[term] = ss_term
+
+    # Build rows in logical order: treatment terms (as your reports expect) and block row separate
+    # We will include blocks row in table (after treatment rows), then residual, total
+    # IMPORTANT: This keeps "Фактор A/B/..." etc present.
+    # order for output: treatment terms in increasing order, then blocks
+    treat_terms = [t for t in term_order if t != (block_key,)]
+    # Output treatment terms:
+    for term in treat_terms:
+        name = term_pretty(term)
+        SSv = SS.get(term, 0.0)
+        dfv = df.get(term, 0)
+        MSv = SSv / dfv if dfv > 0 else np.nan
+        Fv = MSv / MS_error if (dfv > 0 and MS_error > 0 and not math.isnan(MSv)) else np.nan
+        pv = 1 - f_dist.cdf(Fv, dfv, df_error) if (not math.isnan(Fv) and dfv > 0) else np.nan
+        table_rows.append((name, SSv, dfv, MSv, Fv, pv))
+
+    # Add blocks row
+    term = (block_key,)
+    name = term_pretty(term)
+    SSv = SS.get(term, 0.0)
+    dfv = df.get(term, 0)
+    MSv = SSv / dfv if dfv > 0 else np.nan
+    Fv = MSv / MS_error if (dfv > 0 and MS_error > 0 and not math.isnan(MSv)) else np.nan
+    pv = 1 - f_dist.cdf(Fv, dfv, df_error) if (not math.isnan(Fv) and dfv > 0) else np.nan
+    table_rows.append((name, SSv, dfv, MSv, Fv, pv))
+
+    table_rows.append(("Залишок", SSE_full, df_error, MS_error, None, None))
+    table_rows.append(("Загальна", SS_total, df_total, None, None, None))
+
+    # NIR05 (як у твоєму підході): використовуємо MS_error та df_error
+    tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
+    NIR05 = {}
+    # для "Загальна" беремо ефективне n як гармонійне по варіантах (treatment combinations)
+    treat_keys = tuple(treat_factors)
+    cell_counts = subset_stats(long, treat_keys)  # (mean,n)
+    n_eff = harmonic_mean([v[1] for v in cell_counts.values() if v[1] and v[1] > 0])
+    nir_all = tval * math.sqrt(2 * MS_error / n_eff) if not any(math.isnan(x) for x in [tval, MS_error, n_eff]) else np.nan
+    NIR05["Загальна"] = nir_all
+    for fct in treat_factors:
+        marg = subset_stats(long, (fct,))
+        n_eff_f = harmonic_mean([v[1] for v in marg.values() if v[1] and v[1] > 0])
+        nir = tval * math.sqrt(2 * MS_error / n_eff_f) if not any(math.isnan(x) for x in [tval, MS_error, n_eff_f]) else np.nan
+        NIR05[f"Фактор {fct}"] = nir
+
+    # For CRD-style parts we also return cell_means (treat cells)
+    cell_means = {k: v[0] for k, v in subset_stats(long, treat_keys).items()}
+
+    return {
+        "table": table_rows,
+        "cell_means": cell_means,
+        "cell_counts": {k: v[1] for k, v in subset_stats(long, treat_keys).items()},
+        "MS_error": MS_error,
+        "df_error": df_error,
+        "NIR05": NIR05,
+        "SS_total": SS_total,
+        "SS_error": SSE_full,
+        "yhat": yhat,
+        "residuals": resid,
+        "rankX": rank_full,
     }
 
 
@@ -586,7 +825,7 @@ def brown_forsythe_from_groups(groups_dict):
 
 
 # -------------------------
-# LSD + pairwise (parametric)
+# LSD + pairwise
 # -------------------------
 def lsd_sig_matrix(levels_order, means, ns, MS_error, df_error, alpha=0.05):
     sig = {}
@@ -699,139 +938,70 @@ def pairwise_mw_bonf_with_effect(v_names, groups_dict, alpha=0.05):
 
 
 # -------------------------
-# RCBD nonparam helpers
+# RCBD nonparametric helpers: build blocks x variants matrix
 # -------------------------
-def build_rcbd_block_map(long, factor_keys, block_key="_block"):
-    """
-    Повертає:
-      - variant_order: список кортежів рівнів факторів (варіанти)
-      - v_names: строкові назви варіантів
-      - blocks_order: порядок блоків
-      - block_values: dict[block][v_name] = value (якщо дублікати — середнє)
-      - complete_blocks: список блоків, де є ВСІ варіанти
-    """
-    variant_order = first_seen_order([tuple(r.get(f) for f in factor_keys) for r in long])
-    v_names = [" | ".join(map(str, k)) for k in variant_order]
-
-    blocks_order = first_seen_order([r.get(block_key) for r in long if r.get(block_key) is not None])
-
-    # збір значень у блоках
-    tmp = defaultdict(lambda: defaultdict(list))
+def rcbd_matrix_from_long(long, variant_names, block_names, variant_key="VARIANT", block_key="BLOCK"):
+    # returns list of rows per block aligned to variant_names, dropping blocks with any missing
+    by = defaultdict(dict)  # block -> {variant: value}
     for r in long:
-        b = r.get(block_key, None)
-        if b is None:
-            continue
-        vk = tuple(r.get(f) for f in factor_keys)
-        vname = " | ".join(map(str, vk))
+        b = r.get(block_key)
+        v = r.get(variant_key)
         val = r.get("value", np.nan)
+        if b is None or v is None:
+            continue
         if val is None or (isinstance(val, float) and math.isnan(val)):
             continue
-        tmp[b][vname].append(float(val))
+        by[b][v] = float(val)
 
-    block_values = {}
-    for b in blocks_order:
-        block_values[b] = {}
-        for vn, arr in tmp[b].items():
-            if len(arr) == 1:
-                block_values[b][vn] = arr[0]
-            else:
-                block_values[b][vn] = float(np.mean(arr))
-
-    complete_blocks = []
-    for b in blocks_order:
+    rows = []
+    kept_blocks = []
+    for b in block_names:
+        if b not in by:
+            continue
+        row = []
         ok = True
-        for vn in v_names:
-            if vn not in block_values[b]:
+        for v in variant_names:
+            if v not in by[b]:
                 ok = False
                 break
+            row.append(by[b][v])
         if ok:
-            complete_blocks.append(b)
-
-    return variant_order, v_names, blocks_order, block_values, complete_blocks
-
-
-def friedman_mean_ranks(v_names, complete_blocks, block_values):
-    """
-    Ранги рахуються ВСЕРЕДИНІ кожного блоку, потім усереднюються.
-    """
-    if not complete_blocks:
-        return {}
-    sums = {vn: 0.0 for vn in v_names}
-    nb = 0
-    for b in complete_blocks:
-        vals = [block_values[b][vn] for vn in v_names]
-        ranks = rankdata(vals, method="average")  # 1..k (менше значення -> менший ранг)
-        for vn, rk in zip(v_names, ranks):
-            sums[vn] += float(rk)
-        nb += 1
-    return {vn: (sums[vn] / nb if nb else np.nan) for vn in v_names}
+            rows.append(row)
+            kept_blocks.append(b)
+    return rows, kept_blocks
 
 
-def wilcoxon_rank_biserial(x, y):
-    """
-    Rank-biserial correlation для Wilcoxon signed-rank.
-    Обчислюємо W+ і W- по рангах |d|, d=x-y.
-    """
-    x = np.array(x, dtype=float)
-    y = np.array(y, dtype=float)
-    mask = (~np.isnan(x)) & (~np.isnan(y))
-    x = x[mask]
-    y = y[mask]
-    if len(x) == 0:
-        return np.nan
-
-    d = x - y
-    # відкидаємо нульові різниці (як робить wilcoxon за замовчуванням)
-    nz = d != 0
-    d = d[nz]
-    if len(d) == 0:
-        return np.nan
-
-    absd = np.abs(d)
-    r = rankdata(absd, method="average")
-    w_pos = float(np.sum(r[d > 0]))
-    w_neg = float(np.sum(r[d < 0]))
-    denom = w_pos + w_neg
-    if denom <= 0:
-        return np.nan
-    return float((w_pos - w_neg) / denom)
-
-
-def rbc_label(abs_rbc: float) -> str:
-    if abs_rbc is None or (isinstance(abs_rbc, float) and math.isnan(abs_rbc)):
-        return ""
-    if abs_rbc < 0.10:
-        return "дуже слабкий"
-    if abs_rbc < 0.30:
-        return "слабкий"
-    if abs_rbc < 0.50:
-        return "середній"
-    return "сильний"
-
-
-def pairwise_wilcoxon_bonf(v_names, complete_blocks, block_values, alpha=0.05):
-    pairs = [(v_names[i], v_names[j]) for i in range(len(v_names)) for j in range(i + 1, len(v_names))]
+def pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=0.05):
+    # mat_rows: list[block][variant] complete
+    arr = np.array(mat_rows, dtype=float)
+    n_blocks = arr.shape[0]
+    pairs = [(i, j) for i in range(len(v_names)) for j in range(i + 1, len(v_names))]
     mtests = len(pairs) if pairs else 1
+
     rows = []
     sig = {}
-    for a, b in pairs:
-        xa = [block_values[bl][a] for bl in complete_blocks]
-        xb = [block_values[bl][b] for bl in complete_blocks]
-        if len(xa) < 2:
-            continue
+    for i, j in pairs:
+        x = arr[:, i]
+        y = arr[:, j]
+        # remove ties where diff=0 for wilcoxon
         try:
-            stat, p = wilcoxon(xa, xb, alternative="two-sided")
+            stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
         except Exception:
             continue
         p = float(p)
-        stat = float(stat)
         p_adj = min(1.0, p * mtests)
         decision = (p_adj < alpha)
-        sig[(a, b)] = decision
+        sig[(v_names[i], v_names[j])] = decision
 
-        rbc = wilcoxon_rank_biserial(np.array(xa), np.array(xb))
-        lab = rbc_label(abs(rbc)) if not (isinstance(rbc, float) and math.isnan(rbc)) else ""
-        rows.append([f"{a}  vs  {b}", fmt_num(stat, 2), f"{p_adj:.4f}", "+" if decision else "-", fmt_num(rbc, 3), lab])
+        # effect size r ~ |Z|/sqrt(n)
+        # approximate Z from p (two-sided): Z = norm.isf(p/2)
+        try:
+            z = float(norm.isf(p / 2.0))
+            r_eff = abs(z) / math.sqrt(max(1, n_blocks))
+        except Exception:
+            r_eff = np.nan
+
+        rows.append([f"{v_names[i]}  vs  {v_names[j]}", fmt_num(stat, 3), f"{p_adj:.4f}", "+" if decision else "-", fmt_num(r_eff, 3)])
     return rows, sig
 
 
@@ -887,7 +1057,7 @@ def build_partial_eta2_rows_with_label(anova_table_rows):
 
 
 # -------------------------
-# Ranks (CRD / general)
+# Ranks
 # -------------------------
 def mean_ranks_by_key(long, key_func):
     vals = []
@@ -962,7 +1132,6 @@ class SADTk:
         self.table_win = None
         self.report_win = None
 
-    # ✅ додано вибір дизайну
     def ask_indicator_units(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Параметри звіту")
@@ -980,20 +1149,20 @@ class SADTk:
         e_units = tk.Entry(frm, width=40, fg="#000000")
         e_units.grid(row=1, column=1, pady=6)
 
-        # ✅ дизайн експерименту
-        tk.Label(frm, text="Дизайн експерименту:", fg="#000000").grid(row=2, column=0, sticky="w", pady=(10, 6))
+        # ✅ Дизайн експерименту
+        tk.Label(frm, text="Дизайн експерименту:", fg="#000000").grid(row=2, column=0, sticky="w", pady=(10, 4))
         design_var = tk.StringVar(value="crd")
-        box = tk.Frame(frm)
-        box.grid(row=2, column=1, sticky="w", pady=(10, 6))
-        tk.Radiobutton(box, text="Повна рандомізація (CRD)", variable=design_var, value="crd").pack(anchor="w")
-        tk.Radiobutton(box, text="Блочна рандомізація (RCBD)", variable=design_var, value="rcbd").pack(anchor="w")
+        rfrm = tk.Frame(frm)
+        rfrm.grid(row=2, column=1, sticky="w", pady=(10, 4))
+        tk.Radiobutton(rfrm, text="Повна рандомізація (CRD)", variable=design_var, value="crd").pack(anchor="w")
+        tk.Radiobutton(rfrm, text="Блочна рандомізація (RCBD)", variable=design_var, value="rcbd").pack(anchor="w")
 
         out = {"ok": False, "indicator": "", "units": "", "design": "crd"}
 
         def on_ok():
             out["indicator"] = e_ind.get().strip()
             out["units"] = e_units.get().strip()
-            out["design"] = design_var.get().strip() or "crd"
+            out["design"] = design_var.get()
             if not out["indicator"] or not out["units"]:
                 messagebox.showwarning("Помилка", "Заповніть назву показника та одиниці виміру.")
                 return
@@ -1013,7 +1182,6 @@ class SADTk:
         self.root.wait_window(dlg)
         return out
 
-    # ✅ змінено: залежить від дизайну + к-ті варіантів
     def choose_method_window(self, p_norm, design, num_variants):
         dlg = tk.Toplevel(self.root)
         dlg.title("Вибір виду аналізу")
@@ -1025,7 +1193,6 @@ class SADTk:
 
         normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
 
-        # PARAMETRIC (однаково для CRD/RCBD – відрізняються обчисленням MS_error/df_error)
         if normal:
             msg = ("Дані експерименту відповідають принципам нормального розподілу\n"
                    "за методом Шапіра-Вілка.")
@@ -1037,32 +1204,24 @@ class SADTk:
                 ("Тест Бонферроні", "bonferroni"),
             ]
         else:
-            # NONPARAMETRIC: CRD -> KW/MW, RCBD -> Friedman/Wilcoxon
-            if design == "rcbd":
-                msg = ("Дані експерименту не відповідають принципам нормального розподілу\n"
-                       "за методом Шапіра-Вілка.\n"
-                       "Для блочного дизайну застосовуються спеціальні непараметричні тести.")
-                tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
-                if num_variants <= 1:
-                    options = []
-                elif num_variants == 2:
-                    options = [("Wilcoxon (парний)", "wilcoxon")]
-                else:
-                    options = [("Friedman", "friedman")]
-            else:
-                msg = ("Дані експерименту не відповідають принципам нормального розподілу\n"
-                       "за методом Шапіра-Вілка.\n"
-                       "Виберіть один з непараметричних типів аналізу.")
-                tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
+            msg = ("Дані експерименту не відповідають принципам нормального розподілу\n"
+                   "за методом Шапіра-Вілка.\n"
+                   "Виберіть один з непараметричних типів аналізу.")
+            tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
+
+            if design == "crd":
                 options = [
                     ("Краскела–Уолліса", "kw"),
                     ("Манна-Уітні", "mw"),
                 ]
-
-        if not options:
-            messagebox.showwarning("Помилка", "Недостатньо даних/варіантів для вибору методу.")
-            dlg.destroy()
-            return {"ok": False, "method": None}
+            else:
+                # RCBD: Friedman або Wilcoxon (парний)
+                if num_variants <= 1:
+                    options = [("Friedman", "friedman")]
+                elif num_variants == 2:
+                    options = [("Wilcoxon (парний)", "wilcoxon")]
+                else:
+                    options = [("Friedman", "friedman")]
 
         var = tk.StringVar(value=options[0][1])
         for text, val in options:
@@ -1172,7 +1331,13 @@ class SADTk:
         self.table_win.bind("<Control-V>", self.on_paste)
 
     def show_about(self):
-        messagebox.showinfo("Розробник", "S.A.D. — Статистичний аналіз даних\nВерсія: 1.0\nРозробик: Чаплоуцький Андрій Миколайович\nУманський національний університет")
+        messagebox.showinfo(
+            "Розробник",
+            "S.A.D. — Статистичний аналіз даних\n"
+            "Версія: 1.0\n"
+            "Розробик: Чаплоуцький Андрій Миколайович\n"
+            "Уманський національний університет"
+        )
 
     def bind_cell(self, e: tk.Entry):
         e.bind("<Return>", self.on_enter)
@@ -1276,7 +1441,8 @@ class SADTk:
     def paste_from_focus(self):
         w = self.table_win.focus_get()
         if isinstance(w, tk.Entry):
-            class E: pass
+            class E:
+                pass
             ev = E()
             ev.widget = w
             self.on_paste(ev)
@@ -1330,17 +1496,11 @@ class SADTk:
                 used.append(c)
         return used
 
-    # ✅ додано design: для RCBD у long додається "_block"
-    def collect_long(self, design="crd"):
+    def collect_long(self, design):
         long = []
         rep_cols = self.used_repeat_columns()
         if not rep_cols:
             return long, rep_cols
-
-        # порядок блоків — за порядком використаних повторностей
-        block_names = {}
-        for idx, c in enumerate(rep_cols, start=1):
-            block_names[c] = f"Блок {idx}"
 
         for i, row in enumerate(self.entries):
             levels = []
@@ -1350,7 +1510,7 @@ class SADTk:
                     v = f"рядок{i+1}"
                 levels.append(v)
 
-            for c in rep_cols:
+            for idx_c, c in enumerate(rep_cols):
                 s = row[c].get().strip()
                 if not s:
                     continue
@@ -1365,9 +1525,9 @@ class SADTk:
                 if self.factors_count >= 3: rec["C"] = levels[2]
                 if self.factors_count >= 4: rec["D"] = levels[3]
 
+                # ✅ Для RCBD додамо BLOCK, а також VARIANT (для Friedman/Wilcoxon)
                 if design == "rcbd":
-                    rec["_block"] = block_names.get(c, "Блок")
-
+                    rec["BLOCK"] = f"Блок {idx_c + 1}"
                 long.append(rec)
 
         return long, rep_cols
@@ -1381,9 +1541,9 @@ class SADTk:
 
         indicator = params["indicator"]
         units = params["units"]
-        design = params.get("design", "crd")  # "crd" або "rcbd"
+        design = params["design"]  # "crd" / "rcbd"
 
-        long, used_rep_cols = self.collect_long(design=design)
+        long, used_rep_cols = self.collect_long(design)
         if len(long) == 0:
             messagebox.showwarning("Помилка", "Немає числових даних для аналізу.\nПеревірте повторності та значення.")
             return
@@ -1395,50 +1555,16 @@ class SADTk:
 
         levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
 
-        # базова ANOVA по факторах (для SS факторів/комбінацій)
-        try:
-            res = anova_n_way(long, self.factor_keys, levels_by_factor)
-        except Exception as ex:
-            messagebox.showerror("Помилка аналізу", str(ex))
-            return
-
-        # Варіанти (комбінації факторів)
+        # Variant order / names (treatment combinations)
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         v_names = [" | ".join(map(str, k)) for k in variant_order]
         num_variants = len(variant_order)
 
-        # Групи по варіантах (для BF/параметричних постхок)
-        groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], [])
-                   for i in range(len(variant_order))}
-
-        # -------------------------
-        # Нормальність (Shapiro–Wilk)
-        # CRD: залишки від cell_means (як було)
-        # RCBD: залишки від моделі: y_hat = block_mean + treat_mean - grand
-        # -------------------------
+        # ✅ ANOVA (CRD або RCBD)
         try:
-            if design == "rcbd":
-                # treatment means by full combination
-                treat_means = subset_stats(long, tuple(self.factor_keys))
-                treat_mean = {k: v[0] for k, v in treat_means.items()}
-
-                # blocks
-                blocks = first_seen_order([r.get("_block") for r in long if r.get("_block") is not None])
-                block_groups = groups_by_keys(long, ("_block",))
-                block_mean = {b: float(np.mean(block_groups.get((b,), []))) for b in blocks}
-                grand_mean = float(np.mean(values))
-
-                residuals = []
-                for rec in long:
-                    b = rec.get("_block", None)
-                    key = tuple(rec.get(f) for f in self.factor_keys)
-                    y = rec.get("value", np.nan)
-                    if b is None or key not in treat_mean or b not in block_mean:
-                        continue
-                    yhat = block_mean[b] + treat_mean[key] - grand_mean
-                    residuals.append(float(y - yhat))
-                residuals = np.array(residuals, dtype=float)
-            else:
+            if design == "crd":
+                res = anova_n_way(long, self.factor_keys, levels_by_factor)
+                # residuals for Shapiro: як було (по коміркових середніх)
                 cell_means = res.get("cell_means", {})
                 residuals = []
                 for rec in long:
@@ -1448,23 +1574,42 @@ class SADTk:
                     if not math.isnan(v) and not math.isnan(m):
                         residuals.append(v - m)
                 residuals = np.array(residuals, dtype=float)
+            else:
+                # RCBD: OLS з блоками
+                res = anova_rcbd_ols(long, self.factor_keys, levels_by_factor, block_key="BLOCK")
+                residuals = np.array(res.get("residuals", []), dtype=float)
+        except Exception as ex:
+            messagebox.showerror("Помилка аналізу", str(ex))
+            return
 
+        # ✅ Shapiro–Wilk на залишках моделі відповідного дизайну
+        try:
             W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
         except Exception:
             W, p_norm = (np.nan, np.nan)
 
-        # вибір методу з урахуванням дизайну
-        choice = self.choose_method_window(p_norm, design=design, num_variants=num_variants)
+        # ✅ Вибір методу залежить від дизайну (CRD: KW/MW; RCBD: Friedman/Wilcoxon)
+        choice = self.choose_method_window(p_norm, design, num_variants)
         if not choice["ok"]:
             return
         method = choice["method"]
 
-        # -------------------------
-        # Підготовка описових по факторах (як було)
-        # -------------------------
+        MS_error = res.get("MS_error", np.nan)
+        df_error = res.get("df_error", np.nan)
+
+        # --- groups for variants (CRD use; RCBD for some displays still ok)
+        vstats = variant_mean_sd(long, self.factor_keys)
+        v_means = {k: vstats[k][0] for k in vstats.keys()}
+        v_sds = {k: vstats[k][1] for k in vstats.keys()}
+        v_ns = {k: vstats[k][2] for k in vstats.keys()}
+
+        means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
+        ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
+        groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
+
+        # factor groups (for factor tables)
         factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
-        factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()}
-                        for f in self.factor_keys}
+        factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
         factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
 
         factor_medians = {}
@@ -1477,17 +1622,7 @@ class SADTk:
                 factor_medians[f][lvl] = med
                 factor_q[f][lvl] = (q1, q3)
 
-        vstats = variant_mean_sd(long, self.factor_keys)
-        v_means = {k: vstats[k][0] for k in vstats.keys()}
-        v_sds = {k: vstats[k][1] for k in vstats.keys()}
-        v_ns = {k: vstats[k][2] for k in vstats.keys()}
-
-        means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
-        ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
-
-        ranks_by_variant = mean_ranks_by_key(
-            long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys)
-        )
+        ranks_by_variant = mean_ranks_by_key(long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys))
         ranks_by_factor = {f: mean_ranks_by_key(long, key_func=lambda rec, ff=f: rec.get(ff)) for f in self.factor_keys}
 
         v_medians = {}
@@ -1499,99 +1634,44 @@ class SADTk:
             v_medians[k] = med
             v_q[k] = (q1, q3)
 
-        # -------------------------
-        # PARAMETRIC: MS_error/df_error
-        # CRD: як є
-        # RCBD: SS_error = SS_total - SS_treat - SS_block; df_error = df_total - df_treat - df_block
-        # -------------------------
-        MS_error = res.get("MS_error", np.nan)
-        df_error = res.get("df_error", np.nan)
-        SS_total = res.get("SS_total", np.nan)
-        SS_error = res.get("SS_error", np.nan)
-
-        SS_block = np.nan
-        df_block = np.nan
-
-        if design == "rcbd":
-            # розрахунок SS_block
-            blocks = first_seen_order([r.get("_block") for r in long if r.get("_block") is not None])
-            b = len(blocks)
-            if b >= 2:
-                grand = float(np.mean(values))
-                block_groups = groups_by_keys(long, ("_block",))
-                SS_block_val = 0.0
-                n_total = 0
-                for bl in blocks:
-                    arr = block_groups.get((bl,), [])
-                    if not arr:
-                        continue
-                    mb = float(np.mean(arr))
-                    nb = len(arr)
-                    n_total += nb
-                    SS_block_val += nb * (mb - grand) ** 2
-                SS_block = float(SS_block_val)
-                df_block = int(b - 1)
-            else:
-                SS_block = np.nan
-                df_block = np.nan
-
-            # сума SS/df для всіх джерел treatment (усі фактори та їх взаємодії)
-            SS_treat = 0.0
-            df_treat = 0.0
-            for name, SSv, dfv, MSv, Fv, pv in res["table"]:
-                if name in ("Залишок", "Загальна"):
-                    continue
-                if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
-                    continue
-                if dfv is None or (isinstance(dfv, float) and math.isnan(dfv)):
-                    continue
-                SS_treat += float(SSv)
-                df_treat += float(dfv)
-
-            df_total = int(len(values) - 1)
-            if not any(math.isnan(x) for x in [SS_total, SS_block]) and not any(math.isnan(x) for x in [df_block]):
-                SS_error_rcbd = float(SS_total - SS_treat - SS_block)
-                df_error_rcbd = int(df_total - int(df_treat) - int(df_block))
-                if df_error_rcbd <= 0:
-                    df_error_rcbd = max(1, df_error_rcbd)
-                if SS_error_rcbd < 0:
-                    # на випадок сильної незбалансованості / пропусків
-                    SS_error_rcbd = max(0.0, SS_error_rcbd)
-
-                SS_error = SS_error_rcbd
-                df_error = df_error_rcbd
-                MS_error = (SS_error / df_error) if df_error > 0 else np.nan
-
-        # -------------------------
-        # Brown–Forsythe (тільки для параметричних)
-        # -------------------------
+        # Brown–Forsythe тільки для параметрики
         bf_F, bf_p = (np.nan, np.nan)
         if method in ("lsd", "tukey", "duncan", "bonferroni"):
             bf_F, bf_p = brown_forsythe_from_groups(groups1)
 
-        # -------------------------
-        # Nonparametric globals:
-        # CRD: KW/MW (як є)
-        # RCBD: Friedman/Wilcoxon
-        # -------------------------
+        # --- CRD nonparam globals
         kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
+        do_posthoc = True
 
-        # RCBD nonparam results
-        fr_stat, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
-        w_stat, w_p, w_n = (np.nan, np.nan, np.nan)
-
-        # для RCBD непараметричних (матриця блоків)
-        rcbd_variant_order = None
-        rcbd_v_names = None
-        rcbd_blocks_order = None
-        rcbd_block_values = None
-        rcbd_complete_blocks = None
-        fr_mean_ranks = {}
+        # --- RCBD nonparam globals
+        fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
+        wil_stat, wil_p = (np.nan, np.nan)
         rcbd_pairwise_rows = []
         rcbd_sig = {}
-        do_posthoc_rcbd = True
 
-        if method == "kw":
+        # Letters
+        letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
+        letters_named = {name: "" for name in v_names}
+        pairwise_rows = []
+
+        # =========================
+        #   ВИБІР ПОСТ-ХОК / ЛІТЕР
+        # =========================
+        if method == "lsd":
+            # factor letters
+            for f in self.factor_keys:
+                lvls = levels_by_factor[f]
+                sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
+                letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig_f)
+
+            sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
+            letters_named = cld_multi_letters(v_names, means1, sigv)
+
+        elif method in ("tukey", "duncan", "bonferroni"):
+            pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
+            letters_named = cld_multi_letters(v_names, means1, sig)
+
+        elif method == "kw":
             try:
                 kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
                 if len(kw_samples) >= 2:
@@ -1603,95 +1683,9 @@ class SADTk:
             except Exception:
                 kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
 
-        if method in ("friedman", "wilcoxon"):
-            rcbd_variant_order, rcbd_v_names, rcbd_blocks_order, rcbd_block_values, rcbd_complete_blocks = \
-                build_rcbd_block_map(long, self.factor_keys, block_key="_block")
-
-            if not rcbd_complete_blocks or len(rcbd_complete_blocks) < 2:
-                messagebox.showwarning(
-                    "Помилка",
-                    "Для RCBD непараметричних тестів потрібні повні блоки.\n"
-                    "Переконайтеся, що у кожному блоці заповнені ВСІ варіанти."
-                )
-                return
-
-            if method == "friedman":
-                k = len(rcbd_v_names)
-                n_blocks = len(rcbd_complete_blocks)
-                arrays = []
-                for vn in rcbd_v_names:
-                    arrays.append([rcbd_block_values[bl][vn] for bl in rcbd_complete_blocks])
-
-                try:
-                    fr = friedmanchisquare(*arrays)
-                    fr_stat = float(fr.statistic)
-                    fr_p = float(fr.pvalue)
-                    fr_df = int(k - 1)
-                    fr_W = float(fr_stat / (n_blocks * (k - 1))) if (n_blocks > 0 and k > 1) else np.nan
-                except Exception:
-                    fr_stat, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
-
-                fr_mean_ranks = friedman_mean_ranks(rcbd_v_names, rcbd_complete_blocks, rcbd_block_values)
-
-                # posthoc: тільки якщо p<alpha
-                if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p >= ALPHA:
-                    do_posthoc_rcbd = False
-                if do_posthoc_rcbd:
-                    rcbd_pairwise_rows, rcbd_sig = pairwise_wilcoxon_bonf(
-                        rcbd_v_names, rcbd_complete_blocks, rcbd_block_values, alpha=ALPHA
-                    )
-
-            elif method == "wilcoxon":
-                # лише 2 варіанти
-                if len(rcbd_v_names) != 2:
-                    messagebox.showwarning("Помилка", "Wilcoxon (парний) застосовується лише для 2 варіантів у RCBD.")
-                    return
-                a, b = rcbd_v_names[0], rcbd_v_names[1]
-                xa = [rcbd_block_values[bl][a] for bl in rcbd_complete_blocks]
-                xb = [rcbd_block_values[bl][b] for bl in rcbd_complete_blocks]
-                w_n = int(len(xa))
-                try:
-                    stat, p = wilcoxon(xa, xb, alternative="two-sided")
-                    w_stat = float(stat)
-                    w_p = float(p)
-                except Exception:
-                    w_stat, w_p = (np.nan, np.nan)
-                # для узгодженості звіту — зробимо "парне порівняння" як одну строку (без Bonf.)
-                rbc = wilcoxon_rank_biserial(np.array(xa), np.array(xb))
-                rcbd_pairwise_rows = [[f"{a}  vs  {b}", fmt_num(w_stat, 2), f"{w_p:.4f}",
-                                       "+" if (not (isinstance(w_p, float) and math.isnan(w_p)) and w_p < ALPHA) else "-",
-                                       fmt_num(rbc, 3), rbc_label(abs(rbc))]]
-                rcbd_sig = {(a, b): (not (isinstance(w_p, float) and math.isnan(w_p)) and w_p < ALPHA)}
-                fr_mean_ranks = friedman_mean_ranks(rcbd_v_names, rcbd_complete_blocks, rcbd_block_values)
-
-        # -------------------------
-        # Letters
-        # -------------------------
-        letters_factor = {}
-        letters_named = {name: "" for name in v_names}
-        pairwise_rows = []
-        do_posthoc = True
-
-        if method == "lsd":
-            for f in self.factor_keys:
-                lvls = levels_by_factor[f]
-                sig = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
-                letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig)
-
-            sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
-            letters_named = cld_multi_letters(v_names, means1, sigv)
-
-        elif method in ("tukey", "duncan", "bonferroni"):
-            for f in self.factor_keys:
-                letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
-            pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
-            letters_named = cld_multi_letters(v_names, means1, sig)
-
-        elif method == "kw":
-            for f in self.factor_keys:
-                letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
             if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
                 do_posthoc = False
+
             if do_posthoc:
                 pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
                 med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
@@ -1700,38 +1694,87 @@ class SADTk:
                 letters_named = {name: "" for name in v_names}
 
         elif method == "mw":
-            for f in self.factor_keys:
-                letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
             pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
             med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
             letters_named = cld_multi_letters(v_names, med_tmp, sig)
 
-        elif method in ("friedman", "wilcoxon"):
-            # факторні літери не формуємо (не змінюємо структуру вводу/факторів)
-            for f in self.factor_keys:
-                letters_factor[f] = {lvl: "" for lvl in levels_by_factor[f]}
+        elif method == "friedman":
+            # RCBD Friedman: потрібні повні блоки
+            block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
+            # додамо VARIANT в long для побудови матриці
+            long2 = []
+            for r in long:
+                rr = dict(r)
+                rr["VARIANT"] = " | ".join(str(rr.get(f)) for f in self.factor_keys)
+                long2.append(rr)
 
-            # літери по варіантах — на основі RCBD pairwise sig (або порожньо, якщо постхок не робився)
-            if method == "friedman":
-                if not do_posthoc_rcbd:
-                    letters_named = {vn: "" for vn in rcbd_v_names}
-                else:
-                    # для CLD потрібні "means"; для Friedman беремо mean ranks (менший ранг = менше значення)
-                    # але CLD сортує за спаданням; тому інвертуємо (чим МЕНШИЙ ранг — тим "краще", ставимо більший score)
-                    score = {vn: (-fr_mean_ranks.get(vn, np.nan)) for vn in rcbd_v_names}
-                    letters_named = cld_multi_letters(rcbd_v_names, score, rcbd_sig)
-            else:  # wilcoxon (2 варіанти)
-                score = {vn: (-fr_mean_ranks.get(vn, np.nan)) for vn in rcbd_v_names}
-                letters_named = cld_multi_letters(rcbd_v_names, score, rcbd_sig)
+            mat_rows, kept_blocks = rcbd_matrix_from_long(long2, v_names, block_names, variant_key="VARIANT", block_key="BLOCK")
+            if len(mat_rows) < 2:
+                messagebox.showwarning("Помилка", "Для Friedman потрібні щонайменше 2 повних блоки (без пропусків по варіантах).")
+                return
 
-        # мапа літер на variant_order
+            try:
+                cols = list(zip(*mat_rows))  # variants columns
+                fr = friedmanchisquare(*[np.array(c, dtype=float) for c in cols])
+                fr_chi2 = float(fr.statistic)
+                fr_p = float(fr.pvalue)
+                fr_df = int(len(v_names) - 1)
+                fr_W = kendalls_w_from_friedman(fr_chi2, n_blocks=len(mat_rows), k_treat=len(v_names))
+            except Exception:
+                fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
+
+            # posthoc only if significant
+            if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p < ALPHA:
+                rcbd_pairwise_rows, rcbd_sig = pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=ALPHA)
+                # letters use medians across all values (or median per variant)
+                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
+                letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
+            else:
+                letters_named = {name: "" for name in v_names}
+
+        elif method == "wilcoxon":
+            # RCBD Wilcoxon: тільки 2 варіанти
+            if len(v_names) != 2:
+                messagebox.showwarning("Помилка", "Wilcoxon (парний) застосовується лише для 2 варіантів.")
+                return
+
+            block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
+            long2 = []
+            for r in long:
+                rr = dict(r)
+                rr["VARIANT"] = " | ".join(str(rr.get(f)) for f in self.factor_keys)
+                long2.append(rr)
+
+            mat_rows, kept_blocks = rcbd_matrix_from_long(long2, v_names, block_names, variant_key="VARIANT", block_key="BLOCK")
+            if len(mat_rows) < 2:
+                messagebox.showwarning("Помилка", "Для Wilcoxon потрібні щонайменше 2 повні блоки (пари значень).")
+                return
+            arr = np.array(mat_rows, dtype=float)
+            x = arr[:, 0]
+            y = arr[:, 1]
+            try:
+                stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
+                wil_stat = float(stat)
+                wil_p = float(p)
+            except Exception:
+                wil_stat, wil_p = (np.nan, np.nan)
+
+            # letters from pair decision (single comparison)
+            if not (isinstance(wil_p, float) and math.isnan(wil_p)) and wil_p < ALPHA:
+                rcbd_sig = {(v_names[0], v_names[1]): True}
+                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
+                letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
+            else:
+                letters_named = {name: "" for name in v_names}
+
         letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
-        # -------------------------
-        # R2, CV (тільки для параметричних)
-        # -------------------------
+        # R2 для параметрики (для RCBD теж коректно, бо SS_error = SSE_full)
+        SS_total = res.get("SS_total", np.nan)
+        SS_error = res.get("SS_error", np.nan)
         R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
 
+        # CV (як було)
         cv_rows = []
         for f in self.factor_keys:
             lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
@@ -1741,45 +1784,49 @@ class SADTk:
         cv_rows.append(["Загальний", fmt_num(cv_total, 2)])
 
         # -------------------------
-        # REPORT segments
+        # REPORT segments (порядок як ти вимагав)
         # -------------------------
         seg = []
         seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
         seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
+
+        # 1) counts
         seg.append(("text",
-                    f"Дизайн експерименту:\t{'Повна рандомізація (CRD)' if design=='crd' else 'Блочна рандомізація (RCBD)'}\n\n"))
-        seg.append(("text", f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
+                    f"Кількість варіантів:\t{num_variants}\n"
+                    f"Кількість повторностей:\t{len(used_rep_cols)}\n"
+                    f"Загальна кількість облікових значень:\t{len(long)}\n\n"))
 
-method_label = {
-    "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
-    "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
-    "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
-    "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
-    "kw": "Непараметричний аналіз: Kruskal–Wallis.",
-    "mw": "Непараметричний аналіз: Mann–Whitney.",
-}.get(method, "")
+        # 2) method label
+        method_label = {
+            "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
+            "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
+            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
+            "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
+            "kw": "Непараметричний аналіз: Kruskal–Wallis.",
+            "mw": "Непараметричний аналіз: Mann–Whitney.",
+            "friedman": "Непараметричний аналіз (RCBD): Friedman.",
+            "wilcoxon": "Непараметричний аналіз (RCBD): Wilcoxon signed-rank (парний).",
+        }.get(method, "")
 
-if method_label:
-    seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
+        if method_label:
+            seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
 
-seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
-seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
-seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
+        # 3) explanations
+        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
+        seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
+        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
 
-if not math.isnan(W):
-    seg.append(("text", f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
-else:
-    seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
-
+        # 4) Shapiro (після пояснень)
+        if not math.isnan(W):
+            seg.append(("text",
+                        f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t"
+                        f"(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
+        else:
+            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
 
         nonparam = method in ("mw", "kw", "friedman", "wilcoxon")
 
-        if not math.isnan(W):
-            seg.append(("text", f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
-        else:
-            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
-           
-        # ---- CRD nonparam global test
+        # ---- Nonparam global lines (після Shapiro)
         if method == "kw":
             if not (isinstance(kw_p, float) and math.isnan(kw_p)):
                 concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
@@ -1790,25 +1837,24 @@ else:
             else:
                 seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
 
-        # ---- RCBD nonparam globals
         if method == "friedman":
             if not (isinstance(fr_p, float) and math.isnan(fr_p)):
                 concl = "істотна різниця " + significance_mark(fr_p) if fr_p < ALPHA else "-"
                 seg.append(("text",
                             f"Глобальний тест між варіантами (Friedman):\t"
-                            f"χ²={fmt_num(fr_stat,4)}; df={int(fr_df)}; p={fmt_num(fr_p,4)}\t{concl}\n"))
-                seg.append(("text", f"Коефіцієнт узгодженості Kendall’s W:\t{fmt_num(fr_W,4)}\n\n"))
+                            f"χ²={fmt_num(fr_chi2,4)}; df={int(fr_df)}; p={fmt_num(fr_p,4)}\t{concl}\n"))
+                seg.append(("text", f"Розмір ефекту (Kendall’s W):\t{fmt_num(fr_W,4)}\n\n"))
             else:
                 seg.append(("text", "Глобальний тест між варіантами (Friedman):\tн/д\n\n"))
 
         if method == "wilcoxon":
-            if not (isinstance(w_p, float) and math.isnan(w_p)):
-                concl = "істотна різниця " + significance_mark(w_p) if w_p < ALPHA else "-"
+            if not (isinstance(wil_p, float) and math.isnan(wil_p)):
+                concl = "істотна різниця " + significance_mark(wil_p) if wil_p < ALPHA else "-"
                 seg.append(("text",
-                            f"Тест Wilcoxon (парний):\t"
-                            f"W={fmt_num(w_stat,4)}; n={int(w_n)}; p={fmt_num(w_p,4)}\t{concl}\n\n"))
+                            f"Парний тест (Wilcoxon signed-rank):\t"
+                            f"W={fmt_num(wil_stat,4)}; p={fmt_num(wil_p,4)}\t{concl}\n\n"))
             else:
-                seg.append(("text", "Тест Wilcoxon (парний):\tн/д\n\n"))
+                seg.append(("text", "Парний тест (Wilcoxon signed-rank):\tн/д\n\n"))
 
         # ---- PARAMETRIC
         if not nonparam:
@@ -1820,39 +1866,16 @@ else:
             else:
                 seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
 
-            # ANOVA table: для RCBD додаємо рядок "Блок", і перераховуємо F,p для всіх факторів на MS_error_rcbd/df_error_rcbd
+            # ANOVA table
             anova_rows = []
-
-            # ✅ RCBD: блок
-            if design == "rcbd" and not any(math.isnan(x) for x in [SS_block, df_block, MS_error, df_error]) and df_block is not None:
-                MS_block = (SS_block / df_block) if df_block > 0 else np.nan
-                F_block = (MS_block / MS_error) if (MS_error > 0 and not math.isnan(MS_block)) else np.nan
-                p_block = 1 - f_dist.cdf(F_block, df_block, df_error) if (not math.isnan(F_block)) else np.nan
-                mark = significance_mark(p_block)
-                concl = f"істотна різниця {mark}" if mark else "-"
-                anova_rows.append(["Блок", fmt_num(SS_block, 2), str(int(df_block)), fmt_num(MS_block, 3),
-                                   fmt_num(F_block, 3), fmt_num(p_block, 4), concl])
-
-            # фактори/комбінації (оновлені F,p)
             for name, SSv, dfv, MSv, Fv, pv in res["table"]:
-                df_txt = str(int(dfv)) if dfv is not None and not math.isnan(dfv) else ""
+                df_txt = str(int(dfv)) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
                 if name in ("Залишок", "Загальна"):
-                    if name == "Залишок":
-                        anova_rows.append([name, fmt_num(SS_error, 2), str(int(df_error)), fmt_num(MS_error, 3), "", "", ""])
-                    else:
-                        anova_rows.append([name, fmt_num(SS_total, 2), str(int(len(values) - 1)), "", "", "", ""])
-                    continue
-
-                # recompute MS, F, p with corrected MS_error/df_error
-                SSv_ = float(SSv) if SSv is not None and not (isinstance(SSv, float) and math.isnan(SSv)) else np.nan
-                dfv_ = float(dfv) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else np.nan
-                MSv_ = (SSv_ / dfv_) if (not math.isnan(SSv_) and not math.isnan(dfv_) and dfv_ > 0) else np.nan
-                Fv_ = (MSv_ / MS_error) if (not math.isnan(MSv_) and not math.isnan(MS_error) and MS_error > 0) else np.nan
-                pv_ = (1 - f_dist.cdf(Fv_, dfv_, df_error)) if (not math.isnan(Fv_) and not math.isnan(dfv_)) else np.nan
-
-                mark = significance_mark(pv_)
-                concl = f"істотна різниця {mark}" if mark else "-"
-                anova_rows.append([name, fmt_num(SSv_, 2), df_txt, fmt_num(MSv_, 3), fmt_num(Fv_, 3), fmt_num(pv_, 4), concl])
+                    anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
+                else:
+                    mark = significance_mark(pv)
+                    concl = f"істотна різниця {mark}" if mark else "-"
+                    anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
 
             seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
             seg.append(("table", {
@@ -1864,25 +1887,12 @@ else:
             }))
             seg.append(("text", "\n"))
 
-            # ефект (%SS) та partial eta^2: у RCBD блок включаємо як частину SS_total (але не в partial eta^2 для факторів)
-            eff_rows = build_effect_strength_rows(
-                [("Блок", SS_block, df_block, (SS_block/df_block if (df_block and df_block > 0 and not math.isnan(SS_block)) else np.nan), None, None)]
-                + [r for r in res["table"] if r[0] != "Залишок"]
-                + [("Залишок", SS_error, df_error, MS_error, None, None)]
-            ) if (design == "rcbd" and not (isinstance(SS_block, float) and math.isnan(SS_block))) else build_effect_strength_rows(res["table"])
-
+            eff_rows = build_effect_strength_rows(res["table"])
             seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів та їх комбінацій (% від SS)\n"))
             seg.append(("table", {"headers": ["Джерело", "%"], "rows": eff_rows}))
             seg.append(("text", "\n"))
 
-            # partial eta^2: використовуємо SS_error (скоригований)
-            pe2_rows = build_partial_eta2_rows_with_label(
-                [(name, SSv, dfv, None, None, None) for (name, SSv, dfv, MSv, Fv, pv) in
-                 ([("Блок", SS_block, df_block, None, None, None)] + [r for r in res["table"] if r[0] != "Загальна"] +
-                  [("Загальна", SS_total, len(values)-1, None, None, None)])
-                 ]
-            )
-            # Примітка: рядок "Блок" теж матиме partial η² відносно скоригованої похибки — це методично допустимо.
+            pe2_rows = build_partial_eta2_rows_with_label(res["table"])
             seg.append(("text", "ТАБЛИЦЯ 3. Розмір ефекту (partial η²)\n"))
             seg.append(("table", {"headers": ["Джерело", "partial η²", "Висновок"], "rows": pe2_rows}))
             seg.append(("text", "\n"))
@@ -1895,31 +1905,10 @@ else:
 
             tno = 5
             if method == "lsd":
-                # перерахунок НІР₀₅ на скоригованих MS_error/df_error
-                tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
                 nir_rows = []
-
-                # Загальна (по варіантах)
-                n_eff_cells = harmonic_mean([ns1.get(name, 0) for name in v_names])
-                nir_all = tval * math.sqrt(2 * MS_error / n_eff_cells) if not any(
-                    math.isnan(x) for x in [tval, MS_error, n_eff_cells]
-                ) else np.nan
-
-                # Факторні
-                NIR05 = {}
-                NIR05["Загальна"] = nir_all
-                for fct in self.factor_keys:
-                    marg = subset_stats(long, (fct,))
-                    n_eff = harmonic_mean([v[1] for v in marg.values() if v[1] and v[1] > 0])
-                    nir = tval * math.sqrt(2 * MS_error / n_eff) if not any(
-                        math.isnan(x) for x in [tval, MS_error, n_eff]
-                    ) else np.nan
-                    NIR05[f"Фактор {fct}"] = nir
-
                 for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
-                    if key in NIR05:
-                        nir_rows.append([key, fmt_num(NIR05[key], 4)])
-
+                    if key in res.get("NIR05", {}):
+                        nir_rows.append([key, fmt_num(res["NIR05"][key], 4)])
                 seg.append(("text", "ТАБЛИЦЯ 5. Значення НІР₀₅\n"))
                 seg.append(("table", {"headers": ["Елемент", "НІР₀₅"], "rows": nir_rows}))
                 seg.append(("text", "\n"))
@@ -1960,58 +1949,61 @@ else:
                 seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
                 seg.append(("text", "\n"))
 
-        # ---- NONPARAMETRIC
+        # ---- NONPARAMETRIC TABLES
         else:
-            # CRD nonparam (як було)
-            if method in ("kw", "mw"):
-                tno = 1
-                for f in self.factor_keys:
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика по фактору {f} (непараметрична)\n"))
-                    rows = []
-                    for lvl in levels_by_factor[f]:
-                        med = factor_medians[f].get(lvl, np.nan)
-                        q1, q3 = factor_q[f].get(lvl, (np.nan, np.nan))
-                        rank_m = ranks_by_factor[f].get(lvl, np.nan)
-                        letter = letters_factor[f].get(lvl, "")
-                        rows.append([
-                            str(lvl),
-                            str(int(factor_ns[f].get(lvl, 0))),
-                            fmt_num(med, 3),
-                            f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
-                            fmt_num(rank_m, 2),
-                            (letter if letter else "-")
-                        ])
-                    seg.append(("table", {"headers": [f"Градація {f}", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"], "rows": rows}))
-                    seg.append(("text", "\n"))
-                    tno += 1
+            tno = 1
 
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
+            # Для непараметрики CRD — як було (описова по факторах/варіантах)
+            # Для RCBD — теж можна показати описову (медіана, Q1–Q3, середній ранг), це не ламає метод.
+            for f in self.factor_keys:
+                seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика по фактору {f} (непараметрична)\n"))
                 rows = []
-                for k in variant_order:
-                    name = " | ".join(map(str, k))
-                    med = v_medians.get(k, np.nan)
-                    q1, q3 = v_q.get(k, (np.nan, np.nan))
-                    rank_m = ranks_by_variant.get(name, np.nan)
-                    letter = letters_variants.get(k, "")
+                for lvl in levels_by_factor[f]:
+                    med = factor_medians[f].get(lvl, np.nan)
+                    q1, q3 = factor_q[f].get(lvl, (np.nan, np.nan))
+                    rank_m = ranks_by_factor[f].get(lvl, np.nan)
+                    letter = letters_factor[f].get(lvl, "")
                     rows.append([
-                        name,
-                        str(int(v_ns.get(k, 0))),
+                        str(lvl),
+                        str(int(factor_ns[f].get(lvl, 0))),
                         fmt_num(med, 3),
                         f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
                         fmt_num(rank_m, 2),
                         (letter if letter else "-")
                     ])
-                seg.append(("table", {
-                    "headers": ["Варіант", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"],
-                    "rows": rows,
-                    "padding_px": 32,
-                    "extra_gap_after_col": 0,
-                    "extra_gap_px": 80
-                }))
+                seg.append(("table", {"headers": [f"Градація {f}", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"], "rows": rows}))
                 seg.append(("text", "\n"))
                 tno += 1
 
-                if method == "kw" and not do_posthoc:
+            seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
+            rows = []
+            for k in variant_order:
+                name = " | ".join(map(str, k))
+                med = v_medians.get(k, np.nan)
+                q1, q3 = v_q.get(k, (np.nan, np.nan))
+                rank_m = ranks_by_variant.get(name, np.nan)
+                letter = letters_variants.get(k, "")
+                rows.append([
+                    name,
+                    str(int(v_ns.get(k, 0))),
+                    fmt_num(med, 3),
+                    f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
+                    fmt_num(rank_m, 2),
+                    (letter if letter else "-")
+                ])
+            seg.append(("table", {
+                "headers": ["Варіант", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"],
+                "rows": rows,
+                "padding_px": 32,
+                "extra_gap_after_col": 0,
+                "extra_gap_px": 80
+            }))
+            seg.append(("text", "\n"))
+            tno += 1
+
+            # Posthoc for CRD KW
+            if method == "kw":
+                if not do_posthoc:
                     seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
                 else:
                     if pairwise_rows:
@@ -2019,41 +2011,15 @@ else:
                         seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
                         seg.append(("text", "\n"))
 
-            # RCBD nonparam (нові звіти)
-            else:
-                tno = 1
-                # mean ranks (по блоках)
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Середні ранги варіантів (в межах блоків)\n"))
-                rows = []
-                for vn in rcbd_v_names:
-                    rows.append([vn, fmt_num(fr_mean_ranks.get(vn, np.nan), 3)])
-                seg.append(("table", {"headers": ["Варіант", "Середній ранг"], "rows": rows}))
-                seg.append(("text", "\n"))
-                tno += 1
-
-                if method == "friedman":
-                    # глобальна таблиця
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Friedman test\n"))
-                    concl = "+" if (not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p < ALPHA) else "-"
-                    seg.append(("table", {"headers": ["χ²", "df", "p", "Істотна різниця", "Kendall’s W"],
-                                          "rows": [[fmt_num(fr_stat, 4), str(int(fr_df)), fmt_num(fr_p, 4), concl, fmt_num(fr_W, 4)]]}))
-                    seg.append(("text", "\n"))
-                    tno += 1
-
-                    if not do_posthoc_rcbd:
-                        seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Friedman не виявив істотної різниці (p ≥ 0.05).\n\n"))
-                    else:
-                        if rcbd_pairwise_rows:
-                            seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Wilcoxon) + Bonferroni + ефект (rank-biserial)\n"))
-                            seg.append(("table", {"headers": ["Комбінація варіантів", "W", "p (Bonf.)", "Істотна різниця", "r (RBC)", "Висновок"],
-                                                  "rows": rcbd_pairwise_rows}))
-                            seg.append(("text", "\n"))
-
-                else:  # wilcoxon (2 варіанти)
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Wilcoxon signed-rank (парний)\n"))
-                    seg.append(("table", {"headers": ["Комбінація варіантів", "W", "p", "Істотна різниця", "r (RBC)", "Висновок"],
-                                          "rows": rcbd_pairwise_rows}))
-                    seg.append(("text", "\n"))
+            # Posthoc for RCBD Friedman (pairwise Wilcoxon)
+            if method == "friedman":
+                if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p >= ALPHA:
+                    seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Friedman не виявив істотної різниці (p ≥ 0.05).\n\n"))
+                else:
+                    if rcbd_pairwise_rows:
+                        seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Wilcoxon, Bonferroni) + ефект (r)\n"))
+                        seg.append(("table", {"headers": ["Комбінація варіантів", "W", "p (Bonf.)", "Істотна різниця", "r"], "rows": rcbd_pairwise_rows}))
+                        seg.append(("text", "\n"))
 
         seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
 
