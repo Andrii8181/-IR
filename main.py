@@ -14,10 +14,19 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
 ✅ Іконка icon.ico: пошук у корені програми (папка скрипта), cwd, папка запуску (argv0), папка exe (sys.executable),
    підтримка PyInstaller (_MEIPASS). Ставимо iconbitmap для всіх вікон.
 
-✅ Додано вибір дизайну: CRD (повна рандомізація) / RCBD (блочна).
+✅ Додано вибір дизайну: CRD / RCBD / Split-plot (ТІЛЬКИ параметричний).
 ✅ Для RCBD:
    - Параметрика: ANOVA з блоками як додатковим джерелом варіації, залишки моделі для Shapiro.
    - Непараметрика: Friedman (k>2) або Wilcoxon signed-rank (k=2).
+✅ Для Split-plot (параметричний):
+   - Обирається головний фактор (Whole-plot factor).
+   - Модель: BLOCK + MAIN + BLOCK×MAIN + інші ефекти (без BLOCK взаємодій, крім BLOCK×MAIN).
+   - Тест MAIN: MS(MAIN)/MS(BLOCK×MAIN).
+   - Інші ефекти: MS(effect)/MS(Residual).
+   - Парні порівняння виконуються КОРЕКТНО за факторними таблицями:
+       MAIN — на whole-plot error; інші фактори — на subplot error.
+   - Парні порівняння "повних варіантів" (комбінацій факторів) не виконуються (методично некоректно без контрастів).
+
 ✅ У звітах змінено порядок рядків (як ти вимагав).
 """
 
@@ -583,15 +592,14 @@ def anova_n_way(long, factors, levels_by_factor):
         "yhat": None,
         "residuals": None,
         "rankX": None,
+        "design_kind": "crd",
     }
 
 
 # -------------------------
-# RCBD ANOVA через OLS (блоки + фактори, без блокових взаємодій)
-# SS термів через SSE(reduced) - SSE(full)
+# OLS helper building blocks (used by RCBD + Split-plot)
 # -------------------------
 def _dummy_matrix_from_levels(levels_list, drop_first=True):
-    # levels_list: список категорій довжини N
     uniq = first_seen_order(levels_list)
     if len(uniq) <= 1:
         return np.zeros((len(levels_list), 0)), []
@@ -608,17 +616,15 @@ def _dummy_matrix_from_levels(levels_list, drop_first=True):
     return X, names
 
 
-def _interaction_cols(mats, names_lists, term):
-    # term: tuple of factor names already mapped outside
+def _interaction_cols(mats, term):
     # mats: dict factor -> (X, colnames)
-    # Build all pairwise products of columns across factors in term
     if len(term) == 0:
-        return np.zeros((mats[next(iter(mats))][0].shape[0], 0)), []
+        any_key = next(iter(mats.keys()))
+        return np.zeros((mats[any_key][0].shape[0], 0)), []
     Xs = [mats[f][0] for f in term]
     Ns = [mats[f][1] for f in term]
     if any(X.shape[1] == 0 for X in Xs):
         return np.zeros((Xs[0].shape[0], 0)), []
-    # Start with first factor cols
     Xcur = Xs[0]
     ncur = Ns[0]
     for i in range(1, len(term)):
@@ -636,8 +642,6 @@ def _interaction_cols(mats, names_lists, term):
 
 
 def ols_sse_rank(y, X):
-    # returns SSE, rank, yhat, residuals
-    # Solve via lstsq (handles non-square)
     if X.size == 0:
         yhat = np.mean(y) * np.ones_like(y)
         resid = y - yhat
@@ -651,46 +655,40 @@ def ols_sse_rank(y, X):
     return sse, rank, yhat, resid
 
 
+# -------------------------
+# RCBD ANOVA через OLS (як було)
+# -------------------------
 def anova_rcbd_ols(long, treat_factors, levels_by_factor, block_key="BLOCK"):
-    # treat_factors: ["A","B","C","D"] (subset)
-    # Model: intercept + BLOCK + all treatment terms among treat_factors (main + interactions), no BLOCK interactions
     y = np.array([r["value"] for r in long], dtype=float)
     N = len(y)
 
-    # levels
     blocks = [r.get(block_key) for r in long]
     if any(b is None for b in blocks):
         raise ValueError("Для RCBD потрібні блоки (BLOCK).")
 
     mats = {}
-    # BLOCK
     Xb, bn = _dummy_matrix_from_levels(blocks, drop_first=True)
     mats[block_key] = (Xb, [f"Блок:{x}" for x in bn])
 
-    # treatment main dummies
     for f in treat_factors:
         levels = [r.get(f) for r in long]
         Xf, fn = _dummy_matrix_from_levels(levels, drop_first=True)
         mats[f] = (Xf, [f"{f}:{x}" for x in fn])
 
-    # Terms list: block main + treatment terms (all combos of treat factors)
     term_cols = {}
     term_order = []
 
-    # block term
     term_order.append((block_key,))
     term_cols[(block_key,)] = mats[block_key]
 
-    # treatment terms (main + interactions)
     for rnk in range(1, len(treat_factors) + 1):
         for comb in combinations(treat_factors, rnk):
-            Xterm, nterm = _interaction_cols(mats, None, comb) if len(comb) > 1 else mats[comb[0]]
+            Xterm, nterm = _interaction_cols(mats, comb) if len(comb) > 1 else mats[comb[0]]
             term_cols[comb] = (Xterm, nterm if len(comb) > 1 else mats[comb[0]][1])
             term_order.append(comb)
 
-    # Build full X: intercept + block + all treat terms
     X_parts = [np.ones((N, 1), dtype=float)]
-    part_map = []  # (term, start, end)
+    part_map = []
     cur = 1
     for term in term_order:
         Xterm = term_cols[term][0]
@@ -712,7 +710,6 @@ def anova_rcbd_ols(long, treat_factors, levels_by_factor, block_key="BLOCK"):
     grand_mean = float(np.mean(y))
     SS_total = float(np.sum((y - grand_mean) ** 2))
 
-    # SS for each term via reduced model (drop term columns)
     SS = {}
     df = {}
     table_rows = []
@@ -724,37 +721,28 @@ def anova_rcbd_ols(long, treat_factors, levels_by_factor, block_key="BLOCK"):
             return f"Фактор {term[0]}"
         return "Фактор " + "×".join(term)
 
-    # precompute full columns indices per term from part_map
     for term, s, e in part_map:
         df_term = max(0, e - s)
         df[term] = df_term
 
     for term, s, e in part_map:
-        if term == (block_key,):
-            pass
         df_term = df[term]
         if df_term <= 0:
             SS[term] = 0.0
             continue
 
         keep_cols = list(range(X_full.shape[1]))
-        # remove [s, e)
         for idx in range(e - 1, s - 1, -1):
             if idx in keep_cols:
                 keep_cols.remove(idx)
         X_red = X_full[:, keep_cols]
-        SSE_red, rank_red, _, _ = ols_sse_rank(y, X_red)
+        SSE_red, _, _, _ = ols_sse_rank(y, X_red)
         ss_term = float(SSE_red - SSE_full)
         if ss_term < 0 and abs(ss_term) < 1e-9:
             ss_term = 0.0
         SS[term] = ss_term
 
-    # Build rows in logical order: treatment terms (as your reports expect) and block row separate
-    # We will include blocks row in table (after treatment rows), then residual, total
-    # IMPORTANT: This keeps "Фактор A/B/..." etc present.
-    # order for output: treatment terms in increasing order, then blocks
-    treat_terms = [t for t in term_order if t != (block_key,)]
-    # Output treatment terms:
+    treat_terms = [t_ for t_ in term_order if t_ != (block_key,)]
     for term in treat_terms:
         name = term_pretty(term)
         SSv = SS.get(term, 0.0)
@@ -764,7 +752,6 @@ def anova_rcbd_ols(long, treat_factors, levels_by_factor, block_key="BLOCK"):
         pv = 1 - f_dist.cdf(Fv, dfv, df_error) if (not math.isnan(Fv) and dfv > 0) else np.nan
         table_rows.append((name, SSv, dfv, MSv, Fv, pv))
 
-    # Add blocks row
     term = (block_key,)
     name = term_pretty(term)
     SSv = SS.get(term, 0.0)
@@ -777,12 +764,10 @@ def anova_rcbd_ols(long, treat_factors, levels_by_factor, block_key="BLOCK"):
     table_rows.append(("Залишок", SSE_full, df_error, MS_error, None, None))
     table_rows.append(("Загальна", SS_total, df_total, None, None, None))
 
-    # NIR05 (як у твоєму підході): використовуємо MS_error та df_error
     tval = t.ppf(1 - ALPHA / 2, df_error) if df_error > 0 else np.nan
     NIR05 = {}
-    # для "Загальна" беремо ефективне n як гармонійне по варіантах (treatment combinations)
     treat_keys = tuple(treat_factors)
-    cell_counts = subset_stats(long, treat_keys)  # (mean,n)
+    cell_counts = subset_stats(long, treat_keys)
     n_eff = harmonic_mean([v[1] for v in cell_counts.values() if v[1] and v[1] > 0])
     nir_all = tval * math.sqrt(2 * MS_error / n_eff) if not any(math.isnan(x) for x in [tval, MS_error, n_eff]) else np.nan
     NIR05["Загальна"] = nir_all
@@ -792,7 +777,6 @@ def anova_rcbd_ols(long, treat_factors, levels_by_factor, block_key="BLOCK"):
         nir = tval * math.sqrt(2 * MS_error / n_eff_f) if not any(math.isnan(x) for x in [tval, MS_error, n_eff_f]) else np.nan
         NIR05[f"Фактор {fct}"] = nir
 
-    # For CRD-style parts we also return cell_means (treat cells)
     cell_means = {k: v[0] for k, v in subset_stats(long, treat_keys).items()}
 
     return {
@@ -807,6 +791,238 @@ def anova_rcbd_ols(long, treat_factors, levels_by_factor, block_key="BLOCK"):
         "yhat": yhat,
         "residuals": resid,
         "rankX": rank_full,
+        "design_kind": "rcbd",
+    }
+
+
+# -------------------------
+# Split-plot ANOVA через OLS (параметричний)
+# -------------------------
+def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
+    """
+    Split-plot (класичний):
+      Whole-plot factor = main_factor
+      Blocks = повторності (BLOCK)
+      Whole-plot error = BLOCK×MAIN
+      Subplot error = Residual
+
+    Модель (fixed):
+      Intercept + BLOCK + MAIN + BLOCK×MAIN + (all other treatment terms among treat_factors)
+    Без BLOCK взаємодій, крім BLOCK×MAIN.
+    """
+    if main_factor not in treat_factors:
+        raise ValueError("Головний фактор спліт-плоту має бути серед факторів A/B/C/D.")
+
+    y = np.array([r["value"] for r in long], dtype=float)
+    N = len(y)
+
+    blocks = [r.get(block_key) for r in long]
+    if any(b is None for b in blocks):
+        raise ValueError("Для Split-plot потрібні блоки (BLOCK).")
+
+    mats = {}
+
+    # BLOCK
+    Xb, bn = _dummy_matrix_from_levels(blocks, drop_first=True)
+    mats[block_key] = (Xb, [f"Блок:{x}" for x in bn])
+
+    # all treatment factors dummies
+    for f in treat_factors:
+        levels = [r.get(f) for r in long]
+        Xf, fn = _dummy_matrix_from_levels(levels, drop_first=True)
+        mats[f] = (Xf, [f"{f}:{x}" for x in fn])
+
+    # Build terms:
+    # 1) BLOCK
+    # 2) MAIN
+    # 3) BLOCK×MAIN  (whole-plot error term)
+    # 4) all other treatment terms (all combos of treat_factors excluding MAIN-alone already included? we include all combos, but skip MAIN and skip BLOCK×MAIN because already added)
+    term_order = []
+    term_cols = {}
+
+    term_order.append((block_key,))
+    term_cols[(block_key,)] = mats[block_key]
+
+    term_order.append((main_factor,))
+    term_cols[(main_factor,)] = mats[main_factor]
+
+    term_order.append((block_key, main_factor))
+    Xbm, nbm = _interaction_cols(mats, (block_key, main_factor))
+    term_cols[(block_key, main_factor)] = (Xbm, nbm)
+
+    # other treatment terms (excluding MAIN only, but include interactions with MAIN, and among other factors)
+    for rnk in range(1, len(treat_factors) + 1):
+        for comb in combinations(treat_factors, rnk):
+            if comb == (main_factor,):
+                continue
+            Xterm, nterm = _interaction_cols(mats, comb) if len(comb) > 1 else mats[comb[0]]
+            term_cols[comb] = (Xterm, nterm if len(comb) > 1 else mats[comb[0]][1])
+            term_order.append(comb)
+
+    # Build full X
+    X_parts = [np.ones((N, 1), dtype=float)]
+    part_map = []
+    cur = 1
+    for term in term_order:
+        Xterm = term_cols[term][0]
+        if Xterm.shape[1] == 0:
+            part_map.append((term, cur, cur))
+            continue
+        X_parts.append(Xterm)
+        part_map.append((term, cur, cur + Xterm.shape[1]))
+        cur += Xterm.shape[1]
+    X_full = np.hstack(X_parts) if X_parts else np.ones((N, 1), dtype=float)
+
+    SSE_full, rank_full, yhat, resid = ols_sse_rank(y, X_full)
+    df_total = N - 1
+    df_error = N - rank_full
+    if df_error <= 0:
+        df_error = 1
+    MS_error = SSE_full / df_error
+
+    grand_mean = float(np.mean(y))
+    SS_total = float(np.sum((y - grand_mean) ** 2))
+
+    # SS per term via reduced model
+    SS = {}
+    df = {}
+
+    for term, s, e in part_map:
+        df_term = max(0, e - s)
+        df[term] = df_term
+
+    for term, s, e in part_map:
+        df_term = df.get(term, 0)
+        if df_term <= 0:
+            SS[term] = 0.0
+            continue
+
+        keep_cols = list(range(X_full.shape[1]))
+        for idx in range(e - 1, s - 1, -1):
+            if idx in keep_cols:
+                keep_cols.remove(idx)
+        X_red = X_full[:, keep_cols]
+        SSE_red, _, _, _ = ols_sse_rank(y, X_red)
+        ss_term = float(SSE_red - SSE_full)
+        if ss_term < 0 and abs(ss_term) < 1e-9:
+            ss_term = 0.0
+        SS[term] = ss_term
+
+    # Whole-plot error term:
+    wp_term = (block_key, main_factor)
+    df_wp = df.get(wp_term, 0)
+    SS_wp = SS.get(wp_term, 0.0)
+    MS_wp = (SS_wp / df_wp) if df_wp > 0 else np.nan
+
+    # output table with correct denominators:
+    table_rows = []
+
+    def pretty(term):
+        if term == (block_key,):
+            return "Блоки"
+        if term == (block_key, main_factor):
+            return f"Блоки×{main_factor} (Whole-plot error)"
+        if len(term) == 1:
+            return f"Фактор {term[0]}"
+        return "Фактор " + "×".join(term)
+
+    for term in term_order:
+        if term in ((block_key,),):
+            # blocks row: can show F vs MS_wp (common practice) but not essential
+            name = pretty(term)
+            SSv = SS.get(term, 0.0)
+            dfv = df.get(term, 0)
+            MSv = SSv / dfv if dfv > 0 else np.nan
+            if not math.isnan(MS_wp) and MS_wp > 0 and dfv > 0:
+                Fv = MSv / MS_wp
+                pv = 1 - f_dist.cdf(Fv, dfv, df_wp) if (not math.isnan(Fv) and df_wp > 0) else np.nan
+            else:
+                Fv, pv = (np.nan, np.nan)
+            table_rows.append((name, SSv, dfv, MSv, Fv, pv))
+            continue
+
+        if term == (block_key, main_factor):
+            name = pretty(term)
+            SSv = SS.get(term, 0.0)
+            dfv = df.get(term, 0)
+            MSv = SSv / dfv if dfv > 0 else np.nan
+            # this is error term; typically no F
+            table_rows.append((name, SSv, dfv, MSv, None, None))
+            continue
+
+        # treatment terms:
+        name = pretty(term)
+        SSv = SS.get(term, 0.0)
+        dfv = df.get(term, 0)
+        MSv = SSv / dfv if dfv > 0 else np.nan
+
+        # main factor tested on MS_wp; others on MS_error
+        if term == (main_factor,):
+            denom_ms = MS_wp
+            denom_df = df_wp
+        else:
+            denom_ms = MS_error
+            denom_df = df_error
+
+        if dfv > 0 and (not math.isnan(denom_ms)) and denom_ms > 0 and (not math.isnan(MSv)):
+            Fv = MSv / denom_ms
+            pv = 1 - f_dist.cdf(Fv, dfv, denom_df) if (not math.isnan(Fv) and denom_df > 0) else np.nan
+        else:
+            Fv, pv = (np.nan, np.nan)
+
+        table_rows.append((name, SSv, dfv, MSv, Fv, pv))
+
+    # Residual + Total
+    table_rows.append(("Залишок (Sub-plot error)", SSE_full, df_error, MS_error, None, None))
+    table_rows.append(("Загальна", SS_total, df_total, None, None, None))
+
+    # NIR05:
+    # - MAIN uses MS_wp, df_wp
+    # - others use MS_error, df_error
+    NIR05 = {}
+    # effective n for MAIN comparisons: use harmonic mean of counts per main level across all observations
+    # (простий і стабільний підхід в рамках цієї програми)
+    main_marg = subset_stats(long, (main_factor,))
+    n_eff_main = harmonic_mean([v[1] for v in main_marg.values() if v[1] and v[1] > 0])
+
+    if df_wp > 0 and (not math.isnan(MS_wp)) and MS_wp > 0:
+        t_wp = t.ppf(1 - ALPHA / 2, df_wp)
+        nir_main = t_wp * math.sqrt(2 * MS_wp / n_eff_main) if not any(math.isnan(x) for x in [t_wp, MS_wp, n_eff_main]) else np.nan
+    else:
+        nir_main = np.nan
+    NIR05[f"Фактор {main_factor} (Whole-plot)"] = nir_main
+
+    if df_error > 0 and (not math.isnan(MS_error)) and MS_error > 0:
+        t_sp = t.ppf(1 - ALPHA / 2, df_error)
+        for f in treat_factors:
+            if f == main_factor:
+                continue
+            marg = subset_stats(long, (f,))
+            n_eff_f = harmonic_mean([v[1] for v in marg.values() if v[1] and v[1] > 0])
+            nir = t_sp * math.sqrt(2 * MS_error / n_eff_f) if not any(math.isnan(x) for x in [t_sp, MS_error, n_eff_f]) else np.nan
+            NIR05[f"Фактор {f} (Sub-plot)"] = nir
+
+    # cell means for full combinations (for residuals etc.)
+    treat_keys = tuple(treat_factors)
+    cell_means = {k: v[0] for k, v in subset_stats(long, treat_keys).items()}
+    cell_counts = {k: v[1] for k, v in subset_stats(long, treat_keys).items()}
+
+    return {
+        "table": table_rows,
+        "cell_means": cell_means,
+        "cell_counts": cell_counts,
+        "MS_error": MS_error,
+        "df_error": df_error,
+        "MS_whole": MS_wp,
+        "df_whole": df_wp,
+        "main_factor": main_factor,
+        "NIR05": NIR05,
+        "SS_total": SS_total,
+        "SS_error": SSE_full,
+        "yhat": yhat,
+        "residuals": resid,
+        "rankX": rank_full,
+        "design_kind": "split",
     }
 
 
@@ -941,7 +1157,6 @@ def pairwise_mw_bonf_with_effect(v_names, groups_dict, alpha=0.05):
 # RCBD nonparametric helpers: build blocks x variants matrix
 # -------------------------
 def rcbd_matrix_from_long(long, variant_names, block_names, variant_key="VARIANT", block_key="BLOCK"):
-    # returns list of rows per block aligned to variant_names, dropping blocks with any missing
     by = defaultdict(dict)  # block -> {variant: value}
     for r in long:
         b = r.get(block_key)
@@ -972,7 +1187,6 @@ def rcbd_matrix_from_long(long, variant_names, block_names, variant_key="VARIANT
 
 
 def pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=0.05):
-    # mat_rows: list[block][variant] complete
     arr = np.array(mat_rows, dtype=float)
     n_blocks = arr.shape[0]
     pairs = [(i, j) for i in range(len(v_names)) for j in range(i + 1, len(v_names))]
@@ -983,7 +1197,6 @@ def pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=0.05):
     for i, j in pairs:
         x = arr[:, i]
         y = arr[:, j]
-        # remove ties where diff=0 for wilcoxon
         try:
             stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
         except Exception:
@@ -993,8 +1206,6 @@ def pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=0.05):
         decision = (p_adj < alpha)
         sig[(v_names[i], v_names[j])] = decision
 
-        # effect size r ~ |Z|/sqrt(n)
-        # approximate Z from p (two-sided): Z = norm.isf(p/2)
         try:
             z = float(norm.isf(p / 2.0))
             r_eff = abs(z) / math.sqrt(max(1, n_blocks))
@@ -1032,7 +1243,7 @@ def build_effect_strength_rows(anova_table_rows):
 def build_partial_eta2_rows_with_label(anova_table_rows):
     SS_error = None
     for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
-        if name == "Залишок":
+        if name.startswith("Залишок"):
             SS_error = SSv
             break
 
@@ -1041,7 +1252,7 @@ def build_partial_eta2_rows_with_label(anova_table_rows):
 
     rows = []
     for name, SSv, dfv, MSv, Fv, pv in anova_table_rows:
-        if name in ("Залишок", "Загальна"):
+        if name.startswith("Залишок") or name == "Загальна":
             continue
         if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
             continue
@@ -1151,26 +1362,67 @@ class SADTk:
 
         # ✅ Дизайн експерименту
         tk.Label(frm, text="Дизайн експерименту:", fg="#000000").grid(row=2, column=0, sticky="w", pady=(10, 4))
+
         design_var = tk.StringVar(value="crd")
         rfrm = tk.Frame(frm)
         rfrm.grid(row=2, column=1, sticky="w", pady=(10, 4))
-        tk.Radiobutton(rfrm, text="Повна рандомізація (CRD)", variable=design_var, value="crd").pack(anchor="w")
-        tk.Radiobutton(rfrm, text="Блочна рандомізація (RCBD)", variable=design_var, value="rcbd").pack(anchor="w")
 
-        out = {"ok": False, "indicator": "", "units": "", "design": "crd"}
+        # "більша точка" — робимо крупніший шрифт + padding
+        rb_font = ("Times New Roman", 16)
+
+        tk.Radiobutton(rfrm, text="Повна рандомізація (CRD)", variable=design_var, value="crd",
+                       font=rb_font).pack(anchor="w", pady=2)
+        tk.Radiobutton(rfrm, text="Блочна рандомізація (RCBD)", variable=design_var, value="rcbd",
+                       font=rb_font).pack(anchor="w", pady=2)
+        tk.Radiobutton(rfrm, text="Спліт-плот (Split-plot) — лише параметричний", variable=design_var, value="split",
+                       font=rb_font).pack(anchor="w", pady=2)
+
+        # ✅ Додатково: головний фактор для Split-plot
+        main_factor_var = tk.StringVar(value="A")
+
+        sp_frame = tk.Frame(frm)
+        sp_frame.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        lbl_sp = tk.Label(sp_frame, text="Головний фактор (Whole-plot factor):", fg="#000000")
+        lbl_sp.pack(side=tk.LEFT)
+
+        cmb = ttk.Combobox(sp_frame, textvariable=main_factor_var, width=8, state="readonly",
+                           values=("A", "B", "C", "D"))
+        cmb.pack(side=tk.LEFT, padx=8)
+
+        # спочатку сховати (бо дизайн = crd)
+        def sp_visible(is_on: bool):
+            if is_on:
+                sp_frame.grid()
+            else:
+                sp_frame.grid_remove()
+            dlg.update_idletasks()
+            center_window(dlg)
+
+        sp_visible(False)
+
+        def on_design_change(*_):
+            sp_visible(design_var.get() == "split")
+
+        design_var.trace_add("write", on_design_change)
+
+        out = {"ok": False, "indicator": "", "units": "", "design": "crd", "split_main": "A"}
 
         def on_ok():
             out["indicator"] = e_ind.get().strip()
             out["units"] = e_units.get().strip()
             out["design"] = design_var.get()
+            out["split_main"] = main_factor_var.get()
+
             if not out["indicator"] or not out["units"]:
                 messagebox.showwarning("Помилка", "Заповніть назву показника та одиниці виміру.")
                 return
+
             out["ok"] = True
             dlg.destroy()
 
         btns = tk.Frame(frm)
-        btns.grid(row=3, column=0, columnspan=2, pady=(12, 0))
+        btns.grid(row=4, column=0, columnspan=2, pady=(12, 0))
         tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=6)
         tk.Button(btns, text="Скасувати", width=12, command=lambda: dlg.destroy()).pack(side=tk.LEFT, padx=6)
 
@@ -1193,10 +1445,15 @@ class SADTk:
 
         normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
 
+        # "більша точка" — шрифт більший
+        rb_font = ("Times New Roman", 16)
+
         if normal:
             msg = ("Дані експерименту відповідають принципам нормального розподілу\n"
                    "за методом Шапіра-Вілка.")
             tk.Label(frm, text=msg, fg="#000000", justify="left").pack(anchor="w", pady=(0, 10))
+
+            # Split-plot: лише параметрика (так само як і для normal)
             options = [
                 ("НІР₀₅", "lsd"),
                 ("Тест Тьюкі", "tukey"),
@@ -1204,30 +1461,58 @@ class SADTk:
                 ("Тест Бонферроні", "bonferroni"),
             ]
         else:
-            msg = ("Дані експерименту не відповідають принципам нормального розподілу\n"
-                   "за методом Шапіра-Вілка.\n"
-                   "Виберіть один з непараметричних типів аналізу.")
-            tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
+            # Split-plot: НЕ дозволяємо непараметрику
+            if design == "split":
+                tk.Label(
+                    frm,
+                    text=("Для спліт-плоту в цій програмі реалізовано лише параметричний аналіз.\n"
+                          "Оскільки залишки моделі не відповідають нормальному розподілу (p ≤ 0.05),\n"
+                          "параметричний split-plot аналіз є методично некоректним.\n\n"
+                          "Що можна зробити:\n"
+                          "• спробувати трансформацію даних (log/√/Box-Cox) і повторити;\n"
+                          "• або вибрати CRD/RCBD і виконати непараметричний аналіз."),
+                    fg="#c62828",
+                    justify="left"
+                ).pack(anchor="w", pady=(0, 10))
 
-            if design == "crd":
-                options = [
-                    ("Краскела–Уолліса", "kw"),
-                    ("Манна-Уітні", "mw"),
-                ]
+                options = []  # немає вибору — просто закриємо
             else:
-                # RCBD: Friedman або Wilcoxon (парний)
-                if num_variants <= 1:
-                    options = [("Friedman", "friedman")]
-                elif num_variants == 2:
-                    options = [("Wilcoxon (парний)", "wilcoxon")]
+                msg = ("Дані експерименту не відповідають принципам нормального розподілу\n"
+                       "за методом Шапіра-Вілка.\n"
+                       "Виберіть один з непараметричних типів аналізу.")
+                tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
+
+                if design == "crd":
+                    options = [
+                        ("Краскела–Уолліса", "kw"),
+                        ("Манна-Уітні", "mw"),
+                    ]
                 else:
-                    options = [("Friedman", "friedman")]
+                    if num_variants <= 1:
+                        options = [("Friedman", "friedman")]
+                    elif num_variants == 2:
+                        options = [("Wilcoxon (парний)", "wilcoxon")]
+                    else:
+                        options = [("Friedman", "friedman")]
+
+        out = {"ok": False, "method": None}
+
+        if not options:
+            def on_ok_close():
+                dlg.destroy()
+            btns = tk.Frame(frm)
+            btns.pack(fill=tk.X, pady=(12, 0))
+            tk.Button(btns, text="OK", width=10, command=on_ok_close).pack(side=tk.LEFT, padx=6)
+            dlg.update_idletasks()
+            center_window(dlg)
+            dlg.bind("<Return>", lambda e: on_ok_close())
+            dlg.grab_set()
+            self.root.wait_window(dlg)
+            return out
 
         var = tk.StringVar(value=options[0][1])
         for text, val in options:
-            tk.Radiobutton(frm, text=text, variable=var, value=val).pack(anchor="w", pady=2)
-
-        out = {"ok": False, "method": None}
+            tk.Radiobutton(frm, text=text, variable=var, value=val, font=rb_font).pack(anchor="w", pady=3)
 
         def on_ok():
             out["ok"] = True
@@ -1525,9 +1810,10 @@ class SADTk:
                 if self.factors_count >= 3: rec["C"] = levels[2]
                 if self.factors_count >= 4: rec["D"] = levels[3]
 
-                # ✅ Для RCBD додамо BLOCK, а також VARIANT (для Friedman/Wilcoxon)
-                if design == "rcbd":
+                # ✅ Для RCBD та Split-plot: BLOCK = повторність
+                if design in ("rcbd", "split"):
                     rec["BLOCK"] = f"Блок {idx_c + 1}"
+
                 long.append(rec)
 
         return long, rep_cols
@@ -1541,7 +1827,8 @@ class SADTk:
 
         indicator = params["indicator"]
         units = params["units"]
-        design = params["design"]  # "crd" / "rcbd"
+        design = params["design"]  # "crd" / "rcbd" / "split"
+        split_main = params.get("split_main", "A")
 
         long, used_rep_cols = self.collect_long(design)
         if len(long) == 0:
@@ -1555,16 +1842,14 @@ class SADTk:
 
         levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
 
-        # Variant order / names (treatment combinations)
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         v_names = [" | ".join(map(str, k)) for k in variant_order]
         num_variants = len(variant_order)
 
-        # ✅ ANOVA (CRD або RCBD)
+        # ✅ ANOVA (CRD / RCBD / Split-plot)
         try:
             if design == "crd":
                 res = anova_n_way(long, self.factor_keys, levels_by_factor)
-                # residuals for Shapiro: як було (по коміркових середніх)
                 cell_means = res.get("cell_means", {})
                 residuals = []
                 for rec in long:
@@ -1574,21 +1859,44 @@ class SADTk:
                     if not math.isnan(v) and not math.isnan(m):
                         residuals.append(v - m)
                 residuals = np.array(residuals, dtype=float)
-            else:
-                # RCBD: OLS з блоками
+
+            elif design == "rcbd":
                 res = anova_rcbd_ols(long, self.factor_keys, levels_by_factor, block_key="BLOCK")
                 residuals = np.array(res.get("residuals", []), dtype=float)
+
+            else:
+                # Split-plot
+                # головний фактор має бути серед наявних (A..)
+                if split_main not in self.factor_keys:
+                    split_main = self.factor_keys[0]
+                res = anova_splitplot_ols(long, self.factor_keys, main_factor=split_main, block_key="BLOCK")
+                residuals = np.array(res.get("residuals", []), dtype=float)
+
         except Exception as ex:
             messagebox.showerror("Помилка аналізу", str(ex))
             return
 
-        # ✅ Shapiro–Wilk на залишках моделі відповідного дизайну
+        # ✅ Shapiro–Wilk на залишках моделі
         try:
             W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
         except Exception:
             W, p_norm = (np.nan, np.nan)
 
-        # ✅ Вибір методу залежить від дизайну (CRD: KW/MW; RCBD: Friedman/Wilcoxon)
+        # ✅ Split-plot: якщо не нормальний — пояснити і зупинити
+        normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
+        if design == "split" and not normal:
+            messagebox.showwarning(
+                "Split-plot: аналіз неможливий",
+                "Обрано дизайн Split-plot, який у цій програмі реалізовано лише для параметричних методів.\n"
+                "Оскільки залишки моделі не відповідають нормальному розподілу (p ≤ 0.05),\n"
+                "параметричний split-plot аналіз є методично некоректним.\n\n"
+                "Рекомендації:\n"
+                "• застосувати трансформацію даних (log/√/Box-Cox) і повторити аналіз;\n"
+                "• або вибрати CRD/RCBD і виконати непараметричний аналіз."
+            )
+            return
+
+        # ✅ Вибір методу
         choice = self.choose_method_window(p_norm, design, num_variants)
         if not choice["ok"]:
             return
@@ -1597,7 +1905,12 @@ class SADTk:
         MS_error = res.get("MS_error", np.nan)
         df_error = res.get("df_error", np.nan)
 
-        # --- groups for variants (CRD use; RCBD for some displays still ok)
+        # split-plot: додаткові error-term
+        MS_whole = res.get("MS_whole", np.nan)
+        df_whole = res.get("df_whole", np.nan)
+        split_main_factor = res.get("main_factor", split_main) if design == "split" else None
+
+        # groups for variants
         vstats = variant_mean_sd(long, self.factor_keys)
         v_means = {k: vstats[k][0] for k in vstats.keys()}
         v_sds = {k: vstats[k][1] for k in vstats.keys()}
@@ -1607,7 +1920,7 @@ class SADTk:
         ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
         groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
 
-        # factor groups (for factor tables)
+        # factor groups
         factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
         factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
         factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
@@ -1634,7 +1947,7 @@ class SADTk:
             v_medians[k] = med
             v_q[k] = (q1, q3)
 
-        # Brown–Forsythe тільки для параметрики
+        # Brown–Forsythe тільки для параметрики (і для split теж ок як індикатор)
         bf_F, bf_p = (np.nan, np.nan)
         if method in ("lsd", "tukey", "duncan", "bonferroni"):
             bf_F, bf_p = brown_forsythe_from_groups(groups1)
@@ -1653,23 +1966,42 @@ class SADTk:
         letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
         letters_named = {name: "" for name in v_names}
         pairwise_rows = []
+        factor_pairwise_tables = {}  # factor -> rows for pairwise (split-plot correct)
 
         # =========================
         #   ВИБІР ПОСТ-ХОК / ЛІТЕР
         # =========================
         if method == "lsd":
-            # factor letters
+            # factor letters (Split-plot: MAIN uses MS_whole/df_whole)
             for f in self.factor_keys:
                 lvls = levels_by_factor[f]
-                sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
+                if design == "split" and f == split_main_factor:
+                    sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_whole, df_whole, alpha=ALPHA)
+                else:
+                    sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
                 letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig_f)
 
-            sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
-            letters_named = cld_multi_letters(v_names, means1, sigv)
+            # ВАЖЛИВО: Для split-plot НЕ ставимо літери для "повних варіантів" (методично некоректно)
+            if design != "split":
+                sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
+                letters_named = cld_multi_letters(v_names, means1, sigv)
 
         elif method in ("tukey", "duncan", "bonferroni"):
-            pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
-            letters_named = cld_multi_letters(v_names, means1, sig)
+            if design != "split":
+                pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
+                letters_named = cld_multi_letters(v_names, means1, sig)
+
+            # Split-plot: парні порівняння робимо по ФАКТОРАХ, з правильним error term
+            if design == "split":
+                for f in self.factor_keys:
+                    lvls = levels_by_factor[f]
+                    means_f = factor_means[f]
+                    ns_f = factor_ns[f]
+                    if f == split_main_factor:
+                        rows_f, _ = pairwise_param_short_variants_pm(lvls, means_f, ns_f, MS_whole, df_whole, method, alpha=ALPHA)
+                    else:
+                        rows_f, _ = pairwise_param_short_variants_pm(lvls, means_f, ns_f, MS_error, df_error, method, alpha=ALPHA)
+                    factor_pairwise_tables[f] = rows_f
 
         elif method == "kw":
             try:
@@ -1699,9 +2031,7 @@ class SADTk:
             letters_named = cld_multi_letters(v_names, med_tmp, sig)
 
         elif method == "friedman":
-            # RCBD Friedman: потрібні повні блоки
             block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
-            # додамо VARIANT в long для побудови матриці
             long2 = []
             for r in long:
                 rr = dict(r)
@@ -1714,7 +2044,7 @@ class SADTk:
                 return
 
             try:
-                cols = list(zip(*mat_rows))  # variants columns
+                cols = list(zip(*mat_rows))
                 fr = friedmanchisquare(*[np.array(c, dtype=float) for c in cols])
                 fr_chi2 = float(fr.statistic)
                 fr_p = float(fr.pvalue)
@@ -1723,17 +2053,14 @@ class SADTk:
             except Exception:
                 fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
 
-            # posthoc only if significant
             if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p < ALPHA:
                 rcbd_pairwise_rows, rcbd_sig = pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=ALPHA)
-                # letters use medians across all values (or median per variant)
                 med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
                 letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
             else:
                 letters_named = {name: "" for name in v_names}
 
         elif method == "wilcoxon":
-            # RCBD Wilcoxon: тільки 2 варіанти
             if len(v_names) != 2:
                 messagebox.showwarning("Помилка", "Wilcoxon (парний) застосовується лише для 2 варіантів.")
                 return
@@ -1759,7 +2086,6 @@ class SADTk:
             except Exception:
                 wil_stat, wil_p = (np.nan, np.nan)
 
-            # letters from pair decision (single comparison)
             if not (isinstance(wil_p, float) and math.isnan(wil_p)) and wil_p < ALPHA:
                 rcbd_sig = {(v_names[0], v_names[1]): True}
                 med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
@@ -1769,12 +2095,12 @@ class SADTk:
 
         letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
-        # R2 для параметрики (для RCBD теж коректно, бо SS_error = SSE_full)
+        # R2
         SS_total = res.get("SS_total", np.nan)
         SS_error = res.get("SS_error", np.nan)
         R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
 
-        # CV (як було)
+        # CV
         cv_rows = []
         for f in self.factor_keys:
             lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
@@ -1784,19 +2110,24 @@ class SADTk:
         cv_rows.append(["Загальний", fmt_num(cv_total, 2)])
 
         # -------------------------
-        # REPORT segments (порядок як ти вимагав)
+        # REPORT segments
         # -------------------------
         seg = []
         seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
         seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
 
-        # 1) counts
         seg.append(("text",
                     f"Кількість варіантів:\t{num_variants}\n"
                     f"Кількість повторностей:\t{len(used_rep_cols)}\n"
                     f"Загальна кількість облікових значень:\t{len(long)}\n\n"))
 
-        # 2) method label
+        design_label = {"crd": "CRD (повна рандомізація)", "rcbd": "RCBD (блочна рандомізація)", "split": "Split-plot (спліт-плот)"}[design]
+        seg.append(("text", f"Дизайн експерименту:\t{design_label}\n"))
+        if design == "split":
+            seg.append(("text", f"Головний фактор (Whole-plot factor):\t{split_main_factor}\n\n"))
+        else:
+            seg.append(("text", "\n"))
+
         method_label = {
             "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
             "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
@@ -1811,12 +2142,10 @@ class SADTk:
         if method_label:
             seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
 
-        # 3) explanations
         seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
         seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
         seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
 
-        # 4) Shapiro (після пояснень)
         if not math.isnan(W):
             seg.append(("text",
                         f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t"
@@ -1826,7 +2155,6 @@ class SADTk:
 
         nonparam = method in ("mw", "kw", "friedman", "wilcoxon")
 
-        # ---- Nonparam global lines (після Shapiro)
         if method == "kw":
             if not (isinstance(kw_p, float) and math.isnan(kw_p)):
                 concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
@@ -1866,11 +2194,17 @@ class SADTk:
             else:
                 seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
 
+            if design == "split":
+                seg.append(("text",
+                            "Примітка (Split-plot):\n"
+                            f"• Фактор {split_main_factor} перевірено на MS(Блоки×{split_main_factor}) (whole-plot error).\n"
+                            "• Інші ефекти перевірено на MS(Залишок) (sub-plot error).\n\n"))
+
             # ANOVA table
             anova_rows = []
             for name, SSv, dfv, MSv, Fv, pv in res["table"]:
                 df_txt = str(int(dfv)) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
-                if name in ("Залишок", "Загальна"):
+                if name.startswith("Залишок") or name == "Загальна" or "Whole-plot error" in name:
                     anova_rows.append([name, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
                 else:
                     mark = significance_mark(pv)
@@ -1906,14 +2240,22 @@ class SADTk:
             tno = 5
             if method == "lsd":
                 nir_rows = []
-                for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
-                    if key in res.get("NIR05", {}):
-                        nir_rows.append([key, fmt_num(res["NIR05"][key], 4)])
+                # CRD/RCBD: як було
+                if design != "split":
+                    for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
+                        if key in res.get("NIR05", {}):
+                            nir_rows.append([key, fmt_num(res["NIR05"][key], 4)])
+                else:
+                    # split: NIR05 має окремі рядки (Whole-plot / Sub-plot)
+                    for key, val in res.get("NIR05", {}).items():
+                        nir_rows.append([key, fmt_num(val, 4)])
+
                 seg.append(("text", "ТАБЛИЦЯ 5. Значення НІР₀₅\n"))
                 seg.append(("table", {"headers": ["Елемент", "НІР₀₅"], "rows": nir_rows}))
                 seg.append(("text", "\n"))
                 tno = 6
 
+            # Factor means tables
             for f in self.factor_keys:
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
                 rows_f = []
@@ -1925,14 +2267,18 @@ class SADTk:
                 seg.append(("text", "\n"))
                 tno += 1
 
+            # Variants table
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
             rows_v = []
             for k in variant_order:
                 name = " | ".join(map(str, k))
                 m = v_means.get(k, np.nan)
                 sd = v_sds.get(k, np.nan)
-                letter = letters_variants.get(k, "")
-                rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), (letter if letter else "-")])
+                if design == "split":
+                    rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), "-"])
+                else:
+                    letter = letters_variants.get(k, "")
+                    rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), (letter if letter else "-")])
 
             seg.append(("table", {
                 "headers": ["Варіант", "Середнє", "± SD", "Істотна різниця"],
@@ -1944,17 +2290,30 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
-            if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
-                seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
-                seg.append(("text", "\n"))
+            # Pairwise comparisons
+            if design != "split":
+                if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
+                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
+                    seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
+                    seg.append(("text", "\n"))
+            else:
+                seg.append(("text",
+                            "Примітка (Split-plot): парні порівняння для повних варіантів (комбінацій факторів)\n"
+                            "не подаються, оскільки для таких порівнянь потрібні спеціальні контрасти та коректний\n"
+                            "облік двох різних помилок (whole-plot і sub-plot). Натомість подано парні порівняння\n"
+                            "на рівні факторів з правильними error-term.\n\n"))
+                if method in ("tukey", "duncan", "bonferroni"):
+                    for f in self.factor_keys:
+                        rows_pf = factor_pairwise_tables.get(f, [])
+                        if rows_pf:
+                            seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння для фактора {f} (коректно для Split-plot)\n"))
+                            seg.append(("table", {"headers": ["Комбінація", "p", "Істотна різниця"], "rows": rows_pf}))
+                            seg.append(("text", "\n"))
+                            tno += 1
 
         # ---- NONPARAMETRIC TABLES
         else:
             tno = 1
-
-            # Для непараметрики CRD — як було (описова по факторах/варіантах)
-            # Для RCBD — теж можна показати описову (медіана, Q1–Q3, середній ранг), це не ламає метод.
             for f in self.factor_keys:
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика по фактору {f} (непараметрична)\n"))
                 rows = []
@@ -2001,7 +2360,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
-            # Posthoc for CRD KW
             if method == "kw":
                 if not do_posthoc:
                     seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
@@ -2011,7 +2369,6 @@ class SADTk:
                         seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
                         seg.append(("text", "\n"))
 
-            # Posthoc for RCBD Friedman (pairwise Wilcoxon)
             if method == "friedman":
                 if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p >= ALPHA:
                     seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Friedman не виявив істотної різниці (p ≥ 0.05).\n\n"))
