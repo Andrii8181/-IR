@@ -1748,26 +1748,29 @@ class SADTk:
         seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
         seg.append(("text",
                     f"Дизайн експерименту:\t{'Повна рандомізація (CRD)' if design=='crd' else 'Блочна рандомізація (RCBD)'}\n\n"))
-        seg.append(("text",
-                    f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
+        seg.append(("text", f"Кількість варіантів:\t{num_variants}\nКількість повторностей:\t{len(used_rep_cols)}\nЗагальна кількість облікових значень:\t{len(long)}\n\n"))
 
-               method_label = {
-            "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
-            "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
-            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
-            "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
-            "kw": "Непараметричний аналіз (CRD): Kruskal–Wallis.",
-            "mw": "Непараметричний аналіз (CRD): Mann–Whitney.",
-            "friedman": "Непараметричний аналіз (RCBD): Friedman.",
-            "wilcoxon": "Непараметричний аналіз (RCBD): Wilcoxon (парний).",
-        }.get(method, "")
+method_label = {
+    "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
+    "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
+    "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
+    "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
+    "kw": "Непараметричний аналіз: Kruskal–Wallis.",
+    "mw": "Непараметричний аналіз: Mann–Whitney.",
+}.get(method, "")
 
-        if method_label:
-            seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
+if method_label:
+    seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
 
-        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
-        seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
-        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
+seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
+seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
+seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
+
+if not math.isnan(W):
+    seg.append(("text", f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
+else:
+    seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
+
 
         nonparam = method in ("mw", "kw", "friedman", "wilcoxon")
 
