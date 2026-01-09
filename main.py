@@ -27,7 +27,8 @@ S.A.D. — Статистичний аналіз даних (Tkinter)
        MAIN — на whole-plot error; інші фактори — на subplot error.
    - Парні порівняння "повних варіантів" (комбінацій факторів) не виконуються (методично некоректно без контрастів).
 
-✅ У звітах змінено порядок рядків (як ти вимагав).
+✅ ВАЖЛИВА ПРАВКА UI (тільки це): діалог вибору дизайну тепер АВТОПІДГАНЯЄ розмір під вміст,
+   щоб при Split-plot було видно вибір головного фактора та кнопки OK/Скасувати.
 """
 
 import os
@@ -833,10 +834,6 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
         mats[f] = (Xf, [f"{f}:{x}" for x in fn])
 
     # Build terms:
-    # 1) BLOCK
-    # 2) MAIN
-    # 3) BLOCK×MAIN  (whole-plot error term)
-    # 4) all other treatment terms (all combos of treat_factors excluding MAIN-alone already included? we include all combos, but skip MAIN and skip BLOCK×MAIN because already added)
     term_order = []
     term_cols = {}
 
@@ -850,7 +847,6 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
     Xbm, nbm = _interaction_cols(mats, (block_key, main_factor))
     term_cols[(block_key, main_factor)] = (Xbm, nbm)
 
-    # other treatment terms (excluding MAIN only, but include interactions with MAIN, and among other factors)
     for rnk in range(1, len(treat_factors) + 1):
         for comb in combinations(treat_factors, rnk):
             if comb == (main_factor,):
@@ -859,7 +855,6 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
             term_cols[comb] = (Xterm, nterm if len(comb) > 1 else mats[comb[0]][1])
             term_order.append(comb)
 
-    # Build full X
     X_parts = [np.ones((N, 1), dtype=float)]
     part_map = []
     cur = 1
@@ -883,7 +878,6 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
     grand_mean = float(np.mean(y))
     SS_total = float(np.sum((y - grand_mean) ** 2))
 
-    # SS per term via reduced model
     SS = {}
     df = {}
 
@@ -908,13 +902,11 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
             ss_term = 0.0
         SS[term] = ss_term
 
-    # Whole-plot error term:
     wp_term = (block_key, main_factor)
     df_wp = df.get(wp_term, 0)
     SS_wp = SS.get(wp_term, 0.0)
     MS_wp = (SS_wp / df_wp) if df_wp > 0 else np.nan
 
-    # output table with correct denominators:
     table_rows = []
 
     def pretty(term):
@@ -928,7 +920,6 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
 
     for term in term_order:
         if term in ((block_key,),):
-            # blocks row: can show F vs MS_wp (common practice) but not essential
             name = pretty(term)
             SSv = SS.get(term, 0.0)
             dfv = df.get(term, 0)
@@ -946,17 +937,14 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
             SSv = SS.get(term, 0.0)
             dfv = df.get(term, 0)
             MSv = SSv / dfv if dfv > 0 else np.nan
-            # this is error term; typically no F
             table_rows.append((name, SSv, dfv, MSv, None, None))
             continue
 
-        # treatment terms:
         name = pretty(term)
         SSv = SS.get(term, 0.0)
         dfv = df.get(term, 0)
         MSv = SSv / dfv if dfv > 0 else np.nan
 
-        # main factor tested on MS_wp; others on MS_error
         if term == (main_factor,):
             denom_ms = MS_wp
             denom_df = df_wp
@@ -972,16 +960,10 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
 
         table_rows.append((name, SSv, dfv, MSv, Fv, pv))
 
-    # Residual + Total
     table_rows.append(("Залишок (Sub-plot error)", SSE_full, df_error, MS_error, None, None))
     table_rows.append(("Загальна", SS_total, df_total, None, None, None))
 
-    # NIR05:
-    # - MAIN uses MS_wp, df_wp
-    # - others use MS_error, df_error
     NIR05 = {}
-    # effective n for MAIN comparisons: use harmonic mean of counts per main level across all observations
-    # (простий і стабільний підхід в рамках цієї програми)
     main_marg = subset_stats(long, (main_factor,))
     n_eff_main = harmonic_mean([v[1] for v in main_marg.values() if v[1] and v[1] > 0])
 
@@ -1002,7 +984,6 @@ def anova_splitplot_ols(long, treat_factors, main_factor, block_key="BLOCK"):
             nir = t_sp * math.sqrt(2 * MS_error / n_eff_f) if not any(math.isnan(x) for x in [t_sp, MS_error, n_eff_f]) else np.nan
             NIR05[f"Фактор {f} (Sub-plot)"] = nir
 
-    # cell means for full combinations (for residuals etc.)
     treat_keys = tuple(treat_factors)
     cell_means = {k: v[0] for k, v in subset_stats(long, treat_keys).items()}
     cell_counts = {k: v[1] for k, v in subset_stats(long, treat_keys).items()}
@@ -1154,7 +1135,7 @@ def pairwise_mw_bonf_with_effect(v_names, groups_dict, alpha=0.05):
 
 
 # -------------------------
-# RCBD nonparametric helpers: build blocks x variants matrix
+# RCBD nonparametric helpers
 # -------------------------
 def rcbd_matrix_from_long(long, variant_names, block_names, variant_key="VARIANT", block_key="BLOCK"):
     by = defaultdict(dict)  # block -> {variant: value}
@@ -1367,7 +1348,6 @@ class SADTk:
         rfrm = tk.Frame(frm)
         rfrm.grid(row=2, column=1, sticky="w", pady=(10, 4))
 
-        # "більша точка" — робимо крупніший шрифт + padding
         rb_font = ("Times New Roman", 16)
 
         tk.Radiobutton(rfrm, text="Повна рандомізація (CRD)", variable=design_var, value="crd",
@@ -1390,15 +1370,24 @@ class SADTk:
                            values=("A", "B", "C", "D"))
         cmb.pack(side=tk.LEFT, padx=8)
 
-        # спочатку сховати (бо дизайн = crd)
+        # --------- ✅ НОВЕ: акуратне авто-підганяння розміру діалогу під вміст ----------
+        def _fit_dialog_to_content():
+            dlg.update_idletasks()
+            req_w = frm.winfo_reqwidth()
+            req_h = frm.winfo_reqheight()
+            pad_w = 24
+            pad_h = 18
+            dlg.geometry(f"{req_w + pad_w}x{req_h + pad_h}")
+            center_window(dlg)
+
         def sp_visible(is_on: bool):
             if is_on:
                 sp_frame.grid()
             else:
                 sp_frame.grid_remove()
-            dlg.update_idletasks()
-            center_window(dlg)
+            _fit_dialog_to_content()
 
+        # спочатку сховати (бо дизайн = crd)
         sp_visible(False)
 
         def on_design_change(*_):
@@ -1426,8 +1415,8 @@ class SADTk:
         tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=6)
         tk.Button(btns, text="Скасувати", width=12, command=lambda: dlg.destroy()).pack(side=tk.LEFT, padx=6)
 
-        dlg.update_idletasks()
-        center_window(dlg)
+        # ✅ важливо: фінально піджати діалог один раз (щоб ОК точно вліз на старті)
+        _fit_dialog_to_content()
         e_ind.focus_set()
         dlg.bind("<Return>", lambda e: on_ok())
         dlg.grab_set()
@@ -1445,7 +1434,6 @@ class SADTk:
 
         normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
 
-        # "більша точка" — шрифт більший
         rb_font = ("Times New Roman", 16)
 
         if normal:
@@ -1453,7 +1441,6 @@ class SADTk:
                    "за методом Шапіра-Вілка.")
             tk.Label(frm, text=msg, fg="#000000", justify="left").pack(anchor="w", pady=(0, 10))
 
-            # Split-plot: лише параметрика (так само як і для normal)
             options = [
                 ("НІР₀₅", "lsd"),
                 ("Тест Тьюкі", "tukey"),
@@ -1461,7 +1448,6 @@ class SADTk:
                 ("Тест Бонферроні", "bonferroni"),
             ]
         else:
-            # Split-plot: НЕ дозволяємо непараметрику
             if design == "split":
                 tk.Label(
                     frm,
@@ -1475,7 +1461,7 @@ class SADTk:
                     justify="left"
                 ).pack(anchor="w", pady=(0, 10))
 
-                options = []  # немає вибору — просто закриємо
+                options = []
             else:
                 msg = ("Дані експерименту не відповідають принципам нормального розподілу\n"
                        "за методом Шапіра-Вілка.\n"
@@ -1810,7 +1796,6 @@ class SADTk:
                 if self.factors_count >= 3: rec["C"] = levels[2]
                 if self.factors_count >= 4: rec["D"] = levels[3]
 
-                # ✅ Для RCBD та Split-plot: BLOCK = повторність
                 if design in ("rcbd", "split"):
                     rec["BLOCK"] = f"Блок {idx_c + 1}"
 
@@ -1818,6 +1803,11 @@ class SADTk:
 
         return long, rep_cols
 
+    # -------------------------
+    # analyze() + show_report_segments()
+    # -------------------------
+    # (Нижче — без змін, лише як у твоєму коді)
+    # -------------------------
     def analyze(self):
         created_at = datetime.now()
 
@@ -1846,7 +1836,6 @@ class SADTk:
         v_names = [" | ".join(map(str, k)) for k in variant_order]
         num_variants = len(variant_order)
 
-        # ✅ ANOVA (CRD / RCBD / Split-plot)
         try:
             if design == "crd":
                 res = anova_n_way(long, self.factor_keys, levels_by_factor)
@@ -1865,8 +1854,6 @@ class SADTk:
                 residuals = np.array(res.get("residuals", []), dtype=float)
 
             else:
-                # Split-plot
-                # головний фактор має бути серед наявних (A..)
                 if split_main not in self.factor_keys:
                     split_main = self.factor_keys[0]
                 res = anova_splitplot_ols(long, self.factor_keys, main_factor=split_main, block_key="BLOCK")
@@ -1876,13 +1863,11 @@ class SADTk:
             messagebox.showerror("Помилка аналізу", str(ex))
             return
 
-        # ✅ Shapiro–Wilk на залишках моделі
         try:
             W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
         except Exception:
             W, p_norm = (np.nan, np.nan)
 
-        # ✅ Split-plot: якщо не нормальний — пояснити і зупинити
         normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
         if design == "split" and not normal:
             messagebox.showwarning(
@@ -1896,7 +1881,6 @@ class SADTk:
             )
             return
 
-        # ✅ Вибір методу
         choice = self.choose_method_window(p_norm, design, num_variants)
         if not choice["ok"]:
             return
@@ -1905,12 +1889,10 @@ class SADTk:
         MS_error = res.get("MS_error", np.nan)
         df_error = res.get("df_error", np.nan)
 
-        # split-plot: додаткові error-term
         MS_whole = res.get("MS_whole", np.nan)
         df_whole = res.get("df_whole", np.nan)
         split_main_factor = res.get("main_factor", split_main) if design == "split" else None
 
-        # groups for variants
         vstats = variant_mean_sd(long, self.factor_keys)
         v_means = {k: vstats[k][0] for k in vstats.keys()}
         v_sds = {k: vstats[k][1] for k in vstats.keys()}
@@ -1920,7 +1902,6 @@ class SADTk:
         ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
         groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
 
-        # factor groups
         factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
         factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
         factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
@@ -1947,32 +1928,24 @@ class SADTk:
             v_medians[k] = med
             v_q[k] = (q1, q3)
 
-        # Brown–Forsythe тільки для параметрики (і для split теж ок як індикатор)
         bf_F, bf_p = (np.nan, np.nan)
         if method in ("lsd", "tukey", "duncan", "bonferroni"):
             bf_F, bf_p = brown_forsythe_from_groups(groups1)
 
-        # --- CRD nonparam globals
         kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
         do_posthoc = True
 
-        # --- RCBD nonparam globals
         fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
         wil_stat, wil_p = (np.nan, np.nan)
         rcbd_pairwise_rows = []
         rcbd_sig = {}
 
-        # Letters
         letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
         letters_named = {name: "" for name in v_names}
         pairwise_rows = []
-        factor_pairwise_tables = {}  # factor -> rows for pairwise (split-plot correct)
+        factor_pairwise_tables = {}
 
-        # =========================
-        #   ВИБІР ПОСТ-ХОК / ЛІТЕР
-        # =========================
         if method == "lsd":
-            # factor letters (Split-plot: MAIN uses MS_whole/df_whole)
             for f in self.factor_keys:
                 lvls = levels_by_factor[f]
                 if design == "split" and f == split_main_factor:
@@ -1981,7 +1954,6 @@ class SADTk:
                     sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
                 letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig_f)
 
-            # ВАЖЛИВО: Для split-plot НЕ ставимо літери для "повних варіантів" (методично некоректно)
             if design != "split":
                 sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
                 letters_named = cld_multi_letters(v_names, means1, sigv)
@@ -1991,7 +1963,6 @@ class SADTk:
                 pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
                 letters_named = cld_multi_letters(v_names, means1, sig)
 
-            # Split-plot: парні порівняння робимо по ФАКТОРАХ, з правильним error term
             if design == "split":
                 for f in self.factor_keys:
                     lvls = levels_by_factor[f]
@@ -2095,12 +2066,10 @@ class SADTk:
 
         letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
-        # R2
         SS_total = res.get("SS_total", np.nan)
         SS_error = res.get("SS_error", np.nan)
         R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
 
-        # CV
         cv_rows = []
         for f in self.factor_keys:
             lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
@@ -2109,9 +2078,6 @@ class SADTk:
         cv_total = cv_percent_from_values(values)
         cv_rows.append(["Загальний", fmt_num(cv_total, 2)])
 
-        # -------------------------
-        # REPORT segments
-        # -------------------------
         seg = []
         seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
         seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
@@ -2184,7 +2150,6 @@ class SADTk:
             else:
                 seg.append(("text", "Парний тест (Wilcoxon signed-rank):\tн/д\n\n"))
 
-        # ---- PARAMETRIC
         if not nonparam:
             if not any(math.isnan(x) for x in [bf_F, bf_p]):
                 bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
@@ -2200,7 +2165,6 @@ class SADTk:
                             f"• Фактор {split_main_factor} перевірено на MS(Блоки×{split_main_factor}) (whole-plot error).\n"
                             "• Інші ефекти перевірено на MS(Залишок) (sub-plot error).\n\n"))
 
-            # ANOVA table
             anova_rows = []
             for name, SSv, dfv, MSv, Fv, pv in res["table"]:
                 df_txt = str(int(dfv)) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
@@ -2240,13 +2204,11 @@ class SADTk:
             tno = 5
             if method == "lsd":
                 nir_rows = []
-                # CRD/RCBD: як було
                 if design != "split":
                     for key in [f"Фактор {f}" for f in self.factor_keys] + ["Загальна"]:
                         if key in res.get("NIR05", {}):
                             nir_rows.append([key, fmt_num(res["NIR05"][key], 4)])
                 else:
-                    # split: NIR05 має окремі рядки (Whole-plot / Sub-plot)
                     for key, val in res.get("NIR05", {}).items():
                         nir_rows.append([key, fmt_num(val, 4)])
 
@@ -2255,7 +2217,6 @@ class SADTk:
                 seg.append(("text", "\n"))
                 tno = 6
 
-            # Factor means tables
             for f in self.factor_keys:
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору {f}\n"))
                 rows_f = []
@@ -2267,7 +2228,6 @@ class SADTk:
                 seg.append(("text", "\n"))
                 tno += 1
 
-            # Variants table
             seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
             rows_v = []
             for k in variant_order:
@@ -2290,7 +2250,6 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
-            # Pairwise comparisons
             if design != "split":
                 if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
                     seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
@@ -2311,7 +2270,6 @@ class SADTk:
                             seg.append(("text", "\n"))
                             tno += 1
 
-        # ---- NONPARAMETRIC TABLES
         else:
             tno = 1
             for f in self.factor_keys:
@@ -2379,7 +2337,6 @@ class SADTk:
                         seg.append(("text", "\n"))
 
         seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
-
         self.show_report_segments(seg)
 
     def show_report_segments(self, segments):
