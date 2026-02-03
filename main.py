@@ -375,15 +375,32 @@ def cliffs_label(delta_abs: float) -> str:
 # Text table helpers (report)
 # -------------------------
 def build_table_block(headers, rows):
-    def hcell(x): return f"{x} "
-    def ccell(x): return "" if x is None else str(x)
+    """Build a tab-separated table block for inserting into Tk Text widget.
+
+    Important: do NOT add extra spaces in header cells, because we rely on tab stops
+    (configured via `tabs_from_table_px`) to align columns precisely.
+    """
+    def ccell(x):
+        return "" if x is None else str(x)
+
+    # compute character widths per column for nicer underline row (cosmetic)
+    ncol = len(headers)
+    col_w = [len(str(h)) for h in headers]
+    for r in rows:
+        for j in range(ncol):
+            try:
+                col_w[j] = max(col_w[j], len(ccell(r[j])))
+            except Exception:
+                pass
 
     lines = []
-    lines.append("\t".join(hcell(h) for h in headers))
-    lines.append("\t".join("—" * max(3, len(str(h))) for h in headers))
+    lines.append("	".join(str(h) for h in headers))
+    lines.append("	".join("—" * max(3, col_w[j]) for j in range(ncol)))
     for r in rows:
-        lines.append("\t".join(ccell(v) for v in r))
-    return "\n".join(lines) + "\n"
+        lines.append("	".join(ccell(v) for v in r))
+    return "
+".join(lines) + "
+"
 
 def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extra_gap_after_col=None, extra_gap_px=0):
     ncol = len(headers)
