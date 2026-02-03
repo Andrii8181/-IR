@@ -1192,6 +1192,31 @@ def anova_splitplot_ols(long, factor_keys, main_factor="A", block_key="BLOCK"):
 class SADTk:
     def __init__(self, root):
         self.root = root
+
+        # --- глобальний перехоплювач помилок Tkinter (щоб не було "нічого не відбувається") ---
+        def _tk_report_callback_exception(exc, val, tb):
+            import traceback as _tb
+            try:
+                msg = _tb.format_exception_only(exc, val)[-1].strip()
+            except Exception:
+                msg = str(val) if val else "Невідома помилка"
+            details = "".join(_tb.format_exception(exc, val, tb))
+            try:
+                log_path = os.path.join(os.getcwd(), "SAD_error.log")
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write("\n" + ("="*60) + "\n")
+                    f.write(details)
+            except Exception:
+                log_path = None
+
+            try:
+                extra = f"\n\nДеталі записано у файл: {log_path}" if log_path else ""
+                messagebox.showerror("Помилка", f"{msg}{extra}")
+            except Exception:
+                pass
+
+        self.root.report_callback_exception = _tk_report_callback_exception
+
         root.title("S.A.D. — Статистичний аналіз даних")
         root.geometry("1000x560")
         set_window_icon(root)
