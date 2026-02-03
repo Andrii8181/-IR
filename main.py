@@ -15,6 +15,18 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 import tkinter.font as tkfont
+
+import io
+
+# matplotlib (for plots)
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 from itertools import combinations
 from collections import defaultdict
 from datetime import datetime
@@ -106,6 +118,69 @@ def set_window_icon(win: tk.Tk | tk.Toplevel):
 # -------------------------
 # Small helpers
 # -------------------------
+
+# -------------------------
+# Clipboard helper (Windows): copy PNG as image
+# -------------------------
+def _copy_png_to_clipboard(png_bytes: bytes) -> bool:
+    """Copy PNG bytes to clipboard as an image (Windows).
+
+    Returns True on success, False otherwise.
+    """
+    if os.name != "nt":
+        return False
+    # Need Pillow to convert PNG -> DIB
+    if Image is None:
+        return False
+
+    try:
+        import ctypes
+    except Exception:
+        return False
+
+    try:
+        im = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        output = io.BytesIO()
+        im.save(output, "BMP")
+        data = output.getvalue()[14:]  # strip BMP header, leave DIB
+        output.close()
+    except Exception:
+        return False
+
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        CF_DIB = 8
+        GMEM_MOVEABLE = 0x0002
+
+        if not user32.OpenClipboard(None):
+            return False
+        try:
+            user32.EmptyClipboard()
+            hglob = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+            if not hglob:
+                return False
+            lock = kernel32.GlobalLock(hglob)
+            if not lock:
+                kernel32.GlobalFree(hglob)
+                return False
+            try:
+                ctypes.memmove(lock, data, len(data))
+            finally:
+                kernel32.GlobalUnlock(hglob)
+
+            if not user32.SetClipboardData(CF_DIB, hglob):
+                kernel32.GlobalFree(hglob)
+                return False
+
+            # ownership transferred to clipboard
+            return True
+        finally:
+            user32.CloseClipboard()
+    except Exception:
+        return False
+
 def significance_mark(p):
     if p is None or (isinstance(p, float) and math.isnan(p)):
         return ""
@@ -2465,11 +2540,185 @@ class SADTk:
 
         seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
         self.show_report_segments(seg)
+        # Автоматично формуємо другий (графічний) звіт
+        self.show_boxplot_report(indicator, units, long, levels_by_factor, letters_factor)
 
     # -------------------------
     # SHOW REPORT
     # -------------------------
-    def show_report_segments(self, segments):
+    
+        def show_boxplot_report(self, indicator, units, long, levels_by_factor, letters_factor):
+            """Second report: a single canvas with boxplots for levels of each factor.
+
+            Layout: levels of factor A, small gap, levels of factor B, etc.
+            Letters are taken from the first report (letters_factor).
+            """
+            # Close previous if exists
+            if hasattr(self, "plot_win") and self.plot_win and tk.Toplevel.winfo_exists(self.plot_win):
+                try:
+                    self.plot_win.destroy()
+                except Exception:
+                    pass
+
+            self.plot_win = tk.Toplevel(self.root)
+            self.plot_win.title("Графічний звіт (boxplot по факторах)")
+            self.plot_win.geometry("1180x760")
+            set_window_icon(self.plot_win)
+
+            top = tk.Frame(self.plot_win, padx=8, pady=6)
+            top.pack(fill=tk.X)
+
+            fig = Figure(figsize=(10.5, 5.2), dpi=110)
+            ax = fig.add_subplot(111)
+
+            # Build data blocks
+            positions = []
+            data = []
+            labels = []
+            meta = []  # (factor_key, level)
+            pos = 1
+            gap = 1.3
+
+            # y-range helper
+            all_vals = []
+
+            for f in self.factor_keys:
+                lvls = levels_by_factor.get(f, [])
+                for lvl in lvls:
+                    arr = [float(r["value"]) for r in long if (r.get("value") is not None and not math.isnan(r.get("value", np.nan))) and r.get(f) == lvl]
+                    data.append(arr)
+                    positions.append(pos)
+                    labels.append(str(lvl))
+                    meta.append((f, lvl))
+                    all_vals.extend(arr)
+                    pos += 1
+                pos += gap
+
+            if not all_vals:
+                tk.Label(self.plot_win, text="Немає даних для побудови графіка.", fg="#c62828").pack(pady=20)
+                return
+
+            # Boxplot
+            bp = ax.boxplot(
+                data,
+                positions=positions,
+                widths=0.65,
+                patch_artist=True,
+                showmeans=False,
+                showfliers=True
+            )
+
+            # Soft coloring (repeat cycle)
+            palette = ["#90caf9", "#a5d6a7", "#ffcc80", "#ef9a9a", "#ce93d8", "#80cbc4"]
+            for i, box in enumerate(bp["boxes"]):
+                try:
+                    box.set_facecolor(palette[i % len(palette)])
+                    box.set_alpha(0.95)
+                except Exception:
+                    pass
+
+            ax.set_title(f"{indicator}, {units}", fontname="Times New Roman", fontsize=15, pad=10)
+            ax.set_ylabel(units, fontname="Times New Roman", fontsize=13)
+
+            ax.set_xticks(positions)
+            ax.set_xticklabels(labels, rotation=90, fontname="Times New Roman", fontsize=11)
+
+            ax.grid(True, axis="y", alpha=0.35)
+
+            # Factor group captions under x-axis and separators
+            ymin = min(all_vals)
+            ymax = max(all_vals)
+            yr = (ymax - ymin) if ymax > ymin else 1.0
+            y_letter = ymax + 0.06 * yr
+
+            # Place letters above each box
+            for i, (f, lvl) in enumerate(meta):
+                letter = ""
+                try:
+                    letter = (letters_factor.get(f, {}) or {}).get(lvl, "") or ""
+                except Exception:
+                    letter = ""
+                if letter:
+                    # use max of that group's data
+                    arr = data[i]
+                    if arr:
+                        y = max(arr) + 0.03 * yr
+                    else:
+                        y = y_letter
+                    ax.text(positions[i], y, letter, ha="center", va="bottom", fontsize=12, fontname="Times New Roman")
+
+            # group spans
+            f_start = 0
+            idx = 0
+            for f in self.factor_keys:
+                lvls = levels_by_factor.get(f, [])
+                if not lvls:
+                    continue
+                start_pos = positions[idx]
+                end_pos = positions[idx + len(lvls) - 1]
+                center = (start_pos + end_pos) / 2.0
+
+                ax.text(center, -0.22, self.factor_title(f), ha="center", va="top",
+                        transform=ax.get_xaxis_transform(), fontsize=12, fontname="Times New Roman")
+
+                idx += len(lvls)
+                # separator line after group (except last)
+                if idx < len(positions):
+                    sep_x = (end_pos + positions[idx]) / 2.0
+                    ax.axvline(sep_x, ymin=0.0, ymax=1.0, color="0.75", linewidth=1)
+
+            # leave space at bottom for factor captions
+            fig.subplots_adjust(bottom=0.33, top=0.9, left=0.07, right=0.98)
+
+            canvas = FigureCanvasTkAgg(fig, master=self.plot_win)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+
+            def _get_png_bytes() -> bytes:
+                # Render with Agg to bytes
+                agg = FigureCanvasAgg(fig)
+                agg.draw()
+                buf = io.BytesIO()
+                agg.print_png(buf)
+                return buf.getvalue()
+
+            def copy_png():
+                png = _get_png_bytes()
+                if _copy_png_to_clipboard(png):
+                    messagebox.showinfo("Готово", "Графік скопійовано в буфер обміну як зображення.")
+                    return
+                # fallback: save file
+                messagebox.showwarning(
+                    "Не вдалося скопіювати",
+                    "Не вдалося скопіювати графік як зображення.
+"
+                    "Ймовірно, відсутній модуль Pillow або система не підтримує вставку DIB.
+"
+                    "Скористайтеся кнопкою «Зберегти PNG»."
+                )
+
+            def save_png():
+                from tkinter import filedialog
+                fn = filedialog.asksaveasfilename(
+                    title="Зберегти графік",
+                    defaultextension=".png",
+                    filetypes=[("PNG image", "*.png")]
+                )
+                if not fn:
+                    return
+                try:
+                    png = _get_png_bytes()
+                    with open(fn, "wb") as f:
+                        f.write(png)
+                    messagebox.showinfo("Готово", "PNG збережено.")
+                except Exception as ex:
+                    messagebox.showerror("Помилка", str(ex))
+
+            tk.Button(top, text="Копіювати графік (PNG)", command=copy_png).pack(side=tk.LEFT, padx=4)
+            tk.Button(top, text="Зберегти PNG...", command=save_png).pack(side=tk.LEFT, padx=4)
+            tk.Button(top, text="Закрити", command=self.plot_win.destroy).pack(side=tk.RIGHT, padx=4)
+
+def show_report_segments(self, segments):
         if self.report_win and tk.Toplevel.winfo_exists(self.report_win):
             self.report_win.destroy()
 
