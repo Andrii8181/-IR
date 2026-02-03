@@ -374,33 +374,31 @@ def cliffs_label(delta_abs: float) -> str:
 # -------------------------
 # Text table helpers (report)
 # -------------------------
+
 def build_table_block(headers, rows):
-    """Build a tab-separated table block for inserting into Tk Text widget.
-
-    Important: do NOT add extra spaces in header cells, because we rely on tab stops
-    (configured via `tabs_from_table_px`) to align columns precisely.
     """
-    def ccell(x):
-        return "" if x is None else str(x)
-
-    # compute character widths per column for nicer underline row (cosmetic)
-    ncol = len(headers)
-    col_w = [len(str(h)) for h in headers]
+    Таблиця для текстового звіту (tab-separated).
+    Важливо: без зайвих пробілів у заголовках, щоб таб-стопи не "зʼїжджали".
+    """
+    # convert all to strings, preserve order
+    headers_s = ["" if h is None else str(h) for h in headers]
+    rows_s = []
     for r in rows:
+        rows_s.append(["" if v is None else str(v) for v in r])
+
+    ncol = len(headers_s)
+    # estimate column widths in characters (for underline only)
+    col_w = [len(headers_s[j]) for j in range(ncol)]
+    for r in rows_s:
         for j in range(ncol):
-            try:
-                col_w[j] = max(col_w[j], len(ccell(r[j])))
-            except Exception:
-                pass
+            col_w[j] = max(col_w[j], len(r[j]))
 
     lines = []
-    lines.append("	".join(str(h) for h in headers))
-    lines.append("	".join("—" * max(3, col_w[j]) for j in range(ncol)))
-    for r in rows:
-        lines.append("	".join(ccell(v) for v in r))
-    return "
-".join(lines) + "
-"
+    lines.append("\t".join(headers_s))
+    lines.append("\t".join("—" * max(3, col_w[j]) for j in range(ncol)))
+    for r in rows_s:
+        lines.append("\t".join(r))
+    return "\n".join(lines) + "\n"
 
 def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extra_gap_after_col=None, extra_gap_px=0):
     ncol = len(headers)
@@ -1263,6 +1261,189 @@ def anova_splitplot_ols(long, factor_keys, main_factor="A", block_key="BLOCK"):
     }
 
 
+
+
+# -------------------------
+# Repeated Measures (balanced) ANOVA via OLS (mixed: between factors + within TIME)
+# -------------------------
+def anova_repeated_measures_ols(long, factor_keys, time_key="TIME", subject_key="SUBJECT"):
+    """
+    Balanced repeated-measures ANOVA (classic mixed ANOVA) using OLS with explicit:
+      - between-subject effects: factor_keys and their interactions
+      - within-subject effect: TIME
+      - subject effects (subjects nested in between-cells)
+      - subject×TIME (within-subject error term)
+
+    Assumptions:
+      • Data are balanced: each SUBJECT has measurements for all TIME levels.
+      • One observation per SUBJECT×TIME.
+      • factor_keys are between-subject factors (do not vary within SUBJECT).
+
+    Testing:
+      • Between-subject effects → MS_effect / MS_subject
+      • TIME and any interactions with TIME → MS_effect / MS_subject×TIME
+    """
+    if not long:
+        return None
+
+    # levels
+    time_levels = first_seen_order([r.get(time_key) for r in long if r.get(time_key) is not None])
+    subj_levels = first_seen_order([r.get(subject_key) for r in long if r.get(subject_key) is not None])
+    if len(time_levels) < 2:
+        raise ValueError("Повторні вимірювання: потрібно щонайменше 2 рівні часу (рік/фаза).")
+    if len(subj_levels) < 2:
+        raise ValueError("Повторні вимірювання: потрібно щонайменше 2 суб'єкти (повторності).")
+
+    # quick balance check: each subject must have all time levels
+    by_subj = defaultdict(set)
+    for r in long:
+        by_subj[r.get(subject_key)].add(r.get(time_key))
+    bad = [s for s, st in by_subj.items() if len(st) != len(time_levels)]
+    if bad:
+        raise ValueError(
+            "Повторні вимірювання: дані небалансовані (не всі суб'єкти мають значення для кожного року/фази). "
+            "Для цієї версії потрібна повна матриця вимірювань."
+        )
+
+    # build base factorial for between factors + TIME as a factor
+    all_keys = list(factor_keys) + [time_key]
+    levels_by_factor = {k: first_seen_order([r.get(k) for r in long if r.get(k) is not None]) for k in all_keys}
+
+    # subject dummies (k-1) and subject×time dummies (subject_dummies × time_dummies)
+    subj_vals = [r.get(subject_key) for r in long]
+    subj_cols, subj_names, subj_ref = _encode_factor(subj_vals, subj_levels)
+
+    time_vals = [r.get(time_key) for r in long]
+    time_cols, time_names, time_ref = _encode_factor(time_vals, time_levels)
+
+    st_cols = []
+    st_names = []
+    for si, scol in enumerate(subj_cols):
+        for ti, tcol in enumerate(time_cols):
+            st_cols.append(scol * tcol)
+            st_names.append(f"{subj_names[si]}×{time_names[ti]}")
+
+    extra = []
+    if subj_cols:
+        extra.append(("Суб'єкти", subj_cols, subj_names))
+    if st_cols:
+        extra.append((f"Суб'єкти×{time_key}", st_cols, st_names))
+
+    y, X, term_slices, colnames = _build_full_factorial_design(long, all_keys, levels_by_factor, extra_terms=extra)
+
+    # full model fit
+    beta, yhat, resid_full, sse_full, df_e_full, mse_full = _ols_fit(y, X)
+    # partial SS for terms
+    terms, _, _, _, _ = _ss_terms(y, X, term_slices)
+
+    # pull subject and subject×time as error terms
+    ss_subj, df_subj, ms_subj, _, _ = terms.get("Суб'єкти", (np.nan, 0, np.nan, np.nan, np.nan))
+    ss_st, df_st, ms_st, _, _ = terms.get(f"Суб'єкти×{time_key}", (np.nan, 0, np.nan, np.nan, np.nan))
+
+    if df_subj <= 0 or df_st <= 0 or any(math.isnan(x) for x in [ms_subj, ms_st]) or ms_subj <= 0 or ms_st <= 0:
+        raise ValueError("Повторні вимірювання: неможливо оцінити помилки для тестів (перевірте структуру даних).")
+
+    # build ANOVA-like table in logical order:
+    table = []
+
+    # Between-subject effects: main + interactions among factor_keys
+    ordered_between = []
+    for f in factor_keys:
+        ordered_between.append(f"Фактор {f}")
+    for rnk in range(2, len(factor_keys) + 1):
+        for comb in combinations(factor_keys, rnk):
+            ordered_between.append("Фактор " + "×".join(comb))
+
+    # TIME and TIME interactions
+    ordered_time = [f"Фактор {time_key}"]
+    for f in factor_keys:
+        ordered_time.append("Фактор " + "×".join([f, time_key]))
+    for rnk in range(2, len(factor_keys) + 1):
+        for comb in combinations(factor_keys, rnk):
+            ordered_time.append("Фактор " + "×".join(list(comb) + [time_key]))
+
+    # Between rows with F vs MS_subject
+    for name in ordered_between:
+        ss, df, ms, _, _ = terms.get(name, (np.nan, 0, np.nan, np.nan, np.nan))
+        if df > 0 and not any(math.isnan(x) for x in [ms, ms_subj]) and ms_subj > 0:
+            Fv = ms / ms_subj
+            pv = float(1.0 - f_dist.cdf(Fv, df, df_subj))
+        else:
+            Fv, pv = (np.nan, np.nan)
+        table.append([name, ss, df, ms, Fv, pv])
+
+    # subject error term for between
+    table.append(["Помилка між суб'єктами (Суб'єкти)", ss_subj, df_subj, ms_subj, np.nan, np.nan])
+
+    # TIME rows with F vs MS_subject×TIME
+    for name in ordered_time:
+        ss, df, ms, _, _ = terms.get(name, (np.nan, 0, np.nan, np.nan, np.nan))
+        if df > 0 and not any(math.isnan(x) for x in [ms, ms_st]) and ms_st > 0:
+            Fv = ms / ms_st
+            pv = float(1.0 - f_dist.cdf(Fv, df, df_st))
+        else:
+            Fv, pv = (np.nan, np.nan)
+        table.append([name, ss, df, ms, Fv, pv])
+
+    # within-subject error
+    table.append([f"Помилка в межах суб'єктів (Суб'єкти×{time_key})", ss_st, df_st, ms_st, np.nan, np.nan])
+
+    ss_total = float(np.sum((y - np.mean(y)) ** 2))
+    table.append(["Загальна", ss_total, len(y) - 1, np.nan, np.nan, np.nan])
+
+    # NIR05: between factors use ms_subj/df_subj; TIME uses ms_st/df_st
+    NIR05 = {}
+    tcrit_between = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_subj)))
+    tcrit_within = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_st)))
+
+    # harmonic n per level for between factors (count of SUBJECTs in each level)
+    # estimate subjects per level from long (unique subjects)
+    subj_to_row = {}
+    for r in long:
+        subj_to_row.setdefault(r.get(subject_key), r)
+
+    subj_records = list(subj_to_row.values())
+
+    def _harm_n_subjects_for_factor(f):
+        n_level = defaultdict(int)
+        for r in subj_records:
+            if r.get(f) is None:
+                continue
+            n_level[r.get(f)] += 1
+        ns = [n for n in n_level.values() if n > 0]
+        if not ns:
+            return np.nan
+        return float(len(ns) / sum(1.0 / n for n in ns))
+
+    for f in factor_keys:
+        nh = _harm_n_subjects_for_factor(f)
+        if math.isnan(nh) or nh <= 0:
+            continue
+        NIR05[f"Фактор {f}"] = tcrit_between * math.sqrt(2.0 * ms_subj / nh)
+
+    # TIME LSD (subjects count is denominator)
+    n_subj = len(subj_levels)
+    if n_subj > 0:
+        NIR05[f"Фактор {time_key}"] = tcrit_within * math.sqrt(2.0 * ms_st / n_subj)
+
+    # residuals for normality: fit model WITHOUT subject×time (so residual captures within-subject variation)
+    extra2 = []
+    if subj_cols:
+        extra2.append(("Суб'єкти", subj_cols, subj_names))
+    y2, X2, ts2, _ = _build_full_factorial_design(long, all_keys, levels_by_factor, extra_terms=extra2)
+    _, _, resid2, _, _, _ = _ols_fit(y2, X2)
+
+    return {
+        "table": table,
+        "df_between_err": df_subj,
+        "MS_between_err": ms_subj,
+        "df_within_err": df_st,
+        "MS_within_err": ms_st,
+        "SS_total": ss_total,
+        "residuals": resid2.tolist(),
+        "NIR05": NIR05,
+        "time_key": time_key,
+    }
 # -------------------------
 # GUI
 # -------------------------
@@ -1298,13 +1479,13 @@ class SADTk:
         btn_frame.pack(pady=10)
 
         tk.Button(btn_frame, text="Однофакторний аналіз", width=22, height=2,
-                  command=lambda: self.open_table(1)).grid(row=0, column=0, padx=10, pady=8)
+                  command=lambda: self.start_analysis(1)).grid(row=0, column=0, padx=10, pady=8)
         tk.Button(btn_frame, text="Двофакторний аналіз", width=22, height=2,
-                  command=lambda: self.open_table(2)).grid(row=0, column=1, padx=10, pady=8)
+                  command=lambda: self.start_analysis(2)).grid(row=0, column=1, padx=10, pady=8)
         tk.Button(btn_frame, text="Трифакторний аналіз", width=22, height=2,
-                  command=lambda: self.open_table(3)).grid(row=1, column=0, padx=10, pady=8)
+                  command=lambda: self.start_analysis(3)).grid(row=1, column=0, padx=10, pady=8)
         tk.Button(btn_frame, text="Чотирифакторний аналіз", width=22, height=2,
-                  command=lambda: self.open_table(4)).grid(row=1, column=1, padx=10, pady=8)
+                  command=lambda: self.start_analysis(4)).grid(row=1, column=1, padx=10, pady=8)
 
         tk.Label(
             self.main_frame,
@@ -1318,6 +1499,7 @@ class SADTk:
         self.graph_win = None
         self._graph_fig = None
         self._graph_canvas = None
+        self.params_current = None
 
         # active cell
         self._active_cell = None
@@ -1375,6 +1557,7 @@ class SADTk:
         w.grab_set()
 
     # ---------- ask indicator / units / design ----------
+    
     def ask_indicator_units(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Параметри звіту")
@@ -1409,66 +1592,92 @@ class SADTk:
         tk.Radiobutton(rfrm, text="Спліт-плот (Split-plot) — лише параметричний", variable=design_var, value="split",
                        font=rb_font).pack(anchor="w", pady=2)
 
+        # repeated measures
+        rm_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(frm, text="Повторні вимірювання (одні й ті самі об'єкти у часі)",
+                       variable=rm_var, onvalue=True, offvalue=False,
+                       font=("Times New Roman", 14), fg="#000000").grid(row=3, column=0, columnspan=2,
+                                                                        sticky="w", pady=(10, 2))
+
+        tk.Label(frm, text="Назва повторюваного чинника (напр.: Рік або Фаза):", fg="#000000").grid(
+            row=4, column=0, sticky="w", pady=(6, 2)
+        )
+        e_time = tk.Entry(frm, width=40, fg="#000000")
+        e_time.grid(row=4, column=1, pady=(6, 2))
+        e_time.insert(0, "Рік")
+
+        def _toggle_time():
+            st = "normal" if rm_var.get() else "disabled"
+            e_time.configure(state=st)
+
+        rm_var.trace_add("write", lambda *_: _toggle_time())
+        _toggle_time()
+
         main_factor_var = tk.StringVar(value="A")
-        sp_frame = tk.Frame(frm)
-        sp_frame.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        main_factor_frame = tk.Frame(frm)
+        main_factor_frame.grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 4))
+        lbl_main = tk.Label(main_factor_frame, text="Головний фактор (для спліт-плот):", fg="#000000")
+        lbl_main.pack(side=tk.LEFT)
+        cb_main = ttk.Combobox(main_factor_frame, textvariable=main_factor_var,
+                               values=["A", "B", "C", "D"], state="readonly", width=6)
+        cb_main.pack(side=tk.LEFT, padx=(10, 0))
 
-        lbl_sp = tk.Label(sp_frame, text="Головний фактор (Whole-plot factor):", fg="#000000")
-        lbl_sp.pack(side=tk.LEFT)
-
-        cmb = ttk.Combobox(sp_frame, textvariable=main_factor_var, width=8, state="readonly",
-                           values=("A", "B", "C", "D"))
-        cmb.pack(side=tk.LEFT, padx=8)
-
-        def _fit_dialog_to_content():
-            dlg.update_idletasks()
-            req_w = frm.winfo_reqwidth()
-            req_h = frm.winfo_reqheight()
-            dlg.geometry(f"{req_w + 24}x{req_h + 18}")
-            center_window(dlg)
-
-        def sp_visible(is_on: bool):
-            if is_on:
-                sp_frame.grid()
+        def update_main_visibility(*_):
+            if design_var.get() == "split":
+                lbl_main.configure(state="normal")
+                cb_main.configure(state="readonly")
             else:
-                sp_frame.grid_remove()
-            _fit_dialog_to_content()
+                lbl_main.configure(state="disabled")
+                cb_main.configure(state="disabled")
 
-        sp_visible(False)
+        design_var.trace_add("write", update_main_visibility)
+        update_main_visibility()
 
-        def on_design_change(*_):
-            sp_visible(design_var.get() == "split")
+        out = {"ok": False, "indicator": "", "units": "", "design": "crd", "split_main": "A",
+               "rm": False, "rm_label": "Рік"}
 
-        design_var.trace_add("write", on_design_change)
+        def ok():
+            ind = e_ind.get().strip() or "Показник"
+            units = e_units.get().strip()
+            design = design_var.get()
+            rm = bool(rm_var.get())
+            rm_label = e_time.get().strip() or "Рік"
 
-        out = {"ok": False, "indicator": "", "units": "", "design": "crd", "split_main": "A"}
-
-        def on_ok():
-            out["indicator"] = e_ind.get().strip()
-            out["units"] = e_units.get().strip()
-            out["design"] = design_var.get()
-            out["split_main"] = main_factor_var.get()
-
-            if not out["indicator"] or not out["units"]:
-                messagebox.showwarning("Помилка", "Заповніть назву показника та одиниці виміру.")
+            if rm and design != "crd":
+                messagebox.showwarning(
+                    "Повторні вимірювання",
+                    "У цій версії повторні вимірювання підтримуються лише для повної рандомізації (CRD).\n"
+                    "Для RCBD/Split-plot потрібна окрема (складніша) модель."
+                )
+                return
+            if rm and not rm_label:
+                messagebox.showwarning("Повторні вимірювання", "Вкажіть назву повторюваного чинника (Рік/Фаза).")
                 return
 
-            out["ok"] = True
+            out.update({
+                "ok": True,
+                "indicator": ind,
+                "units": units,
+                "design": design,
+                "split_main": main_factor_var.get(),
+                "rm": rm,
+                "rm_label": rm_label
+            })
+            dlg.destroy()
+
+        def cancel():
             dlg.destroy()
 
         btns = tk.Frame(frm)
-        btns.grid(row=4, column=0, columnspan=2, pady=(12, 0))
-        tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=6)
-        tk.Button(btns, text="Скасувати", width=12, command=lambda: dlg.destroy()).pack(side=tk.LEFT, padx=6)
+        btns.grid(row=6, column=0, columnspan=2, pady=(14, 0))
+        tk.Button(btns, text="OK", width=10, command=ok).pack(side=tk.LEFT, padx=8)
+        tk.Button(btns, text="Скасувати", width=10, command=cancel).pack(side=tk.LEFT, padx=8)
 
-        _fit_dialog_to_content()
-        e_ind.focus_set()
-        dlg.bind("<Return>", lambda e: on_ok())
         dlg.grab_set()
+        dlg.transient(self.root)
         self.root.wait_window(dlg)
         return out
 
-    # ---------- Choose method ----------
     def choose_method_window(self, p_norm, design, num_variants):
         dlg = tk.Toplevel(self.root)
         dlg.title("Вибір виду аналізу")
@@ -1621,7 +1830,7 @@ class SADTk:
             return
         r, c = pos
         # fill handle дозволяємо ТІЛЬКИ для факторних колонок (щоб не зіпсувати числа повторностей)
-        if c >= self.factors_count:
+        if c >= (self.factors_count + (1 if getattr(self,'rm_enabled',False) else 0)):
             w.configure(cursor="")
             self._fill_ready = False
             return
@@ -1647,7 +1856,7 @@ class SADTk:
         if not pos:
             return
         r, c = pos
-        if c >= self.factors_count:
+        if c >= (self.factors_count + (1 if getattr(self,'rm_enabled',False) else 0)):
             self._fill_dragging = False
             return
 
@@ -1725,9 +1934,15 @@ class SADTk:
 
     # ---------- Rename factor ----------
     def rename_factor_by_col(self, col_idx: int):
-        if col_idx < 0 or col_idx >= self.factors_count:
+        off = 1 if getattr(self, "rm_enabled", False) else 0
+        if col_idx < 0:
             return
-        fkey = self.factor_keys[col_idx]
+        # якщо перша колонка — це Рік/Фаза (повторні вимірювання), перейменовувати її не потрібно
+        if off == 1 and col_idx == 0:
+            return
+        if col_idx < off or col_idx >= off + self.factors_count:
+            return
+        fkey = self.factor_keys[col_idx - off]
         old = self.factor_title(fkey)
 
         dlg = tk.Toplevel(self.table_win if self.table_win else self.root)
@@ -1756,8 +1971,10 @@ class SADTk:
                 self.header_labels[col_idx].configure(text=new)
 
             self.factor_names = [self.factor_title(fk) for fk in self.factor_keys]
-            rep_names = [self.header_labels[j].cget("text") for j in range(self.factors_count, self.cols)]
-            self.column_names = self.factor_names + rep_names
+            off = 1 if getattr(self,'rm_enabled',False) else 0
+            rep_names = [self.header_labels[j].cget("text") for j in range(off + self.factors_count, self.cols)]
+            base = ([] if off==0 else [self.header_labels[0].cget("text")]) + self.factor_names
+            self.column_names = base + rep_names
 
             dlg.destroy()
 
@@ -1772,6 +1989,22 @@ class SADTk:
         dlg.grab_set()
 
     # ---------- Table window ----------
+    
+
+def start_analysis(self, factors_count):
+    """
+    Новий порядок:
+      1) обрати факторність,
+      2) задати параметри звіту (показник/одиниці/дизайн/повторні вимірювання),
+      3) відкрити таблицю вводу даних.
+    """
+    params = self.ask_indicator_units()
+    if not params.get("ok"):
+        return
+    self.params_current = params
+    self.open_table(factors_count)
+
+
     def open_table(self, factors_count):
         if self.table_win and tk.Toplevel.winfo_exists(self.table_win):
             self.table_win.destroy()
@@ -1790,7 +2023,19 @@ class SADTk:
 
         self.repeat_count = 6
         self.factor_names = [self.factor_title(fk) for fk in self.factor_keys]
-        self.column_names = self.factor_names + [f"Повт.{i+1}" for i in range(self.repeat_count)]
+
+        # repeated measures settings (from params_current)
+        self.rm_enabled = bool(getattr(self, "params_current", None) and self.params_current.get("rm"))
+        self.rm_label = "Рік"
+        if self.rm_enabled:
+            self.rm_label = (self.params_current.get("rm_label") or "Рік").strip()
+
+        base_cols = []
+        if self.rm_enabled:
+            base_cols.append(self.rm_label)
+        base_cols += self.factor_names
+
+        self.column_names = base_cols + [f"Повт.{i+1}" for i in range(self.repeat_count)]
 
         ctl = tk.Frame(self.table_win, padx=6, pady=6)
         ctl.pack(fill=tk.X)
@@ -1844,7 +2089,8 @@ class SADTk:
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             self.header_labels.append(lbl)
 
-            if j < self.factors_count:
+            off = 1 if getattr(self,'rm_enabled',False) else 0
+            if off <= j < off + self.factors_count:
                 lbl.bind("<Double-Button-1>", lambda e, col=j: self.rename_factor_by_col(col))
 
         # cells
@@ -2016,7 +2262,7 @@ class SADTk:
         return "break"
 
     def used_repeat_columns(self):
-        rep_start = self.factors_count
+        rep_start = self.factors_count + (1 if getattr(self, 'rm_enabled', False) else 0)
         rep_cols = list(range(rep_start, self.cols))
         used = []
         for c in rep_cols:
@@ -2043,8 +2289,15 @@ class SADTk:
 
         for i, row in enumerate(self.entries):
             levels = []
+            col_off = 1 if getattr(self, 'rm_enabled', False) else 0
+            # TIME (рік/фаза) зчитуємо окремо, якщо увімкнено повторні вимірювання
+            time_val = None
+            if col_off == 1:
+                tv = row[0].get().strip()
+                time_val = tv if tv else f"час{i+1}"
+
             for k in range(self.factors_count):
-                v = row[k].get().strip()
+                v = row[col_off + k].get().strip()
                 if v == "":
                     v = f"рядок{i+1}"
                 levels.append(v)
@@ -2064,6 +2317,13 @@ class SADTk:
                 if self.factors_count >= 3: rec["C"] = levels[2]
                 if self.factors_count >= 4: rec["D"] = levels[3]
 
+
+                if getattr(self, "rm_enabled", False):
+                    rec["TIME"] = time_val
+                    # subjects are repetitions (columns) nested in treatment cell
+                    cell_key = "|".join(levels) if levels else f"рядок{i+1}"
+                    rec["SUBJECT"] = f"{cell_key}::S{idx_c+1}"
+
                 if design in ("rcbd", "split"):
                     rec["BLOCK"] = f"Блок {idx_c + 1}"
 
@@ -2077,14 +2337,16 @@ class SADTk:
     def analyze(self):
         created_at = datetime.now()
 
-        params = self.ask_indicator_units()
-        if not params["ok"]:
+        params = getattr(self, 'params_current', None) or self.ask_indicator_units()
+        if not params.get("ok"):
             return
 
-        indicator = params["indicator"]
-        units = params["units"]
-        design = params["design"]
+        indicator = params.get("indicator", "Показник")
+        units = params.get("units", "")
+        design = params.get("design", "crd")
         split_main = params.get("split_main", "A")
+        rm = bool(params.get("rm"))
+        rm_label = (params.get("rm_label") or "Рік").strip()
 
         long, used_rep_cols = self.collect_long(design)
         if len(long) == 0:
@@ -2104,7 +2366,10 @@ class SADTk:
 
         # run design model
         try:
-            if design == "crd":
+            if rm:
+                res = anova_repeated_measures_ols(long, self.factor_keys, time_key="TIME", subject_key="SUBJECT")
+                residuals = np.array(res.get("residuals", []), dtype=float)
+            elif design == "crd":
                 res = anova_n_way(long, self.factor_keys, levels_by_factor)
                 residuals = np.array(res.get("residuals", []), dtype=float)
             elif design == "rcbd":
@@ -2137,14 +2402,34 @@ class SADTk:
                 "• або вибрати CRD/RCBD і виконати непараметричний аналіз."
             )
             return
+        # Для повторних вимірювань непараметричний блок (Friedman/Wilcoxon RM) тут не реалізований.
+        # Якщо розподіл не нормальний — даємо зрозуміле пояснення.
+        if rm and (p_norm is not None) and (not np.isnan(p_norm)) and (p_norm < ALPHA):
+            
+
+            messagebox.showwarning(
+                "Повторні вимірювання",
+                "За результатами тесту Шапіро–Уїлка залишки не відповідають нормальному розподілу (p < 0.05).\n\n"
+                "Непараметричний аналіз для повторних вимірювань у цій версії ще не реалізований.\n"
+                "Рекомендації:\n"
+                "• застосувати трансформацію даних (log/√/Box–Cox) і повторити аналіз; або\n"
+                "• виконати аналіз по кожному року/фазі окремо непараметрично (Kruskal–Wallis / Mann–Whitney) та інтерпретувати динаміку."
+            )
+            return
+
+
 
         choice = self.choose_method_window(p_norm, design, num_variants)
         if not choice["ok"]:
             return
         method = choice["method"]
 
-        MS_error = res.get("MS_error", np.nan)
-        df_error = res.get("df_error", np.nan)
+        if rm:
+            MS_error = res.get("MS_between_err", np.nan)
+            df_error = res.get("df_between_err", np.nan)
+        else:
+            MS_error = res.get("MS_error", np.nan)
+            df_error = res.get("df_error", np.nan)
 
         MS_whole = res.get("MS_whole", np.nan)
         df_whole = res.get("df_whole", np.nan)
