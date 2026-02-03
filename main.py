@@ -2020,729 +2020,745 @@ class SADTk:
     # ANALYZE
     # -------------------------
     def analyze(self):
-        created_at = datetime.now()
-
-        params = self.ask_indicator_units()
-        if not params["ok"]:
-            return
-
-        indicator = params["indicator"]
-        units = params["units"]
-        design = params["design"]
-        split_main = params.get("split_main", "A")
-
-        long, used_rep_cols = self.collect_long(design)
-        if len(long) == 0:
-            messagebox.showwarning("Помилка", "Немає числових даних для аналізу.\nПеревірте повторності та значення.")
-            return
-
-        values = np.array([r["value"] for r in long], dtype=float)
-        if len(values) < 3:
-            messagebox.showinfo("Результат", "Надто мало даних для аналізу.")
-            return
-
-        # levels
-        levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
-        variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
-        v_names = [" | ".join(map(str, k)) for k in variant_order]
-        num_variants = len(variant_order)
-
-        # run design model
         try:
-            if design == "crd":
-                res = anova_n_way(long, self.factor_keys, levels_by_factor)
-                residuals = np.array(res.get("residuals", []), dtype=float)
-            elif design == "rcbd":
-                res = anova_rcbd_ols(long, self.factor_keys, levels_by_factor, block_key="BLOCK")
-                residuals = np.array(res.get("residuals", []), dtype=float)
-            else:
-                if split_main not in self.factor_keys:
-                    split_main = self.factor_keys[0]
-                res = anova_splitplot_ols(long, self.factor_keys, main_factor=split_main, block_key="BLOCK")
-                residuals = np.array(res.get("residuals", []), dtype=float)
-        except Exception as ex:
-            messagebox.showerror("Помилка аналізу", str(ex))
-            return
-
-        # normality on residuals
-        try:
-            W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
-        except Exception:
-            W, p_norm = (np.nan, np.nan)
-
-        normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
-        if design == "split" and not normal:
-            messagebox.showwarning(
-                "Split-plot: аналіз неможливий",
-                "Обрано дизайн Split-plot, який у цій програмі реалізовано лише для параметричних методів.\n"
-                "Оскільки залишки моделі не відповідають нормальному розподілу (p ≤ 0.05),\n"
-                "параметричний split-plot аналіз є методично некоректним.\n\n"
-                "Рекомендації:\n"
-                "• застосувати трансформацію даних (log/√/Box-Cox) і повторити аналіз;\n"
-                "• або вибрати CRD/RCBD і виконати непараметричний аналіз."
-            )
-            return
-
-        choice = self.choose_method_window(p_norm, design, num_variants)
-        if not choice["ok"]:
-            return
-        method = choice["method"]
-
-        MS_error = res.get("MS_error", np.nan)
-        df_error = res.get("df_error", np.nan)
-
-        MS_whole = res.get("MS_whole", np.nan)
-        df_whole = res.get("df_whole", np.nan)
-        split_main_factor = res.get("main_factor", split_main) if design == "split" else None
-
-        # descriptive
-        vstats = variant_mean_sd(long, self.factor_keys)
-        v_means = {k: vstats[k][0] for k in vstats.keys()}
-        v_sds = {k: vstats[k][1] for k in vstats.keys()}
-        v_ns = {k: vstats[k][2] for k in vstats.keys()}
-
-        means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
-        ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
-        groups1 = {}
-        g_variant = groups_by_keys(long, tuple(self.factor_keys))
-        for i, k in enumerate(variant_order):
-            groups1[v_names[i]] = g_variant.get(k, [])
-
-        factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
-        factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
-        factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
-
-        factor_medians = {}
-        factor_q = {}
-        for f in self.factor_keys:
-            factor_medians[f] = {}
-            factor_q[f] = {}
-            for lvl, arr in factor_groups[f].items():
-                med, q1, q3 = median_q1_q3(arr)
-                factor_medians[f][lvl] = med
-                factor_q[f][lvl] = (q1, q3)
-
-        ranks_by_variant = mean_ranks_by_key(long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys))
-        ranks_by_factor = {f: mean_ranks_by_key(long, key_func=lambda rec, ff=f: rec.get(ff)) for f in self.factor_keys}
-
-        v_medians = {}
-        v_q = {}
-        for i, k in enumerate(variant_order):
-            name = v_names[i]
-            arr = groups1.get(name, [])
-            med, q1, q3 = median_q1_q3(arr)
-            v_medians[k] = med
-            v_q[k] = (q1, q3)
-
-        # homogeneity (param only)
-        bf_F, bf_p = (np.nan, np.nan)
-        if method in ("lsd", "tukey", "duncan", "bonferroni"):
-            bf_F, bf_p = brown_forsythe_from_groups(groups1)
-
-        # nonparam globals
-        kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
-        do_posthoc = True
-
-        fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
-        wil_stat, wil_p = (np.nan, np.nan)
-        rcbd_pairwise_rows = []
-        rcbd_sig = {}
-
-        letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
-        letters_named = {name: "" for name in v_names}
-        pairwise_rows = []
-        factor_pairwise_tables = {}
-
-        if method == "lsd":
-            for f in self.factor_keys:
-                lvls = levels_by_factor[f]
-                if design == "split" and f == split_main_factor:
-                    sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_whole, df_whole, alpha=ALPHA)
+            created_at = datetime.now()
+    
+            params = self.ask_indicator_units()
+            if not params["ok"]:
+                return
+    
+            indicator = params["indicator"]
+            units = params["units"]
+            design = params["design"]
+            split_main = params.get("split_main", "A")
+    
+            long, used_rep_cols = self.collect_long(design)
+            if len(long) == 0:
+                messagebox.showwarning("Помилка", "Немає числових даних для аналізу.\nПеревірте повторності та значення.")
+                return
+    
+            values = np.array([r["value"] for r in long], dtype=float)
+            if len(values) < 3:
+                messagebox.showinfo("Результат", "Надто мало даних для аналізу.")
+                return
+    
+            # levels
+            levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
+            variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
+            v_names = [" | ".join(map(str, k)) for k in variant_order]
+            num_variants = len(variant_order)
+    
+            # run design model
+            try:
+                if design == "crd":
+                    res = anova_n_way(long, self.factor_keys, levels_by_factor)
+                    residuals = np.array(res.get("residuals", []), dtype=float)
+                elif design == "rcbd":
+                    res = anova_rcbd_ols(long, self.factor_keys, levels_by_factor, block_key="BLOCK")
+                    residuals = np.array(res.get("residuals", []), dtype=float)
                 else:
-                    sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
-                letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig_f)
-
-            if design != "split":
-                sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
-                letters_named = cld_multi_letters(v_names, means1, sigv)
-
-        elif method in ("tukey", "duncan", "bonferroni"):
-            if design != "split":
-                pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
-                letters_named = cld_multi_letters(v_names, means1, sig)
-
-            if design == "split":
+                    if split_main not in self.factor_keys:
+                        split_main = self.factor_keys[0]
+                    res = anova_splitplot_ols(long, self.factor_keys, main_factor=split_main, block_key="BLOCK")
+                    residuals = np.array(res.get("residuals", []), dtype=float)
+            except Exception as ex:
+                messagebox.showerror("Помилка аналізу", str(ex))
+                return
+    
+            # normality on residuals
+            try:
+                W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
+            except Exception:
+                W, p_norm = (np.nan, np.nan)
+    
+            normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
+            if design == "split" and not normal:
+                messagebox.showwarning(
+                    "Split-plot: аналіз неможливий",
+                    "Обрано дизайн Split-plot, який у цій програмі реалізовано лише для параметричних методів.\n"
+                    "Оскільки залишки моделі не відповідають нормальному розподілу (p ≤ 0.05),\n"
+                    "параметричний split-plot аналіз є методично некоректним.\n\n"
+                    "Рекомендації:\n"
+                    "• застосувати трансформацію даних (log/√/Box-Cox) і повторити аналіз;\n"
+                    "• або вибрати CRD/RCBD і виконати непараметричний аналіз."
+                )
+                return
+    
+            choice = self.choose_method_window(p_norm, design, num_variants)
+            if not choice["ok"]:
+                return
+            method = choice["method"]
+    
+            MS_error = res.get("MS_error", np.nan)
+            df_error = res.get("df_error", np.nan)
+    
+            MS_whole = res.get("MS_whole", np.nan)
+            df_whole = res.get("df_whole", np.nan)
+            split_main_factor = res.get("main_factor", split_main) if design == "split" else None
+    
+            # descriptive
+            vstats = variant_mean_sd(long, self.factor_keys)
+            v_means = {k: vstats[k][0] for k in vstats.keys()}
+            v_sds = {k: vstats[k][1] for k in vstats.keys()}
+            v_ns = {k: vstats[k][2] for k in vstats.keys()}
+    
+            means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
+            ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
+            groups1 = {}
+            g_variant = groups_by_keys(long, tuple(self.factor_keys))
+            for i, k in enumerate(variant_order):
+                groups1[v_names[i]] = g_variant.get(k, [])
+    
+            factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
+            factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
+            factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
+    
+            factor_medians = {}
+            factor_q = {}
+            for f in self.factor_keys:
+                factor_medians[f] = {}
+                factor_q[f] = {}
+                for lvl, arr in factor_groups[f].items():
+                    med, q1, q3 = median_q1_q3(arr)
+                    factor_medians[f][lvl] = med
+                    factor_q[f][lvl] = (q1, q3)
+    
+            ranks_by_variant = mean_ranks_by_key(long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys))
+            ranks_by_factor = {f: mean_ranks_by_key(long, key_func=lambda rec, ff=f: rec.get(ff)) for f in self.factor_keys}
+    
+            v_medians = {}
+            v_q = {}
+            for i, k in enumerate(variant_order):
+                name = v_names[i]
+                arr = groups1.get(name, [])
+                med, q1, q3 = median_q1_q3(arr)
+                v_medians[k] = med
+                v_q[k] = (q1, q3)
+    
+            # homogeneity (param only)
+            bf_F, bf_p = (np.nan, np.nan)
+            if method in ("lsd", "tukey", "duncan", "bonferroni"):
+                bf_F, bf_p = brown_forsythe_from_groups(groups1)
+    
+            # nonparam globals
+            kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
+            do_posthoc = True
+    
+            fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
+            wil_stat, wil_p = (np.nan, np.nan)
+            rcbd_pairwise_rows = []
+            rcbd_sig = {}
+    
+            letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
+            letters_named = {name: "" for name in v_names}
+            pairwise_rows = []
+            factor_pairwise_tables = {}
+    
+            if method == "lsd":
                 for f in self.factor_keys:
                     lvls = levels_by_factor[f]
-                    means_f = factor_means[f]
-                    ns_f = factor_ns[f]
-                    if f == split_main_factor:
-                        rows_f, _ = pairwise_param_short_variants_pm(lvls, means_f, ns_f, MS_whole, df_whole, method, alpha=ALPHA)
+                    if design == "split" and f == split_main_factor:
+                        sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_whole, df_whole, alpha=ALPHA)
                     else:
-                        rows_f, _ = pairwise_param_short_variants_pm(lvls, means_f, ns_f, MS_error, df_error, method, alpha=ALPHA)
-                    factor_pairwise_tables[f] = rows_f
-
-        elif method == "kw":
-            try:
-                kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
-                if len(kw_samples) >= 2:
-                    kw_res = kruskal(*kw_samples)
-                    kw_H = float(kw_res.statistic)
-                    kw_p = float(kw_res.pvalue)
-                    kw_df = int(len(kw_samples) - 1)
-                    kw_eps2 = epsilon_squared_kw(kw_H, n=len(long), k=len(kw_samples))
-            except Exception:
-                kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
-
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
-                do_posthoc = False
-
-            if do_posthoc:
+                        sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
+                    letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig_f)
+    
+                if design != "split":
+                    sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
+                    letters_named = cld_multi_letters(v_names, means1, sigv)
+    
+            elif method in ("tukey", "duncan", "bonferroni"):
+                if design != "split":
+                    pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
+                    letters_named = cld_multi_letters(v_names, means1, sig)
+    
+                if design == "split":
+                    for f in self.factor_keys:
+                        lvls = levels_by_factor[f]
+                        means_f = factor_means[f]
+                        ns_f = factor_ns[f]
+                        if f == split_main_factor:
+                            rows_f, _ = pairwise_param_short_variants_pm(lvls, means_f, ns_f, MS_whole, df_whole, method, alpha=ALPHA)
+                        else:
+                            rows_f, _ = pairwise_param_short_variants_pm(lvls, means_f, ns_f, MS_error, df_error, method, alpha=ALPHA)
+                        factor_pairwise_tables[f] = rows_f
+    
+            elif method == "kw":
+                try:
+                    kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
+                    if len(kw_samples) >= 2:
+                        kw_res = kruskal(*kw_samples)
+                        kw_H = float(kw_res.statistic)
+                        kw_p = float(kw_res.pvalue)
+                        kw_df = int(len(kw_samples) - 1)
+                        kw_eps2 = epsilon_squared_kw(kw_H, n=len(long), k=len(kw_samples))
+                except Exception:
+                    kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
+    
+                if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
+                    do_posthoc = False
+    
+                if do_posthoc:
+                    pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
+                    med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
+                    letters_named = cld_multi_letters(v_names, med_tmp, sig)
+                else:
+                    letters_named = {name: "" for name in v_names}
+    
+            elif method == "mw":
                 pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
                 med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
                 letters_named = cld_multi_letters(v_names, med_tmp, sig)
-            else:
-                letters_named = {name: "" for name in v_names}
-
-        elif method == "mw":
-            pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
-            med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-            letters_named = cld_multi_letters(v_names, med_tmp, sig)
-
-        elif method == "friedman":
-            block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
-            long2 = []
-            for r in long:
-                rr = dict(r)
-                rr["VARIANT"] = " | ".join(str(rr.get(f)) for f in self.factor_keys)
-                long2.append(rr)
-
-            mat_rows, kept_blocks = rcbd_matrix_from_long(long2, v_names, block_names, variant_key="VARIANT", block_key="BLOCK")
-            if len(mat_rows) < 2:
-                messagebox.showwarning("Помилка", "Для Friedman потрібні щонайменше 2 повних блоки (без пропусків по варіантах).")
-                return
-
-            try:
-                cols = list(zip(*mat_rows))
-                fr = friedmanchisquare(*[np.array(c, dtype=float) for c in cols])
-                fr_chi2 = float(fr.statistic)
-                fr_p = float(fr.pvalue)
-                fr_df = int(len(v_names) - 1)
-                fr_W = kendalls_w_from_friedman(fr_chi2, n_blocks=len(mat_rows), k_treat=len(v_names))
-            except Exception:
-                fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
-
-            if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p < ALPHA:
-                rcbd_pairwise_rows, rcbd_sig = pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=ALPHA)
-                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-                letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
-            else:
-                letters_named = {name: "" for name in v_names}
-
-        elif method == "wilcoxon":
-            if len(v_names) != 2:
-                messagebox.showwarning("Помилка", "Wilcoxon (парний) застосовується лише для 2 варіантів.")
-                return
-
-            block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
-            long2 = []
-            for r in long:
-                rr = dict(r)
-                rr["VARIANT"] = " | ".join(str(rr.get(f)) for f in self.factor_keys)
-                long2.append(rr)
-
-            mat_rows, kept_blocks = rcbd_matrix_from_long(long2, v_names, block_names, variant_key="VARIANT", block_key="BLOCK")
-            if len(mat_rows) < 2:
-                messagebox.showwarning("Помилка", "Для Wilcoxon потрібні щонайменше 2 повні блоки (пари значень).")
-                return
-            arr = np.array(mat_rows, dtype=float)
-            x = arr[:, 0]
-            y = arr[:, 1]
-            try:
-                stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
-                wil_stat = float(stat)
-                wil_p = float(p)
-            except Exception:
-                wil_stat, wil_p = (np.nan, np.nan)
-
-            if not (isinstance(wil_p, float) and math.isnan(wil_p)) and wil_p < ALPHA:
-                rcbd_sig = {(v_names[0], v_names[1]): True}
-                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-                letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
-            else:
-                letters_named = {name: "" for name in v_names}
-
-        letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
-
-        SS_total = res.get("SS_total", np.nan)
-        SS_error = res.get("SS_error", np.nan)
-        R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
-
-        cv_rows = []
-        for f in self.factor_keys:
-            lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
-            cv_f = cv_percent_from_level_means(lvl_means)
-            cv_rows.append([self.factor_title(f), fmt_num(cv_f, 2)])
-        cv_total = cv_percent_from_values(values)
-        cv_rows.append(["Загальний", fmt_num(cv_total, 2)])
-
-        seg = []
-        seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
-        seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
-
-        seg.append(("text",
-                    f"Кількість варіантів:\t{num_variants}\n"
-                    f"Кількість повторностей:\t{len(used_rep_cols)}\n"
-                    f"Загальна кількість облікових значень:\t{len(long)}\n\n"))
-
-        design_label = {"crd": "CRD (повна рандомізація)", "rcbd": "RCBD (блочна рандомізація)", "split": "Split-plot (спліт-плот)"}[design]
-        seg.append(("text", f"Дизайн експерименту:\t{design_label}\n"))
-        if design == "split":
-            seg.append(("text", f"Головний фактор (Whole-plot factor):\t{split_main_factor}\n\n"))
-        else:
-            seg.append(("text", "\n"))
-
-        method_label = {
-            "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
-            "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
-            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
-            "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
-            "kw": "Непараметричний аналіз: Kruskal–Wallis.",
-            "mw": "Непараметричний аналіз: Mann–Whitney.",
-            "friedman": "Непараметричний аналіз (RCBD): Friedman.",
-            "wilcoxon": "Непараметричний аналіз (RCBD): Wilcoxon signed-rank (парний).",
-        }.get(method, "")
-
-        if method_label:
-            seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
-
-        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
-        seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
-        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
-
-        if not math.isnan(W):
+    
+            elif method == "friedman":
+                block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
+                long2 = []
+                for r in long:
+                    rr = dict(r)
+                    rr["VARIANT"] = " | ".join(str(rr.get(f)) for f in self.factor_keys)
+                    long2.append(rr)
+    
+                mat_rows, kept_blocks = rcbd_matrix_from_long(long2, v_names, block_names, variant_key="VARIANT", block_key="BLOCK")
+                if len(mat_rows) < 2:
+                    messagebox.showwarning("Помилка", "Для Friedman потрібні щонайменше 2 повних блоки (без пропусків по варіантах).")
+                    return
+    
+                try:
+                    cols = list(zip(*mat_rows))
+                    fr = friedmanchisquare(*[np.array(c, dtype=float) for c in cols])
+                    fr_chi2 = float(fr.statistic)
+                    fr_p = float(fr.pvalue)
+                    fr_df = int(len(v_names) - 1)
+                    fr_W = kendalls_w_from_friedman(fr_chi2, n_blocks=len(mat_rows), k_treat=len(v_names))
+                except Exception:
+                    fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
+    
+                if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p < ALPHA:
+                    rcbd_pairwise_rows, rcbd_sig = pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=ALPHA)
+                    med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
+                    letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
+                else:
+                    letters_named = {name: "" for name in v_names}
+    
+            elif method == "wilcoxon":
+                if len(v_names) != 2:
+                    messagebox.showwarning("Помилка", "Wilcoxon (парний) застосовується лише для 2 варіантів.")
+                    return
+    
+                block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
+                long2 = []
+                for r in long:
+                    rr = dict(r)
+                    rr["VARIANT"] = " | ".join(str(rr.get(f)) for f in self.factor_keys)
+                    long2.append(rr)
+    
+                mat_rows, kept_blocks = rcbd_matrix_from_long(long2, v_names, block_names, variant_key="VARIANT", block_key="BLOCK")
+                if len(mat_rows) < 2:
+                    messagebox.showwarning("Помилка", "Для Wilcoxon потрібні щонайменше 2 повні блоки (пари значень).")
+                    return
+                arr = np.array(mat_rows, dtype=float)
+                x = arr[:, 0]
+                y = arr[:, 1]
+                try:
+                    stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
+                    wil_stat = float(stat)
+                    wil_p = float(p)
+                except Exception:
+                    wil_stat, wil_p = (np.nan, np.nan)
+    
+                if not (isinstance(wil_p, float) and math.isnan(wil_p)) and wil_p < ALPHA:
+                    rcbd_sig = {(v_names[0], v_names[1]): True}
+                    med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
+                    letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
+                else:
+                    letters_named = {name: "" for name in v_names}
+    
+            letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
+    
+            SS_total = res.get("SS_total", np.nan)
+            SS_error = res.get("SS_error", np.nan)
+            R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
+    
+            cv_rows = []
+            for f in self.factor_keys:
+                lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
+                cv_f = cv_percent_from_level_means(lvl_means)
+                cv_rows.append([self.factor_title(f), fmt_num(cv_f, 2)])
+            cv_total = cv_percent_from_values(values)
+            cv_rows.append(["Загальний", fmt_num(cv_total, 2)])
+    
+            seg = []
+            seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
+            seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
+    
             seg.append(("text",
-                        f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t"
-                        f"(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
-        else:
-            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
-
-        nonparam = method in ("mw", "kw", "friedman", "wilcoxon")
-
-        if method == "kw":
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)):
-                concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
-                seg.append(("text",
-                            f"Глобальний тест між варіантами (Kruskal–Wallis):\t"
-                            f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n"))
-                seg.append(("text", f"Розмір ефекту (ε²):\t{fmt_num(kw_eps2,4)}\n\n"))
-            else:
-                seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
-
-        if method == "friedman":
-            if not (isinstance(fr_p, float) and math.isnan(fr_p)):
-                concl = "істотна різниця " + significance_mark(fr_p) if fr_p < ALPHA else "-"
-                seg.append(("text",
-                            f"Глобальний тест між варіантами (Friedman):\t"
-                            f"χ²={fmt_num(fr_chi2,4)}; df={int(fr_df)}; p={fmt_num(fr_p,4)}\t{concl}\n"))
-                seg.append(("text", f"Розмір ефекту (Kendall’s W):\t{fmt_num(fr_W,4)}\n\n"))
-            else:
-                seg.append(("text", "Глобальний тест між варіантами (Friedman):\tн/д\n\n"))
-
-        if method == "wilcoxon":
-            if not (isinstance(wil_p, float) and math.isnan(wil_p)):
-                concl = "істотна різниця " + significance_mark(wil_p) if wil_p < ALPHA else "-"
-                seg.append(("text",
-                            f"Парний тест (Wilcoxon signed-rank):\t"
-                            f"W={fmt_num(wil_stat,4)}; p={fmt_num(wil_p,4)}\t{concl}\n\n"))
-            else:
-                seg.append(("text", "Парний тест (Wilcoxon signed-rank):\tн/д\n\n"))
-
-        if not nonparam:
-            if not any(math.isnan(x) for x in [bf_F, bf_p]):
-                bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
-                seg.append(("text",
-                            f"Перевірка однорідності дисперсій (Brown–Forsythe):\t"
-                            f"F={fmt_num(bf_F,4)}; p={fmt_num(bf_p,4)}\t{bf_concl}\n\n"))
-            else:
-                seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
-
+                        f"Кількість варіантів:\t{num_variants}\n"
+                        f"Кількість повторностей:\t{len(used_rep_cols)}\n"
+                        f"Загальна кількість облікових значень:\t{len(long)}\n\n"))
+    
+            design_label = {"crd": "CRD (повна рандомізація)", "rcbd": "RCBD (блочна рандомізація)", "split": "Split-plot (спліт-плот)"}[design]
+            seg.append(("text", f"Дизайн експерименту:\t{design_label}\n"))
             if design == "split":
+                seg.append(("text", f"Головний фактор (Whole-plot factor):\t{split_main_factor}\n\n"))
+            else:
+                seg.append(("text", "\n"))
+    
+            method_label = {
+                "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
+                "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
+                "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
+                "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
+                "kw": "Непараметричний аналіз: Kruskal–Wallis.",
+                "mw": "Непараметричний аналіз: Mann–Whitney.",
+                "friedman": "Непараметричний аналіз (RCBD): Friedman.",
+                "wilcoxon": "Непараметричний аналіз (RCBD): Wilcoxon signed-rank (парний).",
+            }.get(method, "")
+    
+            if method_label:
+                seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
+    
+            seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
+            seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
+            seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
+    
+            if not math.isnan(W):
                 seg.append(("text",
-                            "Примітка (Split-plot):\n"
-                            f"• {self.factor_title(split_main_factor)} перевірено на MS(Блоки×{split_main_factor}) (whole-plot error).\n"
-                            "• Інші ефекти перевірено на MS(Залишок) (sub-plot error).\n\n"))
-
-            # ANOVA table
-            anova_rows = []
-            for name, SSv, dfv, MSv, Fv, pv in res["table"]:
-                df_txt = str(int(dfv)) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
-                # rename "Фактор A" -> custom
-                name2 = name
-                if isinstance(name2, str) and name2.startswith("Фактор "):
-                    try:
-                        rest = name2.replace("Фактор ", "")
+                            f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t"
+                            f"(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
+            else:
+                seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
+    
+            nonparam = method in ("mw", "kw", "friedman", "wilcoxon")
+    
+            if method == "kw":
+                if not (isinstance(kw_p, float) and math.isnan(kw_p)):
+                    concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
+                    seg.append(("text",
+                                f"Глобальний тест між варіантами (Kruskal–Wallis):\t"
+                                f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n"))
+                    seg.append(("text", f"Розмір ефекту (ε²):\t{fmt_num(kw_eps2,4)}\n\n"))
+                else:
+                    seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
+    
+            if method == "friedman":
+                if not (isinstance(fr_p, float) and math.isnan(fr_p)):
+                    concl = "істотна різниця " + significance_mark(fr_p) if fr_p < ALPHA else "-"
+                    seg.append(("text",
+                                f"Глобальний тест між варіантами (Friedman):\t"
+                                f"χ²={fmt_num(fr_chi2,4)}; df={int(fr_df)}; p={fmt_num(fr_p,4)}\t{concl}\n"))
+                    seg.append(("text", f"Розмір ефекту (Kendall’s W):\t{fmt_num(fr_W,4)}\n\n"))
+                else:
+                    seg.append(("text", "Глобальний тест між варіантами (Friedman):\tн/д\n\n"))
+    
+            if method == "wilcoxon":
+                if not (isinstance(wil_p, float) and math.isnan(wil_p)):
+                    concl = "істотна різниця " + significance_mark(wil_p) if wil_p < ALPHA else "-"
+                    seg.append(("text",
+                                f"Парний тест (Wilcoxon signed-rank):\t"
+                                f"W={fmt_num(wil_stat,4)}; p={fmt_num(wil_p,4)}\t{concl}\n\n"))
+                else:
+                    seg.append(("text", "Парний тест (Wilcoxon signed-rank):\tн/д\n\n"))
+    
+            if not nonparam:
+                if not any(math.isnan(x) for x in [bf_F, bf_p]):
+                    bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
+                    seg.append(("text",
+                                f"Перевірка однорідності дисперсій (Brown–Forsythe):\t"
+                                f"F={fmt_num(bf_F,4)}; p={fmt_num(bf_p,4)}\t{bf_concl}\n\n"))
+                else:
+                    seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
+    
+                if design == "split":
+                    seg.append(("text",
+                                "Примітка (Split-plot):\n"
+                                f"• {self.factor_title(split_main_factor)} перевірено на MS(Блоки×{split_main_factor}) (whole-plot error).\n"
+                                "• Інші ефекти перевірено на MS(Залишок) (sub-plot error).\n\n"))
+    
+                # ANOVA table
+                anova_rows = []
+                for name, SSv, dfv, MSv, Fv, pv in res["table"]:
+                    df_txt = str(int(dfv)) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
+                    # rename "Фактор A" -> custom
+                    name2 = name
+                    if isinstance(name2, str) and name2.startswith("Фактор "):
+                        try:
+                            rest = name2.replace("Фактор ", "")
+                            parts = rest.split("×")
+                            parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
+                            name2 = "×".join(parts2)
+                        except Exception:
+                            pass
+    
+                    if name2.startswith("Залишок") or name2 == "Загальна" or "Whole-plot error" in name2 or name2 == "Блоки":
+                        anova_rows.append([name2, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
+                    else:
+                        mark = significance_mark(pv)
+                        concl = f"істотна різниця {mark}" if mark else "-"
+                        anova_rows.append([name2, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
+    
+                seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
+                seg.append(("table", {
+                    "headers": ["Джерело", "SS", "df", "MS", "F", "p", "Висновок"],
+                    "rows": anova_rows,
+                    "padding_px": 32,
+                    "extra_gap_after_col": 0,
+                    "extra_gap_px": 60
+                }))
+                seg.append(("text", "\n"))
+    
+                eff_rows = build_effect_strength_rows(res["table"])
+                for r in eff_rows:
+                    if r and isinstance(r[0], str) and r[0].startswith("Фактор "):
+                        rest = r[0].replace("Фактор ", "")
                         parts = rest.split("×")
                         parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
-                        name2 = "×".join(parts2)
-                    except Exception:
-                        pass
-
-                if name2.startswith("Залишок") or name2 == "Загальна" or "Whole-plot error" in name2 or name2 == "Блоки":
-                    anova_rows.append([name2, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
-                else:
-                    mark = significance_mark(pv)
-                    concl = f"істотна різниця {mark}" if mark else "-"
-                    anova_rows.append([name2, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
-
-            seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
-            seg.append(("table", {
-                "headers": ["Джерело", "SS", "df", "MS", "F", "p", "Висновок"],
-                "rows": anova_rows,
-                "padding_px": 32,
-                "extra_gap_after_col": 0,
-                "extra_gap_px": 60
-            }))
-            seg.append(("text", "\n"))
-
-            eff_rows = build_effect_strength_rows(res["table"])
-            for r in eff_rows:
-                if r and isinstance(r[0], str) and r[0].startswith("Фактор "):
-                    rest = r[0].replace("Фактор ", "")
-                    parts = rest.split("×")
-                    parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
-                    r[0] = "×".join(parts2)
-
-            seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів та їх комбінацій (% від SS)\n"))
-            seg.append(("table", {"headers": ["Джерело", "%"], "rows": eff_rows}))
-            seg.append(("text", "\n"))
-
-            pe2_rows = build_partial_eta2_rows_with_label(res["table"])
-            for r in pe2_rows:
-                if r and isinstance(r[0], str) and r[0].startswith("Фактор "):
-                    rest = r[0].replace("Фактор ", "")
-                    parts = rest.split("×")
-                    parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
-                    r[0] = "×".join(parts2)
-
-            seg.append(("text", "ТАБЛИЦЯ 3. Розмір ефекту (partial η²)\n"))
-            seg.append(("table", {"headers": ["Джерело", "partial η²", "Висновок"], "rows": pe2_rows}))
-            seg.append(("text", "\n"))
-
-            seg.append(("text", "ТАБЛИЦЯ 4. Коефіцієнт варіації (CV, %)\n"))
-            seg.append(("table", {"headers": ["Елемент", "CV, %"], "rows": cv_rows}))
-            seg.append(("text", "\n"))
-
-            seg.append(("text", f"Коефіцієнт детермінації:\tR²={fmt_num(R2, 4)}\n\n"))
-
-            tno = 5
-            if method == "lsd":
-                nir_rows = []
-                for key, val in res.get("NIR05", {}).items():
-                    nir_rows.append([key.replace("Фактор ", self.factor_title_map.get(key.replace("Фактор ", ""), "Фактор ")), fmt_num(val, 4)])
-                if nir_rows:
-                    seg.append(("text", "ТАБЛИЦЯ 5. Значення НІР₀₅\n"))
-                    seg.append(("table", {"headers": ["Елемент", "НІР₀₅"], "rows": nir_rows}))
+                        r[0] = "×".join(parts2)
+    
+                seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів та їх комбінацій (% від SS)\n"))
+                seg.append(("table", {"headers": ["Джерело", "%"], "rows": eff_rows}))
+                seg.append(("text", "\n"))
+    
+                pe2_rows = build_partial_eta2_rows_with_label(res["table"])
+                for r in pe2_rows:
+                    if r and isinstance(r[0], str) and r[0].startswith("Фактор "):
+                        rest = r[0].replace("Фактор ", "")
+                        parts = rest.split("×")
+                        parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
+                        r[0] = "×".join(parts2)
+    
+                seg.append(("text", "ТАБЛИЦЯ 3. Розмір ефекту (partial η²)\n"))
+                seg.append(("table", {"headers": ["Джерело", "partial η²", "Висновок"], "rows": pe2_rows}))
+                seg.append(("text", "\n"))
+    
+                seg.append(("text", "ТАБЛИЦЯ 4. Коефіцієнт варіації (CV, %)\n"))
+                seg.append(("table", {"headers": ["Елемент", "CV, %"], "rows": cv_rows}))
+                seg.append(("text", "\n"))
+    
+                seg.append(("text", f"Коефіцієнт детермінації:\tR²={fmt_num(R2, 4)}\n\n"))
+    
+                tno = 5
+                if method == "lsd":
+                    nir_rows = []
+                    for key, val in res.get("NIR05", {}).items():
+                        nir_rows.append([key.replace("Фактор ", self.factor_title_map.get(key.replace("Фактор ", ""), "Фактор ")), fmt_num(val, 4)])
+                    if nir_rows:
+                        seg.append(("text", "ТАБЛИЦЯ 5. Значення НІР₀₅\n"))
+                        seg.append(("table", {"headers": ["Елемент", "НІР₀₅"], "rows": nir_rows}))
+                        seg.append(("text", "\n"))
+                        tno = 6
+    
+                for f in self.factor_keys:
+                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору: {self.factor_title(f)}\n"))
+                    rows_f = []
+                    for lvl in levels_by_factor[f]:
+                        m = factor_means[f].get(lvl, np.nan)
+                        letter = letters_factor[f].get(lvl, "")
+                        rows_f.append([str(lvl), fmt_num(m, 3), (letter if letter else "-")])
+                    seg.append(("table", {"headers": [self.factor_title(f), "Середнє", "Істотна різниця"], "rows": rows_f}))
                     seg.append(("text", "\n"))
-                    tno = 6
-
-            for f in self.factor_keys:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору: {self.factor_title(f)}\n"))
-                rows_f = []
-                for lvl in levels_by_factor[f]:
-                    m = factor_means[f].get(lvl, np.nan)
-                    letter = letters_factor[f].get(lvl, "")
-                    rows_f.append([str(lvl), fmt_num(m, 3), (letter if letter else "-")])
-                seg.append(("table", {"headers": [self.factor_title(f), "Середнє", "Істотна різниця"], "rows": rows_f}))
+                    tno += 1
+    
+                seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
+                rows_v = []
+                for k in variant_order:
+                    name = " | ".join(map(str, k))
+                    m = v_means.get(k, np.nan)
+                    sd = v_sds.get(k, np.nan)
+                    if design == "split":
+                        rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), "-"])
+                    else:
+                        letter = letters_variants.get(k, "")
+                        rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), (letter if letter else "-")])
+    
+                seg.append(("table", {
+                    "headers": ["Варіант", "Середнє", "± SD", "Істотна різниця"],
+                    "rows": rows_v,
+                    "padding_px": 32,
+                    "extra_gap_after_col": 0,
+                    "extra_gap_px": 80
+                }))
                 seg.append(("text", "\n"))
                 tno += 1
-
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
-            rows_v = []
-            for k in variant_order:
-                name = " | ".join(map(str, k))
-                m = v_means.get(k, np.nan)
-                sd = v_sds.get(k, np.nan)
-                if design == "split":
-                    rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), "-"])
+    
+                if design != "split":
+                    if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
+                        seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
+                        seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
+                        seg.append(("text", "\n"))
                 else:
-                    letter = letters_variants.get(k, "")
-                    rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), (letter if letter else "-")])
-
-            seg.append(("table", {
-                "headers": ["Варіант", "Середнє", "± SD", "Істотна різниця"],
-                "rows": rows_v,
-                "padding_px": 32,
-                "extra_gap_after_col": 0,
-                "extra_gap_px": 80
-            }))
-            seg.append(("text", "\n"))
-            tno += 1
-
-            if design != "split":
-                if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
-                    seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
-                    seg.append(("text", "\n"))
+                    seg.append(("text",
+                                "Примітка (Split-plot): парні порівняння для повних варіантів (комбінацій факторів)\n"
+                                "не подаються, оскільки для таких порівнянь потрібні спеціальні контрасти та коректний\n"
+                                "облік двох різних помилок (whole-plot і sub-plot). Натомість подано парні порівняння\n"
+                                "на рівні факторів з правильними error-term.\n\n"))
+                    if method in ("tukey", "duncan", "bonferroni"):
+                        for f in self.factor_keys:
+                            rows_pf = factor_pairwise_tables.get(f, [])
+                            if rows_pf:
+                                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння для: {self.factor_title(f)} (Split-plot)\n"))
+                                seg.append(("table", {"headers": ["Комбінація", "p", "Істотна різниця"], "rows": rows_pf}))
+                                seg.append(("text", "\n"))
+                                tno += 1
+    
             else:
-                seg.append(("text",
-                            "Примітка (Split-plot): парні порівняння для повних варіантів (комбінацій факторів)\n"
-                            "не подаються, оскільки для таких порівнянь потрібні спеціальні контрасти та коректний\n"
-                            "облік двох різних помилок (whole-plot і sub-plot). Натомість подано парні порівняння\n"
-                            "на рівні факторів з правильними error-term.\n\n"))
-                if method in ("tukey", "duncan", "bonferroni"):
-                    for f in self.factor_keys:
-                        rows_pf = factor_pairwise_tables.get(f, [])
-                        if rows_pf:
-                            seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння для: {self.factor_title(f)} (Split-plot)\n"))
-                            seg.append(("table", {"headers": ["Комбінація", "p", "Істотна різниця"], "rows": rows_pf}))
-                            seg.append(("text", "\n"))
-                            tno += 1
-
-        else:
-            tno = 1
-            for f in self.factor_keys:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика (непараметрична): {self.factor_title(f)}\n"))
+                tno = 1
+                for f in self.factor_keys:
+                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика (непараметрична): {self.factor_title(f)}\n"))
+                    rows = []
+                    for lvl in levels_by_factor[f]:
+                        med = factor_medians[f].get(lvl, np.nan)
+                        q1, q3 = factor_q[f].get(lvl, (np.nan, np.nan))
+                        rank_m = ranks_by_factor[f].get(lvl, np.nan)
+                        rows.append([
+                            str(lvl),
+                            str(int(factor_ns[f].get(lvl, 0))),
+                            fmt_num(med, 3),
+                            f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
+                            fmt_num(rank_m, 2),
+                            "-"
+                        ])
+                    seg.append(("table", {"headers": [self.factor_title(f), "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"], "rows": rows}))
+                    seg.append(("text", "\n"))
+                    tno += 1
+    
+                seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
                 rows = []
-                for lvl in levels_by_factor[f]:
-                    med = factor_medians[f].get(lvl, np.nan)
-                    q1, q3 = factor_q[f].get(lvl, (np.nan, np.nan))
-                    rank_m = ranks_by_factor[f].get(lvl, np.nan)
+                for k in variant_order:
+                    name = " | ".join(map(str, k))
+                    med = v_medians.get(k, np.nan)
+                    q1, q3 = v_q.get(k, (np.nan, np.nan))
+                    rank_m = ranks_by_variant.get(name, np.nan)
                     rows.append([
-                        str(lvl),
-                        str(int(factor_ns[f].get(lvl, 0))),
+                        name,
+                        str(int(v_ns.get(k, 0))),
                         fmt_num(med, 3),
                         f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
                         fmt_num(rank_m, 2),
                         "-"
                     ])
-                seg.append(("table", {"headers": [self.factor_title(f), "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"], "rows": rows}))
+                seg.append(("table", {
+                    "headers": ["Варіант", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"],
+                    "rows": rows,
+                    "padding_px": 32,
+                    "extra_gap_after_col": 0,
+                    "extra_gap_px": 80
+                }))
                 seg.append(("text", "\n"))
                 tno += 1
-
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
-            rows = []
-            for k in variant_order:
-                name = " | ".join(map(str, k))
-                med = v_medians.get(k, np.nan)
-                q1, q3 = v_q.get(k, (np.nan, np.nan))
-                rank_m = ranks_by_variant.get(name, np.nan)
-                rows.append([
-                    name,
-                    str(int(v_ns.get(k, 0))),
-                    fmt_num(med, 3),
-                    f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
-                    fmt_num(rank_m, 2),
-                    "-"
-                ])
-            seg.append(("table", {
-                "headers": ["Варіант", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"],
-                "rows": rows,
-                "padding_px": 32,
-                "extra_gap_after_col": 0,
-                "extra_gap_px": 80
-            }))
-            seg.append(("text", "\n"))
-            tno += 1
-
-            if method == "kw":
-                if not do_posthoc:
-                    seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
-                else:
-                    if pairwise_rows:
-                        seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння + ефект (Cliff’s δ)\n"))
-                        seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
-                        seg.append(("text", "\n"))
-
-            if method == "friedman":
-                if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p >= ALPHA:
-                    seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Friedman не виявив істотної різниці (p ≥ 0.05).\n\n"))
-                else:
-                    if rcbd_pairwise_rows:
-                        seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Wilcoxon, Bonferroni) + ефект (r)\n"))
-                        seg.append(("table", {"headers": ["Комбінація варіантів", "W", "p (Bonf.)", "Істотна різниця", "r"], "rows": rcbd_pairwise_rows}))
-                        seg.append(("text", "\n"))
-
-        seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
-        self.show_report_segments(seg)
-        # Автоматично формуємо другий (графічний) звіт
-        self.show_boxplot_report(indicator, units, long, levels_by_factor, letters_factor)
-
-    # -------------------------
-    # SHOW REPORT
-    # -------------------------
     
-        def show_boxplot_report(self, indicator, units, long, levels_by_factor, letters_factor):
-            """Second report: a single canvas with boxplots for levels of each factor.
-
-            Layout: levels of factor A, small gap, levels of factor B, etc.
-            Letters are taken from the first report (letters_factor).
-            """
-            # Close previous if exists
-            if hasattr(self, "plot_win") and self.plot_win and tk.Toplevel.winfo_exists(self.plot_win):
-                try:
-                    self.plot_win.destroy()
-                except Exception:
-                    pass
-
-            self.plot_win = tk.Toplevel(self.root)
-            self.plot_win.title("Графічний звіт (boxplot по факторах)")
-            self.plot_win.geometry("1180x760")
-            set_window_icon(self.plot_win)
-
-            top = tk.Frame(self.plot_win, padx=8, pady=6)
-            top.pack(fill=tk.X)
-
-            fig = Figure(figsize=(10.5, 5.2), dpi=110)
-            ax = fig.add_subplot(111)
-
-            # Build data blocks
-            positions = []
-            data = []
-            labels = []
-            meta = []  # (factor_key, level)
-            pos = 1
-            gap = 1.3
-
-            # y-range helper
-            all_vals = []
-
-            for f in self.factor_keys:
-                lvls = levels_by_factor.get(f, [])
-                for lvl in lvls:
-                    arr = [float(r["value"]) for r in long if (r.get("value") is not None and not math.isnan(r.get("value", np.nan))) and r.get(f) == lvl]
-                    data.append(arr)
-                    positions.append(pos)
-                    labels.append(str(lvl))
-                    meta.append((f, lvl))
-                    all_vals.extend(arr)
-                    pos += 1
-                pos += gap
-
-            if not all_vals:
-                tk.Label(self.plot_win, text="Немає даних для побудови графіка.", fg="#c62828").pack(pady=20)
-                return
-
-            # Boxplot
-            bp = ax.boxplot(
-                data,
-                positions=positions,
-                widths=0.65,
-                patch_artist=True,
-                showmeans=False,
-                showfliers=True
-            )
-
-            # Soft coloring (repeat cycle)
-            palette = ["#90caf9", "#a5d6a7", "#ffcc80", "#ef9a9a", "#ce93d8", "#80cbc4"]
-            for i, box in enumerate(bp["boxes"]):
-                try:
-                    box.set_facecolor(palette[i % len(palette)])
-                    box.set_alpha(0.95)
-                except Exception:
-                    pass
-
-            ax.set_title(f"{indicator}, {units}", fontname="Times New Roman", fontsize=15, pad=10)
-            ax.set_ylabel(units, fontname="Times New Roman", fontsize=13)
-
-            ax.set_xticks(positions)
-            ax.set_xticklabels(labels, rotation=90, fontname="Times New Roman", fontsize=11)
-
-            ax.grid(True, axis="y", alpha=0.35)
-
-            # Factor group captions under x-axis and separators
-            ymin = min(all_vals)
-            ymax = max(all_vals)
-            yr = (ymax - ymin) if ymax > ymin else 1.0
-            y_letter = ymax + 0.06 * yr
-
-            # Place letters above each box
-            for i, (f, lvl) in enumerate(meta):
-                letter = ""
-                try:
-                    letter = (letters_factor.get(f, {}) or {}).get(lvl, "") or ""
-                except Exception:
-                    letter = ""
-                if letter:
-                    # use max of that group's data
-                    arr = data[i]
-                    if arr:
-                        y = max(arr) + 0.03 * yr
+                if method == "kw":
+                    if not do_posthoc:
+                        seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
                     else:
-                        y = y_letter
-                    ax.text(positions[i], y, letter, ha="center", va="bottom", fontsize=12, fontname="Times New Roman")
-
-            # group spans
-            f_start = 0
-            idx = 0
-            for f in self.factor_keys:
-                lvls = levels_by_factor.get(f, [])
-                if not lvls:
-                    continue
-                start_pos = positions[idx]
-                end_pos = positions[idx + len(lvls) - 1]
-                center = (start_pos + end_pos) / 2.0
-
-                ax.text(center, -0.22, self.factor_title(f), ha="center", va="top",
-                        transform=ax.get_xaxis_transform(), fontsize=12, fontname="Times New Roman")
-
-                idx += len(lvls)
-                # separator line after group (except last)
-                if idx < len(positions):
-                    sep_x = (end_pos + positions[idx]) / 2.0
-                    ax.axvline(sep_x, ymin=0.0, ymax=1.0, color="0.75", linewidth=1)
-
-            # leave space at bottom for factor captions
-            fig.subplots_adjust(bottom=0.33, top=0.9, left=0.07, right=0.98)
-
-            canvas = FigureCanvasTkAgg(fig, master=self.plot_win)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
-
-            def _get_png_bytes() -> bytes:
-                # Render with Agg to bytes
-                agg = FigureCanvasAgg(fig)
-                agg.draw()
-                buf = io.BytesIO()
-                agg.print_png(buf)
-                return buf.getvalue()
-
-            def copy_png():
-                png = _get_png_bytes()
-                if _copy_png_to_clipboard(png):
-                    messagebox.showinfo("Готово", "Графік скопійовано в буфер обміну як зображення.")
+                        if pairwise_rows:
+                            seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння + ефект (Cliff’s δ)\n"))
+                            seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
+                            seg.append(("text", "\n"))
+    
+                if method == "friedman":
+                    if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p >= ALPHA:
+                        seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Friedman не виявив істотної різниці (p ≥ 0.05).\n\n"))
+                    else:
+                        if rcbd_pairwise_rows:
+                            seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Wilcoxon, Bonferroni) + ефект (r)\n"))
+                            seg.append(("table", {"headers": ["Комбінація варіантів", "W", "p (Bonf.)", "Істотна різниця", "r"], "rows": rcbd_pairwise_rows}))
+                            seg.append(("text", "\n"))
+    
+            seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
+            self.show_report_segments(seg)
+            # Автоматично формуємо другий (графічний) звіт
+            self.show_boxplot_report(indicator, units, long, levels_by_factor, letters_factor)
+    
+        # -------------------------
+        # SHOW REPORT
+        # -------------------------
+        
+            def show_boxplot_report(self, indicator, units, long, levels_by_factor, letters_factor):
+                """Second report: a single canvas with boxplots for levels of each factor.
+    
+                Layout: levels of factor A, small gap, levels of factor B, etc.
+                Letters are taken from the first report (letters_factor).
+                """
+                # Close previous if exists
+                if hasattr(self, "plot_win") and self.plot_win and tk.Toplevel.winfo_exists(self.plot_win):
+                    try:
+                        self.plot_win.destroy()
+                    except Exception:
+                        pass
+    
+                self.plot_win = tk.Toplevel(self.root)
+                self.plot_win.title("Графічний звіт (boxplot по факторах)")
+                self.plot_win.geometry("1180x760")
+                set_window_icon(self.plot_win)
+    
+                top = tk.Frame(self.plot_win, padx=8, pady=6)
+                top.pack(fill=tk.X)
+    
+                fig = Figure(figsize=(10.5, 5.2), dpi=110)
+                ax = fig.add_subplot(111)
+    
+                # Build data blocks
+                positions = []
+                data = []
+                labels = []
+                meta = []  # (factor_key, level)
+                pos = 1
+                gap = 1.3
+    
+                # y-range helper
+                all_vals = []
+    
+                for f in self.factor_keys:
+                    lvls = levels_by_factor.get(f, [])
+                    for lvl in lvls:
+                        arr = [float(r["value"]) for r in long if (r.get("value") is not None and not math.isnan(r.get("value", np.nan))) and r.get(f) == lvl]
+                        data.append(arr)
+                        positions.append(pos)
+                        labels.append(str(lvl))
+                        meta.append((f, lvl))
+                        all_vals.extend(arr)
+                        pos += 1
+                    pos += gap
+    
+                if not all_vals:
+                    tk.Label(self.plot_win, text="Немає даних для побудови графіка.", fg="#c62828").pack(pady=20)
                     return
-                # fallback: save file
-                messagebox.showwarning(
-                    "Не вдалося скопіювати",
-                    "Не вдалося скопіювати графік як зображення.\n"
-                    "Ймовірно, відсутній модуль Pillow або система не підтримує вставку DIB.\n"
-                    "Скористайтеся кнопкою «Зберегти PNG»."
+    
+                # Boxplot
+                bp = ax.boxplot(
+                    data,
+                    positions=positions,
+                    widths=0.65,
+                    patch_artist=True,
+                    showmeans=False,
+                    showfliers=True
                 )
-
-            def save_png():
-                from tkinter import filedialog
-                fn = filedialog.asksaveasfilename(
-                    title="Зберегти графік",
-                    defaultextension=".png",
-                    filetypes=[("PNG image", "*.png")]
-                )
-                if not fn:
-                    return
-                try:
+    
+                # Soft coloring (repeat cycle)
+                palette = ["#90caf9", "#a5d6a7", "#ffcc80", "#ef9a9a", "#ce93d8", "#80cbc4"]
+                for i, box in enumerate(bp["boxes"]):
+                    try:
+                        box.set_facecolor(palette[i % len(palette)])
+                        box.set_alpha(0.95)
+                    except Exception:
+                        pass
+    
+                ax.set_title(f"{indicator}, {units}", fontname="Times New Roman", fontsize=15, pad=10)
+                ax.set_ylabel(units, fontname="Times New Roman", fontsize=13)
+    
+                ax.set_xticks(positions)
+                ax.set_xticklabels(labels, rotation=90, fontname="Times New Roman", fontsize=11)
+    
+                ax.grid(True, axis="y", alpha=0.35)
+    
+                # Factor group captions under x-axis and separators
+                ymin = min(all_vals)
+                ymax = max(all_vals)
+                yr = (ymax - ymin) if ymax > ymin else 1.0
+                y_letter = ymax + 0.06 * yr
+    
+                # Place letters above each box
+                for i, (f, lvl) in enumerate(meta):
+                    letter = ""
+                    try:
+                        letter = (letters_factor.get(f, {}) or {}).get(lvl, "") or ""
+                    except Exception:
+                        letter = ""
+                    if letter:
+                        # use max of that group's data
+                        arr = data[i]
+                        if arr:
+                            y = max(arr) + 0.03 * yr
+                        else:
+                            y = y_letter
+                        ax.text(positions[i], y, letter, ha="center", va="bottom", fontsize=12, fontname="Times New Roman")
+    
+                # group spans
+                f_start = 0
+                idx = 0
+                for f in self.factor_keys:
+                    lvls = levels_by_factor.get(f, [])
+                    if not lvls:
+                        continue
+                    start_pos = positions[idx]
+                    end_pos = positions[idx + len(lvls) - 1]
+                    center = (start_pos + end_pos) / 2.0
+    
+                    ax.text(center, -0.22, self.factor_title(f), ha="center", va="top",
+                            transform=ax.get_xaxis_transform(), fontsize=12, fontname="Times New Roman")
+    
+                    idx += len(lvls)
+                    # separator line after group (except last)
+                    if idx < len(positions):
+                        sep_x = (end_pos + positions[idx]) / 2.0
+                        ax.axvline(sep_x, ymin=0.0, ymax=1.0, color="0.75", linewidth=1)
+    
+                # leave space at bottom for factor captions
+                fig.subplots_adjust(bottom=0.33, top=0.9, left=0.07, right=0.98)
+    
+                canvas = FigureCanvasTkAgg(fig, master=self.plot_win)
+                canvas.draw()
+                canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+    
+                def _get_png_bytes() -> bytes:
+                    # Render with Agg to bytes
+                    agg = FigureCanvasAgg(fig)
+                    agg.draw()
+                    buf = io.BytesIO()
+                    agg.print_png(buf)
+                    return buf.getvalue()
+    
+                def copy_png():
                     png = _get_png_bytes()
-                    with open(fn, "wb") as f:
-                        f.write(png)
-                    messagebox.showinfo("Готово", "PNG збережено.")
-                except Exception as ex:
-                    messagebox.showerror("Помилка", str(ex))
+                    if _copy_png_to_clipboard(png):
+                        messagebox.showinfo("Готово", "Графік скопійовано в буфер обміну як зображення.")
+                        return
+                    # fallback: save file
+                    messagebox.showwarning(
+                        "Не вдалося скопіювати",
+                        "Не вдалося скопіювати графік як зображення.\n"
+                        "Ймовірно, відсутній модуль Pillow або система не підтримує вставку DIB.\n"
+                        "Скористайтеся кнопкою «Зберегти PNG»."
+                    )
+    
+                def save_png():
+                    from tkinter import filedialog
+                    fn = filedialog.asksaveasfilename(
+                        title="Зберегти графік",
+                        defaultextension=".png",
+                        filetypes=[("PNG image", "*.png")]
+                    )
+                    if not fn:
+                        return
+                    try:
+                        png = _get_png_bytes()
+                        with open(fn, "wb") as f:
+                            f.write(png)
+                        messagebox.showinfo("Готово", "PNG збережено.")
+                    except Exception as ex:
+                        messagebox.showerror("Помилка", str(ex))
+    
+                tk.Button(top, text="Копіювати графік (PNG)", command=copy_png).pack(side=tk.LEFT, padx=4)
+                tk.Button(top, text="Зберегти PNG...", command=save_png).pack(side=tk.LEFT, padx=4)
+                tk.Button(top, text="Закрити", command=self.plot_win.destroy).pack(side=tk.RIGHT, padx=4)
+    
 
-            tk.Button(top, text="Копіювати графік (PNG)", command=copy_png).pack(side=tk.LEFT, padx=4)
-            tk.Button(top, text="Зберегти PNG...", command=save_png).pack(side=tk.LEFT, padx=4)
-            tk.Button(top, text="Закрити", command=self.plot_win.destroy).pack(side=tk.RIGHT, padx=4)
+        except Exception as e:
+            import traceback, tempfile
+            details = traceback.format_exc()
+            try:
+                log_path = os.path.join(tempfile.gettempdir(), "SAD_error.log")
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(details)
+            except Exception:
+                log_path = None
+            extra = f"\n\nДеталі записано у файл:\n{log_path}" if log_path else ""
+            messagebox.showerror("Помилка аналізу", f"{type(e).__name__}: {e}{extra}")
+            return
 
-def show_report_segments(self, segments):
-        if self.report_win and tk.Toplevel.winfo_exists(self.report_win):
+    def show_report_segments(self, segments):
+        """Показує звіт як послідовність сегментів: ('text', str) або ('table', dict)."""
+        if getattr(self, "report_win", None) and tk.Toplevel.winfo_exists(self.report_win):
             self.report_win.destroy()
 
         self.report_win = tk.Toplevel(self.root)
@@ -2792,10 +2808,10 @@ def show_report_segments(self, segments):
             table_idx += 1
             txt.tag_configure(tag, tabs=tabs)
 
-            start = txt.index("end")
+            start_i = txt.index("end")
             txt.insert("end", build_table_block(headers, rows))
-            end = txt.index("end")
-            txt.tag_add(tag, start, end)
+            end_i = txt.index("end")
+            txt.tag_add(tag, start_i, end_i)
 
         def copy_report():
             self.report_win.clipboard_clear()
@@ -2816,12 +2832,5 @@ def show_report_segments(self, segments):
         txt.bind("<Control-c>", on_ctrl_c)
         txt.bind("<Control-C>", on_ctrl_c)
 
-
-# -------------------------
-# Run
-# -------------------------
 if __name__ == "__main__":
-    root = tk.Tk()
-    set_window_icon(root)
-    app = SADTk(root)
-    root.mainloop()
+    SADTk()
