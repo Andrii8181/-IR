@@ -127,12 +127,19 @@ def set_window_icon(win: tk.Tk | tk.Toplevel):
 # Clipboard helper (PNG -> Windows clipboard as DIB)
 # -------------------------
 def _copy_pil_image_to_clipboard_windows(pil_img):
-    # Works on Windows only. Puts image into clipboard (CF_DIB).
+    """
+    Windows-only: копіює зображення в буфер обміну так, щоб його можна було вставити у Word (Ctrl+V),
+    використовуючи формат CF_DIB (Device Independent Bitmap).
+
+    Важливо для 64-bit Windows:
+    у ctypes потрібно явно задати restype/argtypes для WinAPI, інакше GlobalLock може "падати"/повертати 0.
+    """
     try:
         import ctypes
         from ctypes import wintypes
+        import io
     except Exception:
-        return False, "ctypes недоступний"
+        return False, "ctypes/IO недоступні."
 
     if sys.platform != "win32":
         return False, "Копіювання у буфер реалізовано лише для Windows."
@@ -140,43 +147,73 @@ def _copy_pil_image_to_clipboard_windows(pil_img):
     if pil_img is None:
         return False, "Немає зображення для копіювання."
 
-    # Convert to DIB bytes
+    # 1) Готуємо DIB байти: зберігаємо як BMP і відкидаємо 14-байтний BMP header,
+    # лишаючи BITMAPINFOHEADER + bitmap bits (це і є CF_DIB).
     try:
         with io.BytesIO() as output:
             pil_img.convert("RGB").save(output, "BMP")
-            data = output.getvalue()[14:]  # strip BMP header
+            bmp = output.getvalue()
+        if len(bmp) <= 14:
+            return False, "Невірний BMP буфер."
+        data = bmp[14:]
     except Exception as ex:
         return False, f"Не вдалося підготувати зображення: {ex}"
 
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    # 2) Прототипи (критично для 64-bit)
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype  = wintypes.BOOL
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype  = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype  = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype  = wintypes.HANDLE
+
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype  = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes  = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype   = wintypes.LPVOID
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype  = wintypes.BOOL
+    kernel32.GlobalFree.argtypes  = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype   = wintypes.HGLOBAL
 
     CF_DIB = 8
+    GMEM_MOVEABLE = 0x0002
+    GMEM_ZEROINIT = 0x0040
 
+    # 3) Запис у буфер обміну
     if not user32.OpenClipboard(None):
-        return False, "Не вдалося відкрити буфер обміну."
+        err = ctypes.get_last_error()
+        return False, f"Не вдалося відкрити буфер обміну (код {err})."
     try:
         user32.EmptyClipboard()
 
-        h_global = kernel32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+        h_global = kernel32.GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, len(data))
         if not h_global:
-            return False, "GlobalAlloc не спрацював."
+            err = ctypes.get_last_error()
+            return False, f"GlobalAlloc не спрацював (код {err})."
 
         p_global = kernel32.GlobalLock(h_global)
         if not p_global:
+            err = ctypes.get_last_error()
             kernel32.GlobalFree(h_global)
-            return False, "GlobalLock не спрацював."
+            return False, f"GlobalLock не спрацював (код {err})."
 
         try:
             ctypes.memmove(p_global, data, len(data))
         finally:
             kernel32.GlobalUnlock(h_global)
 
+        # Важливо: після SetClipboardData власність переходить буферу обміну — НЕ звільняємо h_global
         if not user32.SetClipboardData(CF_DIB, h_global):
+            err = ctypes.get_last_error()
             kernel32.GlobalFree(h_global)
-            return False, "SetClipboardData не спрацював."
+            return False, f"SetClipboardData не спрацював (код {err})."
 
-        # Ownership transferred to clipboard; do not free.
         return True, ""
     finally:
         user32.CloseClipboard()
