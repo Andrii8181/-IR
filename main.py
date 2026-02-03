@@ -1,32 +1,28 @@
 # main.py
 # -*- coding: utf-8 -*-
-
 """
 S.A.D. — Статистичний аналіз даних (Tkinter)
 
 Потрібно: Python 3.8+, numpy, scipy
-pip install numpy scipy
+Встановлення: pip install numpy scipy
 """
 
 import os
 import sys
 import math
+import numpy as np
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 import tkinter.font as tkfont
-
-import numpy as np
 from itertools import combinations
 from collections import defaultdict
 from datetime import datetime
 
-from scipy.stats import (
-    shapiro, t as t_dist, f as f_dist,
-    mannwhitneyu, kruskal, levene,
-    friedmanchisquare, wilcoxon
-)
+from scipy.stats import shapiro, kruskal, mannwhitneyu, friedmanchisquare, wilcoxon
+from scipy.stats import f as f_dist, t as t_dist, norm
 from scipy.stats import studentized_range
+
 
 ALPHA = 0.05
 COL_W = 10
@@ -45,6 +41,7 @@ try:
             pass
 except Exception:
     pass
+
 
 # -------------------------
 # ICON (robust search)
@@ -77,7 +74,7 @@ def _argv0_dir():
 
 def _find_icon_file():
     candidates = []
-    for base in (_script_dir(), os.getcwd(), _argv0_dir(), _exe_dir()):
+    for base in [_script_dir(), os.getcwd(), _argv0_dir(), _exe_dir()]:
         if base:
             candidates.append(os.path.join(base, "icon.ico"))
     try:
@@ -105,8 +102,9 @@ def set_window_icon(win: tk.Tk | tk.Toplevel):
     except Exception:
         pass
 
+
 # -------------------------
-# Helpers (format / stats)
+# Small helpers
 # -------------------------
 def significance_mark(p):
     if p is None or (isinstance(p, float) and math.isnan(p)):
@@ -128,7 +126,7 @@ def fmt_num(x, nd=3):
     try:
         return f"{float(x):.{nd}f}"
     except Exception:
-        return str(x)
+        return ""
 
 def first_seen_order(seq):
     seen = set()
@@ -153,6 +151,9 @@ def median_q1_q3(arr):
     if arr is None or len(arr) == 0:
         return (np.nan, np.nan, np.nan)
     a = np.array(arr, dtype=float)
+    a = a[~np.isnan(a)]
+    if len(a) == 0:
+        return (np.nan, np.nan, np.nan)
     med = float(np.median(a))
     q1 = float(np.percentile(a, 25))
     q3 = float(np.percentile(a, 75))
@@ -178,6 +179,17 @@ def cv_percent_from_level_means(level_means):
         return np.nan
     sd = float(np.std(vals, ddof=1))
     return (sd / m) * 100.0
+
+def partial_eta2_label(pe2: float) -> str:
+    if pe2 is None or (isinstance(pe2, float) and math.isnan(pe2)):
+        return ""
+    if pe2 < 0.01:
+        return "дуже слабкий"
+    if pe2 < 0.06:
+        return "слабкий"
+    if pe2 < 0.14:
+        return "середній"
+    return "сильний"
 
 def epsilon_squared_kw(H: float, n: int, k: int) -> float:
     if any(x is None for x in [H, n, k]):
@@ -223,85 +235,9 @@ def cliffs_label(delta_abs: float) -> str:
         return "середній"
     return "сильний"
 
-# -------------------------
-# Data grouping helpers  (ВАЖЛИВО: саме цього не вистачало -> groups_by_keys)
-# -------------------------
-def groups_by_keys(long, keys):
-    g = defaultdict(list)
-    for r in long:
-        v = r.get("value", np.nan)
-        if v is None or (isinstance(v, float) and math.isnan(v)):
-            continue
-        k = tuple(r.get(x) for x in keys)
-        g[k].append(float(v))
-    return g
-
-def variant_mean_sd(long, factor_keys):
-    vals = defaultdict(list)
-    for r in long:
-        v = r.get("value", np.nan)
-        if v is None or (isinstance(v, float) and math.isnan(v)):
-            continue
-        k = tuple(r.get(k) for k in factor_keys)
-        vals[k].append(float(v))
-    out = {}
-    for k, arr in vals.items():
-        n = len(arr)
-        m = float(np.mean(arr)) if n > 0 else np.nan
-        if n >= 2:
-            sd = float(np.std(arr, ddof=1))
-        elif n == 1:
-            sd = 0.0
-        else:
-            sd = np.nan
-        out[k] = (m, sd, n)
-    return out
 
 # -------------------------
-# Letters (compact CLD)
-# -------------------------
-def cld_multi_letters(levels_order, means_dict, sig_matrix):
-    valid = [lvl for lvl in levels_order if not math.isnan(means_dict.get(lvl, np.nan))]
-    if not valid:
-        return {lvl: "" for lvl in levels_order}
-
-    sorted_lvls = sorted(valid, key=lambda z: means_dict[z], reverse=True)
-
-    def is_sig(x, y):
-        if x == y:
-            return False
-        return bool(sig_matrix.get((x, y), False) or sig_matrix.get((y, x), False))
-
-    groups = []
-    for lvl in sorted_lvls:
-        compatible = []
-        for gi, grp in enumerate(groups):
-            if all(not is_sig(lvl, other) for other in grp):
-                compatible.append(gi)
-        if not compatible:
-            groups.append(set([lvl]))
-        else:
-            for gi in compatible:
-                groups[gi].add(lvl)
-
-    alphabet = "abcdefghijklmnopqrstuvwxyz"
-    letters_for_group = []
-    for idx in range(len(groups)):
-        letters_for_group.append(alphabet[idx] if idx < len(alphabet) else f"g{idx}")
-
-    mapping = {lvl: [] for lvl in sorted_lvls}
-    for gi, grp in enumerate(groups):
-        letter = letters_for_group[gi]
-        for lvl in grp:
-            mapping[lvl].append(letter)
-
-    out = {}
-    for lvl in levels_order:
-        out[lvl] = "".join(sorted(mapping.get(lvl, [])))
-    return out
-
-# -------------------------
-# Report tables (tabs)
+# Text table helpers (report)
 # -------------------------
 def build_table_block(headers, rows):
     def hcell(x): return f"{x} "
@@ -337,7 +273,6 @@ def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extr
         if extra_gap_after_col is not None and j == extra_gap_after_col:
             acc += extra_gap_px
         tabs.append(acc)
-
     return tuple(tabs)
 
 def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9, target_px=155):
@@ -351,176 +286,285 @@ def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9
         f.configure(size=size)
     return f
 
+
 # -------------------------
-# SIMPLE CORE STATS (мінімально необхідне для роботи звіту)
+# Data grouping helpers
 # -------------------------
-def brown_forsythe_from_groups(groups_dict):
-    # groups_dict: {name: [values]}
-    samples = [np.array(v, dtype=float) for v in groups_dict.values() if v is not None and len(v) > 0]
-    if len(samples) < 2:
-        return (np.nan, np.nan)
-    try:
-        stat, p = levene(*samples, center="median")
-        return float(stat), float(p)
-    except Exception:
-        return (np.nan, np.nan)
-
-def lsd_sig_matrix(levels, means, ns, MSerr, dferr, alpha=0.05):
-    sig = {}
-    if any(math.isnan(x) for x in [MSerr, dferr]) or dferr <= 0:
-        return sig
-    for a, b in combinations(levels, 2):
-        na = ns.get(a, 0) or 0
-        nb = ns.get(b, 0) or 0
-        if na <= 0 or nb <= 0:
+def groups_by_keys(long, keys):
+    g = defaultdict(list)
+    for r in long:
+        v = r.get("value", np.nan)
+        if v is None or math.isnan(v):
             continue
-        se = math.sqrt(MSerr * (1.0/na + 1.0/nb))
-        tcrit = t_dist.ppf(1 - alpha/2, dferr)
-        diff = abs(means.get(a, np.nan) - means.get(b, np.nan))
-        sig[(a, b)] = bool(diff > tcrit * se)
-    return sig
+        k = tuple(r.get(x) for x in keys)
+        g[k].append(float(v))
+    return g
 
-def pairwise_param_short_variants_pm(levels, means, ns, MSerr, dferr, method, alpha=0.05):
-    rows = []
-    sig = {}
-    lvls = list(levels)
-
-    if any(math.isnan(x) for x in [MSerr, dferr]) or dferr <= 0:
-        return rows, sig
-
-    mtests = len(lvls) * (len(lvls) - 1) // 2
-    for a, b in combinations(lvls, 2):
-        na = ns.get(a, 0) or 0
-        nb = ns.get(b, 0) or 0
-        if na <= 0 or nb <= 0:
+def variant_mean_sd(long, factor_keys):
+    vals = defaultdict(list)
+    for r in long:
+        v = r.get("value", np.nan)
+        if v is None or math.isnan(v):
             continue
-
-        diff = abs(means.get(a, np.nan) - means.get(b, np.nan))
-        se = math.sqrt(MSerr * (1.0/na + 1.0/nb))
-
-        if se <= 0 or math.isnan(se):
-            p = np.nan
+        k = tuple(r.get(k) for k in factor_keys)
+        vals[k].append(float(v))
+    out = {}
+    for k, arr in vals.items():
+        n = len(arr)
+        m = float(np.mean(arr)) if n > 0 else np.nan
+        if n >= 2:
+            sd = float(np.std(arr, ddof=1))
+        elif n == 1:
+            sd = 0.0
         else:
-            tval = diff / se
-
-            if method == "bonferroni":
-                # t distribution
-                p = 2.0 * (1.0 - t_dist.cdf(abs(tval), dferr))
-                p = min(1.0, p * mtests)
-
-            elif method in ("tukey", "duncan"):
-                # Tukey-style (approx): use studentized range with equal-n approx -> take n_eff = harmonic mean
-                n_eff = (2.0 / (1.0/na + 1.0/nb))
-                if n_eff <= 0:
-                    p = np.nan
-                else:
-                    q = diff / math.sqrt(MSerr / n_eff)
-                    # p approx via survival function
-                    p = float(studentized_range.sf(q, len(lvls), dferr))
-
-            else:
-                p = np.nan
-
-        is_sig = (not (isinstance(p, float) and math.isnan(p))) and (p < alpha)
-        sig[(a, b)] = is_sig
-        rows.append([f"{a} — {b}", fmt_num(p, 4), ("істотна " + significance_mark(p)) if is_sig else "-"])
-
-    return rows, sig
+            sd = np.nan
+        out[k] = (m, sd, n)
+    return out
 
 def mean_ranks_by_key(long, key_func):
-    # return mean rank for each key based on values in long
+    # rank over all observations, then average ranks within key
     vals = []
     keys = []
     for r in long:
         v = r.get("value", np.nan)
-        if v is None or (isinstance(v, float) and math.isnan(v)):
+        if v is None or math.isnan(v):
             continue
         vals.append(float(v))
         keys.append(key_func(r))
     if len(vals) == 0:
         return {}
-    # rank all values (average ranks for ties)
+    # rankdata: small value -> small rank
     order = np.argsort(vals)
     ranks = np.empty(len(vals), dtype=float)
-    ranks[order] = np.arange(1, len(vals) + 1, dtype=float)
+    # average ranks for ties
+    sorted_vals = np.array(vals)[order]
+    i = 0
+    while i < len(sorted_vals):
+        j = i
+        while j < len(sorted_vals) and sorted_vals[j] == sorted_vals[i]:
+            j += 1
+        avg_rank = (i + 1 + j) / 2.0
+        ranks[order[i:j]] = avg_rank
+        i = j
+    agg = defaultdict(list)
+    for k, rnk in zip(keys, ranks):
+        agg[k].append(float(rnk))
+    return {k: float(np.mean(v)) for k, v in agg.items()}
 
-    # average ties
-    # simple tie handling
-    vals_arr = np.array(vals)
-    unique_vals = np.unique(vals_arr)
-    for uv in unique_vals:
-        idx = np.where(vals_arr == uv)[0]
-        if len(idx) > 1:
-            ranks[idx] = float(np.mean(ranks[idx]))
 
-    sums = defaultdict(float)
-    cnts = defaultdict(int)
-    for k, rk in zip(keys, ranks):
-        sums[k] += float(rk)
-        cnts[k] += 1
-    return {k: (sums[k] / cnts[k]) for k in cnts.keys()}
+# -------------------------
+# CLD letters (compact letter display)
+# -------------------------
+def cld_multi_letters(levels_order, means_dict, sig_matrix):
+    valid = [lvl for lvl in levels_order if not math.isnan(means_dict.get(lvl, np.nan))]
+    if not valid:
+        return {lvl: "" for lvl in levels_order}
 
-def pairwise_mw_bonf_with_effect(levels, groups_dict, alpha=0.05):
+    sorted_lvls = sorted(valid, key=lambda z: means_dict[z], reverse=True)
+
+    def is_sig(x, y):
+        if x == y:
+            return False
+        return bool(sig_matrix.get((x, y), False) or sig_matrix.get((y, x), False))
+
+    groups = []
+    for lvl in sorted_lvls:
+        compatible = []
+        for gi, grp in enumerate(groups):
+            if all(not is_sig(lvl, other) for other in grp):
+                compatible.append(gi)
+        if not compatible:
+            groups.append(set([lvl]))
+        else:
+            for gi in compatible:
+                groups[gi].add(lvl)
+
+    def share_group(a, b):
+        return any((a in g and b in g) for g in groups)
+
+    for i in range(len(sorted_lvls)):
+        for j in range(i + 1, len(sorted_lvls)):
+            a, b = sorted_lvls[i], sorted_lvls[j]
+            if is_sig(a, b):
+                continue
+            if share_group(a, b):
+                continue
+            newg = set([a, b])
+            for c in sorted_lvls:
+                if c in newg:
+                    continue
+                if (not is_sig(c, a)) and (not is_sig(c, b)) and all(not is_sig(c, x) for x in newg):
+                    newg.add(c)
+            groups.append(newg)
+
+    uniq = []
+    for g in groups:
+        if any(g == h for h in uniq):
+            continue
+        uniq.append(g)
+
+    cleaned = []
+    for g in uniq:
+        if any((g < h) for h in uniq):
+            continue
+        cleaned.append(g)
+    groups = cleaned
+
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    letters_for_group = []
+    for idx in range(len(groups)):
+        letters_for_group.append(alphabet[idx] if idx < len(alphabet) else f"g{idx}")
+
+    mapping = {lvl: [] for lvl in sorted_lvls}
+    for gi, grp in enumerate(groups):
+        letter = letters_for_group[gi]
+        for lvl in grp:
+            mapping[lvl].append(letter)
+
+    out = {}
+    for lvl in levels_order:
+        out[lvl] = "".join(sorted(mapping.get(lvl, [])))
+    return out
+
+
+# -------------------------
+# Brown–Forsythe (robust homogeneity) from groups
+# -------------------------
+def brown_forsythe_from_groups(groups_dict):
+    # groups_dict: name -> list
+    arrs = [np.array(v, dtype=float) for v in groups_dict.values() if len(v) > 0]
+    if len(arrs) < 2:
+        return (np.nan, np.nan)
+    z_groups = []
+    for a in arrs:
+        med = np.median(a)
+        z_groups.append(np.abs(a - med))
+    # one-way ANOVA on z
+    allz = np.concatenate(z_groups)
+    grand = np.mean(allz)
+    ss_between = 0.0
+    ss_within = 0.0
+    n_total = len(allz)
+    k = len(z_groups)
+    for zg in z_groups:
+        ni = len(zg)
+        mi = np.mean(zg)
+        ss_between += ni * (mi - grand) ** 2
+        ss_within += np.sum((zg - mi) ** 2)
+    dfb = k - 1
+    dfw = n_total - k
+    if dfb <= 0 or dfw <= 0 or ss_within <= 0:
+        return (np.nan, np.nan)
+    msb = ss_between / dfb
+    msw = ss_within / dfw
+    F = msb / msw
+    p = float(1.0 - f_dist.cdf(F, dfb, dfw))
+    return (float(F), p)
+
+
+# -------------------------
+# Pairwise helpers (parametric)
+# -------------------------
+def lsd_sig_matrix(levels, means, ns, MS, df, alpha=ALPHA):
+    # Fisher LSD (uses t critical)
+    sig = {}
+    if MS is None or df is None or any(math.isnan(x) for x in [MS, df]):
+        return sig
+    df = int(df)
+    if df <= 0:
+        return sig
+    tcrit = float(t_dist.ppf(1 - alpha / 2.0, df))
+    for a, b in combinations(levels, 2):
+        ma, mb = means.get(a, np.nan), means.get(b, np.nan)
+        na, nb = ns.get(a, 0), ns.get(b, 0)
+        if any(math.isnan(x) for x in [ma, mb]) or na <= 0 or nb <= 0:
+            continue
+        se = math.sqrt(MS * (1.0 / na + 1.0 / nb))
+        lsd = tcrit * se
+        sig[(a, b)] = (abs(ma - mb) > lsd)
+    return sig
+
+def pairwise_param_short_variants_pm(levels, means, ns, MS, df, method, alpha=ALPHA):
+    # Returns rows: [A vs B, p, conclusion] + sig-matrix for CLD
     rows = []
     sig = {}
-    lvls = list(levels)
-    mtests = len(lvls) * (len(lvls) - 1) // 2
+    if MS is None or df is None or any(math.isnan(x) for x in [MS, df]):
+        return rows, sig
+    df = int(df)
+    if df <= 0:
+        return rows, sig
+
+    lvls = [x for x in levels if not math.isnan(means.get(x, np.nan)) and ns.get(x, 0) > 0]
+    if len(lvls) < 2:
+        return rows, sig
+
+    m = len(lvls)
+    # Tukey/Duncan use studentized range; Bonferroni uses t
     for a, b in combinations(lvls, 2):
-        x = np.array(groups_dict.get(a, []), dtype=float)
-        y = np.array(groups_dict.get(b, []), dtype=float)
-        x = x[~np.isnan(x)]
-        y = y[~np.isnan(y)]
-        if len(x) == 0 or len(y) == 0:
+        ma, mb = means[a], means[b]
+        na, nb = ns[a], ns[b]
+        se = math.sqrt(MS * (1.0 / na + 1.0 / nb))
+        if se <= 0:
             continue
+        tval = abs(ma - mb) / se
+        # two-sided p for t
+        p_raw = 2 * (1 - float(t_dist.cdf(tval, df)))
+
+        if method == "bonferroni":
+            p_adj = min(1.0, p_raw * (m * (m - 1) / 2.0))
+        elif method == "tukey":
+            # Tukey p-value via studentized range approx
+            # q = |ma-mb| / sqrt(MS/2 * (1/na+1/nb)) ??? (unequal n) - we use harmonic-like: approximate with se_tukey
+            # A pragmatic approximation: q = |ma-mb| / sqrt(MS/2 * (1/na+1/nb)) = sqrt(2)*tval
+            q = math.sqrt(2.0) * tval
+            p_adj = float(1 - studentized_range.cdf(q, m, df))
+        elif method == "duncan":
+            # Duncan is stepwise; implement conservative approx using Tukey p (close behavior, avoids wrong claims)
+            q = math.sqrt(2.0) * tval
+            p_adj = float(1 - studentized_range.cdf(q, m, df))
+        else:
+            p_adj = p_raw
+
+        is_sig = (p_adj < alpha)
+        sig[(a, b)] = is_sig
+        rows.append([f"{a} vs {b}", fmt_num(p_adj, 4), ("істотна різниця " + significance_mark(p_adj)) if is_sig else "-"])
+    return rows, sig
+
+
+# -------------------------
+# Pairwise helpers (nonparametric)
+# -------------------------
+def pairwise_mw_bonf_with_effect(levels, groups, alpha=ALPHA):
+    rows = []
+    sig = {}
+    lvls = [x for x in levels if len(groups.get(x, [])) > 0]
+    m = len(lvls)
+    if m < 2:
+        return rows, sig
+    mtests = m * (m - 1) / 2.0
+    for a, b in combinations(lvls, 2):
+        x = np.array(groups[a], dtype=float)
+        y = np.array(groups[b], dtype=float)
         try:
             U, p = mannwhitneyu(x, y, alternative="two-sided")
             p_adj = min(1.0, float(p) * mtests)
+            delta = cliffs_delta(x, y)
+            concl = "істотна різниця " + significance_mark(p_adj) if p_adj < alpha else "-"
+            sig[(a, b)] = (p_adj < alpha)
+            rows.append([f"{a} vs {b}", fmt_num(float(U), 3), fmt_num(p_adj, 4), concl, fmt_num(delta, 4), cliffs_label(abs(delta))])
         except Exception:
-            U, p_adj = (np.nan, np.nan)
-
-        is_sig = (not (isinstance(p_adj, float) and math.isnan(p_adj))) and (p_adj < alpha)
-        sig[(a, b)] = is_sig
-
-        d = cliffs_delta(x, y)
-        d_lab = cliffs_label(abs(d)) if not (isinstance(d, float) and math.isnan(d)) else ""
-        rows.append([f"{a} — {b}", fmt_num(U, 3), fmt_num(p_adj, 4), ("істотна " + significance_mark(p_adj)) if is_sig else "-", fmt_num(d, 3), d_lab])
+            continue
     return rows, sig
 
-def rcbd_matrix_from_long(long, variant_names, block_names, variant_key="VARIANT", block_key="BLOCK"):
-    # matrix rows = blocks, cols = variants
-    # keep only blocks where all variants exist
-    blocks = defaultdict(dict)
-    for r in long:
-        b = r.get(block_key)
-        v = r.get(variant_key)
-        val = r.get("value", np.nan)
-        if b is None or v is None:
-            continue
-        if val is None or (isinstance(val, float) and math.isnan(val)):
-            continue
-        blocks[b][v] = float(val)
-
-    mat = []
-    kept = []
-    for b in block_names:
-        row = []
-        ok = True
-        for v in variant_names:
-            if v not in blocks.get(b, {}):
-                ok = False
-                break
-            row.append(blocks[b][v])
-        if ok:
-            mat.append(row)
-            kept.append(b)
-    return mat, kept
-
-def pairwise_wilcoxon_bonf(variant_names, mat_rows, alpha=0.05):
+def pairwise_wilcoxon_bonf(levels, mat_rows, alpha=ALPHA):
+    # mat_rows: list of blocks, each row has len(levels) values
     rows = []
     sig = {}
-    arr = np.array(mat_rows, dtype=float)  # shape (n_blocks, k)
-    k = len(variant_names)
-    mtests = k * (k - 1) // 2
+    k = len(levels)
+    if k < 2:
+        return rows, sig
+    mtests = k * (k - 1) / 2.0
+    arr = np.array(mat_rows, dtype=float)
     for i in range(k):
         for j in range(i + 1, k):
             x = arr[:, i]
@@ -528,294 +572,544 @@ def pairwise_wilcoxon_bonf(variant_names, mat_rows, alpha=0.05):
             try:
                 stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
                 p_adj = min(1.0, float(p) * mtests)
+                # effect r ~ z/sqrt(n)
+                # approximate z from p
+                if p_adj > 0 and p_adj < 1:
+                    z = abs(norm.ppf(p_adj / 2.0))
+                else:
+                    z = 0.0
+                r_eff = z / math.sqrt(len(x)) if len(x) > 0 else np.nan
+                concl = "істотна різниця " + significance_mark(p_adj) if p_adj < alpha else "-"
+                sig[(levels[i], levels[j])] = (p_adj < alpha)
+                rows.append([f"{levels[i]} vs {levels[j]}", fmt_num(float(stat), 3), fmt_num(p_adj, 4), concl, fmt_num(r_eff, 4)])
             except Exception:
-                stat, p_adj = (np.nan, np.nan)
-            is_sig = (not (isinstance(p_adj, float) and math.isnan(p_adj))) and (p_adj < alpha)
-            sig[(variant_names[i], variant_names[j])] = is_sig
-            rows.append([f"{variant_names[i]} — {variant_names[j]}", fmt_num(stat, 3), fmt_num(p_adj, 4),
-                        ("істотна " + significance_mark(p_adj)) if is_sig else "-", ""])
+                continue
     return rows, sig
 
-def build_effect_strength_rows(anova_table):
-    # anova_table entries: (name, SS, df, MS, F, p)
-    # compute SS% of total (excluding "Залишок"/"Загальна")
-    SS_total = 0.0
-    for name, SSv, *_ in anova_table:
-        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
-            continue
-        if str(name).lower().startswith("загальна"):
-            continue
-        SS_total += float(SSv)
-    rows = []
-    for name, SSv, *_ in anova_table:
-        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
-            continue
-        if str(name).lower().startswith("загальна"):
-            continue
-        if "залишок" in str(name).lower():
-            continue
-        pct = (float(SSv) / SS_total * 100.0) if SS_total > 0 else np.nan
-        rows.append([str(name), fmt_num(pct, 2)])
-    return rows
-
-def build_partial_eta2_rows_with_label(anova_table):
-    # partial eta2 = SS_effect / (SS_effect + SS_error) where error is residual row
-    SS_err = np.nan
-    for name, SSv, *_ in anova_table:
-        if "залишок" in str(name).lower():
-            SS_err = float(SSv) if SSv is not None and not (isinstance(SSv, float) and math.isnan(SSv)) else np.nan
-
-    rows = []
-    for name, SSv, *_ in anova_table:
-        if "залишок" in str(name).lower() or str(name).lower().startswith("загальна"):
-            continue
-        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)) or (isinstance(SS_err, float) and math.isnan(SS_err)):
-            pe2 = np.nan
-        else:
-            pe2 = float(SSv) / (float(SSv) + float(SS_err)) if (float(SSv) + float(SS_err)) > 0 else np.nan
-
-        # label (rough)
-        if isinstance(pe2, float) and not math.isnan(pe2):
-            if pe2 < 0.01:
-                lab = "дуже слабкий"
-            elif pe2 < 0.06:
-                lab = "слабкий"
-            elif pe2 < 0.14:
-                lab = "середній"
-            else:
-                lab = "сильний"
-        else:
-            lab = ""
-
-        rows.append([str(name), fmt_num(pe2, 4), lab])
-    return rows
 
 # -------------------------
-# ANOVA engines (спрощено, але працює стабільно для звіту)
+# RCBD matrix builder for Friedman/Wilcoxon
 # -------------------------
-def _dummy_matrix(levels, ref=None):
-    # return dict level->col vector (n,) for each non-ref level
-    if ref is None:
-        ref = levels[0]
+def rcbd_matrix_from_long(long, variant_names, block_names, variant_key="VARIANT", block_key="BLOCK"):
+    # keep only full blocks without missing variants
+    by_block = defaultdict(dict)
+    for r in long:
+        v = r.get("value", np.nan)
+        if v is None or math.isnan(v):
+            continue
+        b = r.get(block_key)
+        vname = r.get(variant_key)
+        if b is None or vname is None:
+            continue
+        by_block[b][vname] = float(v)
+
+    mat = []
+    kept = []
+    for b in block_names:
+        d = by_block.get(b, {})
+        ok = all(vn in d for vn in variant_names)
+        if ok:
+            mat.append([d[vn] for vn in variant_names])
+            kept.append(b)
+    return mat, kept
+
+
+# -------------------------
+# GLM utilities (OLS)
+# -------------------------
+def _encode_factor(col_values, levels):
+    # returns design columns for this factor: k-1 dummies (reference = first)
+    ref = levels[0]
     cols = []
     names = []
-    for lv in levels:
-        if lv == ref:
-            continue
-        names.append(str(lv))
-        cols.append(lv)
-    return names, cols, ref
+    for lvl in levels[1:]:
+        x = np.array([1.0 if v == lvl else 0.0 for v in col_values], dtype=float)
+        cols.append(x)
+        names.append(str(lvl))
+    return cols, names, ref
 
-def _ols_fit(X, y):
-    # returns beta, yhat, resid, SSE, df_resid
+def _interaction_cols(base_cols, base_names):
+    # base_cols: list of arrays, base_names: list of names
+    cols = []
+    names = []
+    for i in range(len(base_cols)):
+        for j in range(i + 1, len(base_cols)):
+            cols.append(base_cols[i] * base_cols[j])
+            names.append(f"{base_names[i]}×{base_names[j]}")
+    return cols, names
+
+def _build_full_factorial_design(long, factor_keys, levels_by_factor, extra_terms=None):
+    """
+    Build full factorial model matrix:
+    Intercept + main effects + all interactions among factor_keys.
+    extra_terms: list of (term_name, array) to append (e.g., BLOCK dummies)
+    Returns: X, term_slices (name -> columns indices list), colnames
+    """
+    n = len(long)
+    y = np.array([float(r["value"]) for r in long], dtype=float)
+
+    X_cols = [np.ones(n, dtype=float)]
+    colnames = ["Intercept"]
+    term_slices = {"Intercept": [0]}
+
+    # main effects: each factor -> (k-1) dummies
+    factor_dummy_cols = {}
+    factor_dummy_names = {}
+    for f in factor_keys:
+        vals = [r.get(f) for r in long]
+        lvls = levels_by_factor[f]
+        cols, names, ref = _encode_factor(vals, lvls)
+        factor_dummy_cols[f] = cols
+        factor_dummy_names[f] = names
+        if cols:
+            idxs = []
+            for c, nm in zip(cols, names):
+                X_cols.append(c)
+                colnames.append(f"{f}:{nm}")
+                idxs.append(len(X_cols) - 1)
+            term_slices[f"Фактор {f}"] = idxs
+        else:
+            term_slices[f"Фактор {f}"] = []
+
+    # interactions up to full order
+    # build interaction dummies from existing dummy columns (not including intercept)
+    # For each interaction, take products of involved factors' dummy cols.
+    def _all_interactions(keys):
+        out = []
+        for r in range(2, len(keys) + 1):
+            for comb in combinations(keys, r):
+                out.append(comb)
+        return out
+
+    for comb in _all_interactions(factor_keys):
+        # collect cols lists per factor
+        lists = [factor_dummy_cols[f] for f in comb]
+        names_lists = [factor_dummy_names[f] for f in comb]
+        if any(len(L) == 0 for L in lists):
+            term_slices["Фактор " + "×".join(comb)] = []
+            continue
+        # cartesian product
+        idxs = []
+        def rec_build(i, cur_col, cur_name):
+            nonlocal idxs
+            if i == len(lists):
+                X_cols.append(cur_col)
+                colnames.append("×".join([f"{comb[j]}:{cur_name[j]}" for j in range(len(comb))]))
+                idxs.append(len(X_cols) - 1)
+                return
+            for ci, nm in zip(lists[i], names_lists[i]):
+                if cur_col is None:
+                    rec_build(i + 1, ci.copy(), cur_name + [nm])
+                else:
+                    rec_build(i + 1, cur_col * ci, cur_name + [nm])
+        rec_build(0, None, [])
+        term_slices["Фактор " + "×".join(comb)] = idxs
+
+    # extra terms (e.g. BLOCK dummies)
+    if extra_terms:
+        for name, cols, coln in extra_terms:
+            idxs = []
+            for c, nm in zip(cols, coln):
+                X_cols.append(c)
+                colnames.append(f"{name}:{nm}")
+                idxs.append(len(X_cols) - 1)
+            term_slices[name] = idxs
+
+    X = np.column_stack(X_cols)
+    return y, X, term_slices, colnames
+
+def _ols_fit(y, X):
+    # returns beta, yhat, residuals, SSE, df_error, MSE
+    # robust least squares via lstsq
     beta, *_ = np.linalg.lstsq(X, y, rcond=None)
     yhat = X @ beta
     resid = y - yhat
-    SSE = float(np.sum(resid ** 2))
-    df_resid = int(len(y) - np.linalg.matrix_rank(X))
-    return beta, yhat, resid, SSE, df_resid
+    sse = float(np.sum(resid ** 2))
+    n, p = X.shape
+    df_e = n - p
+    mse = sse / df_e if df_e > 0 else np.nan
+    return beta, yhat, resid, sse, df_e, mse
 
+def _ss_terms(y, X_full, term_slices):
+    # Type III-ish via drop-term (partial) SS:
+    # SS_term = SSE_reduced - SSE_full, where reduced drops term columns
+    beta, yhat, resid, sse_full, df_e_full, mse_full = _ols_fit(y, X_full)
+    results = {}
+    for term, idxs in term_slices.items():
+        if term == "Intercept":
+            continue
+        if not idxs:
+            results[term] = (np.nan, 0, np.nan, np.nan, np.nan)
+            continue
+        keep = [i for i in range(X_full.shape[1]) if i not in idxs]
+        X_red = X_full[:, keep]
+        _, _, _, sse_red, df_e_red, _ = _ols_fit(y, X_red)
+        ss = float(sse_red - sse_full)
+        df = len(idxs)
+        ms = ss / df if df > 0 else np.nan
+        F = (ms / mse_full) if (df > 0 and not math.isnan(mse_full) and mse_full > 0) else np.nan
+        p = float(1.0 - f_dist.cdf(F, df, df_e_full)) if (not math.isnan(F) and df_e_full > 0) else np.nan
+        results[term] = (ss, df, ms, F, p)
+    return results, sse_full, df_e_full, mse_full, resid
+
+def build_effect_strength_rows(anova_table):
+    # anova_table: list rows [name, SS, df, MS, F, p]
+    ss_total = 0.0
+    for row in anova_table:
+        name, SSv, *_ = row
+        if name == "Загальна":
+            ss_total = float(SSv) if not (SSv is None or (isinstance(SSv, float) and math.isnan(SSv))) else 0.0
+            break
+    if ss_total <= 0:
+        # fallback: sum SS except residual
+        ss_total = 0.0
+        for row in anova_table:
+            if row[0].startswith("Залишок"):
+                continue
+            if row[1] is None or (isinstance(row[1], float) and math.isnan(row[1])):
+                continue
+            ss_total += float(row[1])
+
+    out = []
+    for row in anova_table:
+        name, SSv, *_ = row
+        if name.startswith("Залишок") or name == "Загальна":
+            continue
+        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
+            continue
+        pct = (float(SSv) / ss_total * 100.0) if ss_total > 0 else np.nan
+        out.append([name, fmt_num(pct, 2)])
+    return out
+
+def build_partial_eta2_rows_with_label(anova_table):
+    # partial eta2 = SS_effect / (SS_effect + SS_error)
+    ss_err = None
+    for row in anova_table:
+        if row[0].startswith("Залишок"):
+            ss_err = row[1]
+            break
+    if ss_err is None or (isinstance(ss_err, float) and math.isnan(ss_err)):
+        ss_err = np.nan
+    out = []
+    for row in anova_table:
+        name, SSv, *_ = row
+        if name.startswith("Залишок") or name == "Загальна":
+            continue
+        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)) or (isinstance(ss_err, float) and math.isnan(ss_err)):
+            continue
+        pe2 = float(SSv) / (float(SSv) + float(ss_err)) if (float(SSv) + float(ss_err)) > 0 else np.nan
+        out.append([name, fmt_num(pe2, 4), partial_eta2_label(pe2)])
+    return out
+
+
+# -------------------------
+# CRD / RCBD / Split-plot analyses
+# -------------------------
 def anova_n_way(long, factor_keys, levels_by_factor):
-    # Full factorial up to all interactions (dummy-coded), Type I sequential SS.
-    # Returns structure expected by GUI: table, MS_error, df_error, SS_total, SS_error, residuals, cell_means
-    y = np.array([r["value"] for r in long], dtype=float)
-    n = len(y)
+    # CRD: full factorial GLM
+    y, X, term_slices, colnames = _build_full_factorial_design(long, factor_keys, levels_by_factor)
+    terms, sse, df_e, mse, resid = _ss_terms(y, X, term_slices)
 
-    # Build design columns list in sequence: intercept, main factors, interactions
-    cols = [np.ones(n)]
-    term_slices = []  # (term_name, start_idx, end_idx_exclusive)
-    cur = 1
-
-    # store level arrays
-    factor_level_vecs = {}
+    ss_total = float(np.sum((y - np.mean(y)) ** 2))
+    table = []
+    # print in logical order: main effects, interactions, residual, total
+    ordered = []
     for f in factor_keys:
-        lvls = levels_by_factor[f]
-        factor_level_vecs[f] = np.array([r.get(f) for r in long], dtype=object)
-
-    # add main factors
-    for f in factor_keys:
-        lvls = levels_by_factor[f]
-        ref = lvls[0]
-        for lv in lvls[1:]:
-            cols.append((factor_level_vecs[f] == lv).astype(float))
-        term_slices.append((f"Фактор {f}", cur, cur + max(0, len(lvls) - 1)))
-        cur += max(0, len(lvls) - 1)
-
-    # add interactions (2..k)
+        ordered.append(f"Фактор {f}")
     for r in range(2, len(factor_keys) + 1):
         for comb in combinations(factor_keys, r):
-            # for each interaction, multiply dummy columns of each factor
-            dummy_lists = []
-            names = []
-            for f in comb:
-                lvls = levels_by_factor[f]
-                ref = lvls[0]
-                dcols = []
-                dnames = []
-                for lv in lvls[1:]:
-                    dcols.append((factor_level_vecs[f] == lv).astype(float))
-                    dnames.append(f"{f}:{lv}")
-                dummy_lists.append(dcols)
-                names.append(dnames)
+            ordered.append("Фактор " + "×".join(comb))
 
-            # cartesian product of dummy columns
-            inter_cols = []
-            if all(len(d) > 0 for d in dummy_lists):
-                inter_cols = [dummy_lists[0][i].copy() for i in range(len(dummy_lists[0]))]
-                for k2 in range(1, len(dummy_lists)):
-                    new_cols = []
-                    for c1 in inter_cols:
-                        for c2 in dummy_lists[k2]:
-                            new_cols.append(c1 * c2)
-                    inter_cols = new_cols
-            # append
-            start = cur
-            for c in inter_cols:
-                cols.append(c)
-            cur += len(inter_cols)
-            term_slices.append((f"Фактор {'×'.join(comb)}", start, cur))
+    for name in ordered:
+        ss, df, ms, F, p = terms.get(name, (np.nan, 0, np.nan, np.nan, np.nan))
+        table.append([name, ss, df, ms, F, p])
 
-    X = np.column_stack(cols)
-    # full model
-    _, _, resid_full, SSE_full, df_full = _ols_fit(X, y)
+    table.append(["Залишок", sse, df_e, mse, np.nan, np.nan])
+    table.append(["Загальна", ss_total, len(y) - 1, np.nan, np.nan, np.nan])
 
-    # sequential SS: fit models incrementally
-    table = []
-    SS_terms = []
-    df_terms = []
-    SSE_prev = float(np.sum((y - np.mean(y)) ** 2))
-    df_prev = n - 1
+    # cell means for residuals quick use
+    cell = defaultdict(list)
+    for r in long:
+        key = tuple(r.get(f) for f in factor_keys)
+        cell[key].append(float(r["value"]))
+    cell_means = {k: float(np.mean(v)) for k, v in cell.items()}
 
-    # intercept-only baseline already: SSE0 = TSS
-    X_base = np.ones((n, 1))
-    _, _, resid0, SSE0, df0 = _ols_fit(X_base, y)
-    SSE_prev = SSE0
-    df_prev = df0
-
-    # build incremental models
-    for name, a, b in term_slices:
-        if a == b:
-            continue
-        X_inc = np.column_stack([np.ones(n)] + [cols[i] for i in range(1, b)])  # intercept + all cols up to b-1
-        _, _, _, SSE_now, df_now = _ols_fit(X_inc, y)
-        SS = SSE_prev - SSE_now
-        df_term = df_prev - df_now
-        SS_terms.append(SS)
-        df_terms.append(df_term)
-        SSE_prev, df_prev = SSE_now, df_now
-
-    # residual is last model
-    SS_error = SSE_prev
-    df_error = df_prev
-    MS_error = SS_error / df_error if df_error > 0 else np.nan
-
-    # compute F/p for each term vs residual
-    for i, (name, a, b) in enumerate(term_slices):
-        if a == b:
-            continue
-        SS = SS_terms[i]
-        df_term = df_terms[i]
-        MS = SS / df_term if df_term > 0 else np.nan
-        if df_term > 0 and df_error > 0 and not math.isnan(MS) and not math.isnan(MS_error) and MS_error > 0:
-            F = MS / MS_error
-            p = float(f_dist.sf(F, df_term, df_error))
-        else:
-            F, p = (np.nan, np.nan)
-        table.append((name, SS, df_term, MS, F, p))
-
-    # add residual + total
-    SS_total = float(np.sum((y - np.mean(y)) ** 2))
-    table.append(("Залишок", SS_error, df_error, MS_error, np.nan, np.nan))
-    table.append(("Загальна", SS_total, n - 1, np.nan, np.nan, np.nan))
-
-    # cell means for residuals check (group means by full variant)
-    cell_means = {}
-    g = groups_by_keys(long, tuple(factor_keys))
-    for k, arr in g.items():
-        cell_means[k] = float(np.mean(arr)) if len(arr) else np.nan
+    # NIR05 for factors + overall variants (used in report)
+    NIR05 = {}
+    if not (math.isnan(mse) or df_e <= 0):
+        tcrit = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_e)))
+        # for each factor: approximate LSD using n per level (harmonic mean not needed here)
+        for f in factor_keys:
+            # n for each level
+            n_level = defaultdict(int)
+            for r in long:
+                if r.get(f) is None:
+                    continue
+                if r.get("value") is None or math.isnan(r.get("value", np.nan)):
+                    continue
+                n_level[r.get(f)] += 1
+            # use harmonic mean of ns
+            ns = [n for n in n_level.values() if n > 0]
+            if ns:
+                nh = len(ns) / sum(1.0 / n for n in ns)
+                NIR05[f"Фактор {f}"] = tcrit * math.sqrt(2.0 * mse / nh)
+        # overall variants (cell means): use harmonic n per cell
+        n_cell = defaultdict(int)
+        for r in long:
+            key = tuple(r.get(f) for f in factor_keys)
+            if r.get("value") is None or math.isnan(r.get("value", np.nan)):
+                continue
+            n_cell[key] += 1
+        ns = [n for n in n_cell.values() if n > 0]
+        if ns:
+            nh = len(ns) / sum(1.0 / n for n in ns)
+            NIR05["Загальна"] = tcrit * math.sqrt(2.0 * mse / nh)
 
     return {
         "table": table,
-        "MS_error": MS_error,
-        "df_error": df_error,
-        "SS_total": SS_total,
-        "SS_error": SS_error,
-        "residuals": resid_full,
+        "SS_error": sse,
+        "df_error": df_e,
+        "MS_error": mse,
+        "SS_total": ss_total,
         "cell_means": cell_means,
-        "NIR05": {}
+        "residuals": resid.tolist(),
+        "NIR05": NIR05,
     }
 
+def _block_dummies(long, block_key="BLOCK"):
+    blocks = first_seen_order([r.get(block_key) for r in long if r.get(block_key) is not None])
+    if not blocks:
+        return [], [], blocks
+    ref = blocks[0]
+    cols = []
+    names = []
+    vals = [r.get(block_key) for r in long]
+    for b in blocks[1:]:
+        cols.append(np.array([1.0 if v == b else 0.0 for v in vals], dtype=float))
+        names.append(str(b))
+    return cols, names, blocks
+
 def anova_rcbd_ols(long, factor_keys, levels_by_factor, block_key="BLOCK"):
-    # RCBD: include BLOCK as factor + all treatment terms (as in CRD)
-    # For simplicity: treat as CRD with extra main factor BLOCK (no interactions with BLOCK)
-    y = np.array([r["value"] for r in long], dtype=float)
-    n = len(y)
+    # RCBD: full factorial + block main effect
+    bcols, bnames, blocks = _block_dummies(long, block_key=block_key)
+    extra = [("Блоки", bcols, bnames)] if bcols else []
+    y, X, term_slices, colnames = _build_full_factorial_design(long, factor_keys, levels_by_factor, extra_terms=extra)
+    terms, sse, df_e, mse, resid = _ss_terms(y, X, term_slices)
 
-    block_levels = first_seen_order([r.get(block_key) for r in long])
-    levels = dict(levels_by_factor)
-    levels["BLOCK"] = block_levels
+    ss_total = float(np.sum((y - np.mean(y)) ** 2))
+    table = []
 
-    # factors for model = BLOCK + treatment keys
-    model_keys = ["BLOCK"] + list(factor_keys)
-    levels_by = {k: levels[k] for k in model_keys}
+    if bcols:
+        ss, df, ms, F, p = terms.get("Блоки", (np.nan, 0, np.nan, np.nan, np.nan))
+        table.append(["Блоки", ss, df, ms, F, p])
 
-    res = anova_n_way(long, model_keys, levels_by)
+    ordered = []
+    for f in factor_keys:
+        ordered.append(f"Фактор {f}")
+    for r in range(2, len(factor_keys) + 1):
+        for comb in combinations(factor_keys, r):
+            ordered.append("Фактор " + "×".join(comb))
+    for name in ordered:
+        ss, df, ms, F, p = terms.get(name, (np.nan, 0, np.nan, np.nan, np.nan))
+        table.append([name, ss, df, ms, F, p])
 
-    # In report we want table without "Фактор BLOCK×..." interactions (none created as we used full factorial),
-    # but it will include interactions between BLOCK and factors -> not desired for RCBD.
-    # We'll keep it; it still works, but to avoid chaos we drop interactions containing "BLOCK×".
-    cleaned = []
-    for row in res["table"]:
-        name = str(row[0])
-        if "Фактор BLOCK×" in name or "Фактор " in name and "×BLOCK" in name:
-            continue
-        cleaned.append(row)
-    res["table"] = cleaned
-    return res
+    table.append(["Залишок", sse, df_e, mse, np.nan, np.nan])
+    table.append(["Загальна", ss_total, len(y) - 1, np.nan, np.nan, np.nan])
+
+    NIR05 = {}
+    if not (math.isnan(mse) or df_e <= 0):
+        tcrit = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_e)))
+        # for each factor
+        for f in factor_keys:
+            n_level = defaultdict(int)
+            for r in long:
+                if r.get(f) is None:
+                    continue
+                if r.get("value") is None or math.isnan(r.get("value", np.nan)):
+                    continue
+                n_level[r.get(f)] += 1
+            ns = [n for n in n_level.values() if n > 0]
+            if ns:
+                nh = len(ns) / sum(1.0 / n for n in ns)
+                NIR05[f"Фактор {f}"] = tcrit * math.sqrt(2.0 * mse / nh)
+
+        # overall variants (cell means): harmonic
+        n_cell = defaultdict(int)
+        for r in long:
+            key = tuple(r.get(f) for f in factor_keys)
+            if r.get("value") is None or math.isnan(r.get("value", np.nan)):
+                continue
+            n_cell[key] += 1
+        ns = [n for n in n_cell.values() if n > 0]
+        if ns:
+            nh = len(ns) / sum(1.0 / n for n in ns)
+            NIR05["Загальна"] = tcrit * math.sqrt(2.0 * mse / nh)
+
+    return {
+        "table": table,
+        "SS_error": sse,
+        "df_error": df_e,
+        "MS_error": mse,
+        "SS_total": ss_total,
+        "residuals": resid.tolist(),
+        "NIR05": NIR05,
+    }
 
 def anova_splitplot_ols(long, factor_keys, main_factor="A", block_key="BLOCK"):
-    # split-plot (approx): whole-plot error = BLOCK×main_factor
-    # model includes BLOCK + main + BLOCK×main + other effects (full factorial among treatment factors)
-    y = np.array([r["value"] for r in long], dtype=float)
-    n = len(y)
+    """
+    Split-plot:
+      Whole-plot error term: BLOCK × main_factor interaction (and its MS/df)
+      Sub-plot error term: residual
+    We fit full model including:
+      - blocks
+      - main_factor
+      - block×main_factor (whole-plot error)
+      - other factors and interactions
+    For reporting:
+      - Effects of main_factor tested against MS_whole / df_whole
+      - All other effects tested against MS_error / df_error
+    """
+    if main_factor not in factor_keys:
+        main_factor = factor_keys[0]
 
-    # Build levels
-    levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in factor_keys}
-    block_levels = first_seen_order([r.get(block_key) for r in long])
+    # Build blocks dummies (k-1)
+    bcols, bnames, blocks = _block_dummies(long, block_key=block_key)
 
-    # Build a pseudo-factor for whole-plot error: BLOCKxMAIN
-    for r in long:
-        r["_WPERR_"] = f"{r.get(block_key)}×{r.get(main_factor)}"
+    # Build dummies for main factor and for blocks×main dummies
+    # We'll create explicit columns for block×main interaction using products of their dummies.
+    main_levels = first_seen_order([r.get(main_factor) for r in long if r.get(main_factor) is not None])
+    if len(main_levels) < 2:
+        raise ValueError("Split-plot: головний фактор має мати щонайменше 2 рівні.")
 
-    levels_by_factor["_WPERR_"] = first_seen_order([r.get("_WPERR_") for r in long])
-    levels_by_factor["BLOCK"] = block_levels
+    main_vals = [r.get(main_factor) for r in long]
+    main_cols, main_names, main_ref = _encode_factor(main_vals, main_levels)
 
-    # model keys: BLOCK + main + WPERR + other factors + interactions among treatment factors
-    # We'll compute:
-    #  - whole-plot error term = _WPERR_ (captures BLOCK×main)
-    #  - residual = leftover after full model
-    model_keys = ["BLOCK", main_factor, "_WPERR_"] + [f for f in factor_keys if f != main_factor]
-    res = anova_n_way(long, model_keys, {k: levels_by_factor[k] for k in model_keys})
+    # interaction block×main:
+    wp_cols = []
+    wp_names = []
+    # use non-ref block dummies and non-ref main dummies
+    for bi, bcol in enumerate(bcols):
+        for mi, mcol in enumerate(main_cols):
+            wp_cols.append(bcol * mcol)
+            wp_names.append(f"{bnames[bi]}×{main_names[mi]}")
+    # extra terms: blocks main effect + wp error
+    extra = []
+    if bcols:
+        extra.append(("Блоки", bcols, bnames))
+    # add main factor explicitly as "Фактор A" columns will be built by generic builder; we keep it there.
+    if wp_cols:
+        extra.append((f"Whole-plot error (Блоки×{main_factor})", wp_cols, wp_names))
 
-    # identify whole-plot error row in table
-    MS_whole = np.nan
-    df_whole = np.nan
-    for (name, SS, dfv, MS, F, p) in res["table"]:
-        if name == "Фактор _WPERR_":
-            MS_whole = MS
-            df_whole = dfv
+    # Build full factorial with extra terms
+    levels_by_factor = {f: first_seen_order([r.get(f) for r in long if r.get(f) is not None]) for f in factor_keys}
+    y, X, term_slices, colnames = _build_full_factorial_design(long, factor_keys, levels_by_factor, extra_terms=extra)
 
-    # Set for GUI usage
-    res["MS_whole"] = MS_whole
-    res["df_whole"] = df_whole
-    res["main_factor"] = main_factor
+    # Fit full model
+    beta, yhat, resid, sse_full, df_e, mse = _ols_fit(y, X)
 
-    # Clean up helper key from data
-    for r in long:
-        if "_WPERR_" in r:
-            del r["_WPERR_"]
+    # Determine SS and MS for whole-plot error term:
+    wp_term = f"Whole-plot error (Блоки×{main_factor})"
+    wp_idxs = term_slices.get(wp_term, [])
+    if not wp_idxs:
+        # If blocks or main factor missing, cannot estimate properly
+        raise ValueError("Split-plot: неможливо сформувати whole-plot error (перевірте блоки/головний фактор).")
 
-    return res
+    # SS for wp term (partial): drop wp cols
+    keep = [i for i in range(X.shape[1]) if i not in wp_idxs]
+    X_red = X[:, keep]
+    _, _, _, sse_red, df_e_red, _ = _ols_fit(y, X_red)
+    ss_wp = float(sse_red - sse_full)
+    df_wp = len(wp_idxs)
+    ms_wp = ss_wp / df_wp if df_wp > 0 else np.nan
+
+    ss_total = float(np.sum((y - np.mean(y)) ** 2))
+
+    # Build ANOVA-like table with correct F for main factor
+    # We still compute partial SS for all terms (excluding wp, blocks) to show in table,
+    # but F/p for main factor uses ms_wp instead of mse.
+    terms, _, _, _, _ = _ss_terms(y, X, term_slices)
+
+    table = []
+    # blocks (optional)
+    if bcols:
+        ss, df, ms, F, p = terms.get("Блоки", (np.nan, 0, np.nan, np.nan, np.nan))
+        table.append(["Блоки", ss, df, ms, np.nan, np.nan])
+
+    # whole-plot error row
+    table.append([wp_term, ss_wp, df_wp, ms_wp, np.nan, np.nan])
+
+    # main & others
+    ordered = []
+    for f in factor_keys:
+        ordered.append(f"Фактор {f}")
+    for rnk in range(2, len(factor_keys) + 1):
+        for comb in combinations(factor_keys, rnk):
+            ordered.append("Фактор " + "×".join(comb))
+
+    for name in ordered:
+        ss, df, ms, F, p = terms.get(name, (np.nan, 0, np.nan, np.nan, np.nan))
+        if name == f"Фактор {main_factor}":
+            # test against ms_wp, df_wp
+            if df > 0 and not any(math.isnan(x) for x in [ms, ms_wp]) and ms_wp > 0 and df_wp > 0:
+                Fm = ms / ms_wp
+                pm = float(1.0 - f_dist.cdf(Fm, df, df_wp))
+            else:
+                Fm, pm = (np.nan, np.nan)
+            table.append([name, ss, df, ms, Fm, pm])
+        else:
+            # test against residual
+            if df > 0 and not any(math.isnan(x) for x in [ms, mse]) and mse > 0 and df_e > 0:
+                Fm = ms / mse
+                pm = float(1.0 - f_dist.cdf(Fm, df, df_e))
+            else:
+                Fm, pm = (np.nan, np.nan)
+            table.append([name, ss, df, ms, Fm, pm])
+
+    table.append(["Залишок", sse_full, df_e, mse, np.nan, np.nan])
+    table.append(["Загальна", ss_total, len(y) - 1, np.nan, np.nan, np.nan])
+
+    # NIR05: provide per factor, but for main factor use ms_wp/df_wp, others use mse/df_e
+    NIR05 = {}
+    # counts per level
+    def _harm_n_for_factor(f):
+        n_level = defaultdict(int)
+        for r in long:
+            if r.get(f) is None:
+                continue
+            if r.get("value") is None or math.isnan(r.get("value", np.nan)):
+                continue
+            n_level[r.get(f)] += 1
+        ns = [n for n in n_level.values() if n > 0]
+        if not ns:
+            return np.nan
+        nh = len(ns) / sum(1.0 / n for n in ns)
+        return float(nh)
+
+    if not (math.isnan(mse) or df_e <= 0 or math.isnan(ms_wp) or df_wp <= 0):
+        tcrit_sub = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_e))) if df_e > 0 else np.nan
+        tcrit_whole = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_wp))) if df_wp > 0 else np.nan
+        for f in factor_keys:
+            nh = _harm_n_for_factor(f)
+            if math.isnan(nh) or nh <= 0:
+                continue
+            if f == main_factor:
+                NIR05[f"Фактор {f} (whole-plot)"] = tcrit_whole * math.sqrt(2.0 * ms_wp / nh)
+            else:
+                NIR05[f"Фактор {f}"] = tcrit_sub * math.sqrt(2.0 * mse / nh)
+
+    return {
+        "table": table,
+        "SS_error": sse_full,
+        "df_error": df_e,
+        "MS_error": mse,
+        "SS_total": ss_total,
+        "residuals": resid.tolist(),
+        "MS_whole": ms_wp,
+        "df_whole": df_wp,
+        "main_factor": main_factor,
+        "NIR05": NIR05,
+    }
+
 
 # -------------------------
 # GUI
@@ -870,26 +1164,27 @@ class SADTk:
         self.table_win = None
         self.report_win = None
 
-        # Active cell highlighting
+        # active cell
         self._active_cell = None
         self._active_prev_cfg = None
 
-        # Fill-handle drag
+        # fill-handle drag (one cell down like Excel)
         self._fill_ready = False
         self._fill_dragging = False
         self._fill_src_pos = None
         self._fill_src_text = ""
         self._fill_last_row = None
 
-        # factor titles
         self.factor_title_map = {}
 
+    # ---------- Factor titles ----------
     def factor_title(self, fkey: str) -> str:
         return self.factor_title_map.get(fkey, f"Фактор {fkey}")
 
     def _set_factor_title(self, fkey: str, title: str):
-        self.factor_title_map[fkey] = title.strip()
+        self.factor_title_map[fkey] = title.strip() if title else f"Фактор {fkey}"
 
+    # ---------- Design help ----------
     def show_design_help(self):
         w = tk.Toplevel(self.root)
         w.title("Пояснення дизайнів")
@@ -905,10 +1200,10 @@ class SADTk:
             "• Підходить, коли ділянка однорідна.\n\n"
             "RCBD (блочна рандомізація)\n"
             "• Є блоки (повторності), всередині блоку — всі варіанти.\n"
-            "• Підходить, коли є градієнт поля.\n\n"
+            "• Підходить, коли є градієнт поля (рельєф, ґрунт тощо).\n\n"
             "Split-plot (спліт-плот)\n"
-            "• Є головний фактор (whole-plot) і підплощі (sub-plot).\n"
-            "• Для головного фактора використовується інша помилка, ніж для підфакторів.\n"
+            "• Є головний фактор (whole-plot) і підплощі (sub-plot) всередині.\n"
+            "• Для головного фактора використовується інша (більша) помилка, ніж для підфакторів.\n"
         )
 
         t = tk.Text(frm, width=62, height=16, wrap="word")
@@ -924,6 +1219,7 @@ class SADTk:
         center_window(w)
         w.grab_set()
 
+    # ---------- ask indicator / units / design ----------
     def ask_indicator_units(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Параметри звіту")
@@ -943,7 +1239,6 @@ class SADTk:
 
         row_design = tk.Frame(frm)
         row_design.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 4))
-
         tk.Label(row_design, text="Дизайн експерименту:", fg="#000000").pack(side=tk.LEFT)
         tk.Button(row_design, text=" ? ", width=3, command=self.show_design_help).pack(side=tk.LEFT, padx=(8, 0))
 
@@ -1018,6 +1313,7 @@ class SADTk:
         self.root.wait_window(dlg)
         return out
 
+    # ---------- Choose method ----------
     def choose_method_window(self, p_norm, design, num_variants):
         dlg = tk.Toplevel(self.root)
         dlg.title("Вибір виду аналізу")
@@ -1074,12 +1370,14 @@ class SADTk:
         out = {"ok": False, "method": None}
 
         if not options:
+            def on_ok_close():
+                dlg.destroy()
             btns = tk.Frame(frm)
             btns.pack(fill=tk.X, pady=(12, 0))
-            tk.Button(btns, text="OK", width=10, command=dlg.destroy).pack(side=tk.LEFT, padx=6)
+            tk.Button(btns, text="OK", width=10, command=on_ok_close).pack(side=tk.LEFT, padx=6)
             dlg.update_idletasks()
             center_window(dlg)
-            dlg.bind("<Return>", lambda e: dlg.destroy())
+            dlg.bind("<Return>", lambda e: on_ok_close())
             dlg.grab_set()
             self.root.wait_window(dlg)
             return out
@@ -1105,6 +1403,220 @@ class SADTk:
         self.root.wait_window(dlg)
         return out
 
+    # ---------- About ----------
+    def show_about(self):
+        messagebox.showinfo(
+            "Розробник",
+            "S.A.D. — Статистичний аналіз даних\n"
+            "Версія: 1.0\n"
+            "Розробик: Чаплоуцький Андрій Миколайович\n"
+            "Уманський національний університет"
+        )
+
+    # ---------- Active cell highlight ----------
+    def _set_active_cell(self, widget: tk.Entry):
+        if self._active_cell is widget:
+            return
+        if isinstance(self._active_cell, tk.Entry) and self._active_prev_cfg:
+            try:
+                self._active_cell.configure(**self._active_prev_cfg)
+            except Exception:
+                pass
+        self._active_cell = widget
+        if isinstance(widget, tk.Entry):
+            self._active_prev_cfg = {
+                "bg": widget.cget("bg"),
+                "highlightthickness": int(widget.cget("highlightthickness")),
+                "highlightbackground": widget.cget("highlightbackground"),
+                "highlightcolor": widget.cget("highlightcolor"),
+                "relief": widget.cget("relief"),
+                "bd": int(widget.cget("bd")) if str(widget.cget("bd")).isdigit() else 1,
+            }
+            try:
+                widget.configure(
+                    bg="#fff3c4",
+                    highlightthickness=3,
+                    highlightbackground="#c62828",
+                    highlightcolor="#c62828",
+                    relief=tk.SOLID,
+                    bd=1
+                )
+            except Exception:
+                pass
+
+    # ---------- Fill-handle (Excel-like) ----------
+    def _near_bottom_right(self, w: tk.Entry, margin=6) -> bool:
+        try:
+            px = w.winfo_pointerx()
+            py = w.winfo_pointery()
+            x0 = w.winfo_rootx()
+            y0 = w.winfo_rooty()
+            ww = w.winfo_width()
+            hh = w.winfo_height()
+            return (x0 + ww - margin <= px <= x0 + ww) and (y0 + hh - margin <= py <= y0 + hh)
+        except Exception:
+            return False
+
+    def _fill_update_cursor(self, event):
+        w = event.widget
+        if not isinstance(w, tk.Entry):
+            return
+        pos = self.find_pos(w)
+        if not pos:
+            return
+        r, c = pos
+        # fill handle дозволяємо ТІЛЬКИ для факторних колонок (щоб не зіпсувати числа повторностей)
+        if c >= self.factors_count:
+            w.configure(cursor="")
+            self._fill_ready = False
+            return
+
+        if self._near_bottom_right(w):
+            w.configure(cursor="crosshair")
+            self._fill_ready = True
+        else:
+            w.configure(cursor="")
+            self._fill_ready = False
+
+    def _fill_leave(self, event):
+        w = event.widget
+        if isinstance(w, tk.Entry):
+            w.configure(cursor="")
+        self._fill_ready = False
+
+    def _fill_press(self, event):
+        w = event.widget
+        if not isinstance(w, tk.Entry):
+            return
+        pos = self.find_pos(w)
+        if not pos:
+            return
+        r, c = pos
+        if c >= self.factors_count:
+            self._fill_dragging = False
+            return
+
+        if self._near_bottom_right(w):
+            self._fill_dragging = True
+            self._fill_src_pos = (r, c)
+            self._fill_src_text = w.get()
+            self._fill_last_row = r
+            return "break"
+        self._fill_dragging = False
+        return None
+
+    def _fill_drag(self, event):
+        if not self._fill_dragging or not self._fill_src_pos:
+            return
+        w = event.widget
+        if not isinstance(w, tk.Entry):
+            return
+
+        src_r, src_c = self._fill_src_pos
+
+        try:
+            py = w.winfo_pointery()
+            target_r = src_r
+            for rr in range(src_r, len(self.entries)):
+                cell = self.entries[rr][src_c]
+                y0 = cell.winfo_rooty()
+                y1 = y0 + cell.winfo_height()
+                if y0 <= py <= y1:
+                    target_r = rr
+                    break
+        except Exception:
+            return
+
+        if target_r <= src_r:
+            return
+
+        for rr in range(src_r + 1, target_r + 1):
+            while rr >= len(self.entries):
+                self.add_row()
+            cell = self.entries[rr][src_c]
+            cell.delete(0, tk.END)
+            cell.insert(0, self._fill_src_text)
+
+        self._fill_last_row = target_r
+        return "break"
+
+    def _fill_release(self, event):
+        if self._fill_dragging:
+            self._fill_dragging = False
+            self._fill_src_pos = None
+            self._fill_src_text = ""
+            self._fill_last_row = None
+            return "break"
+        return None
+
+    # ---------- Bind cell ----------
+    def bind_cell(self, e: tk.Entry):
+        e.bind("<Return>", self.on_enter)
+        e.bind("<Up>", self.on_arrow)
+        e.bind("<Down>", self.on_arrow)
+        e.bind("<Left>", self.on_arrow)
+        e.bind("<Right>", self.on_arrow)
+        e.bind("<Control-v>", self.on_paste)
+        e.bind("<Control-V>", self.on_paste)
+
+        e.bind("<FocusIn>", lambda ev: self._set_active_cell(ev.widget))
+
+        # fill handle
+        e.bind("<Motion>", self._fill_update_cursor)
+        e.bind("<Leave>", self._fill_leave)
+        e.bind("<ButtonPress-1>", self._fill_press)
+        e.bind("<B1-Motion>", self._fill_drag)
+        e.bind("<ButtonRelease-1>", self._fill_release)
+
+    # ---------- Rename factor ----------
+    def rename_factor_by_col(self, col_idx: int):
+        if col_idx < 0 or col_idx >= self.factors_count:
+            return
+        fkey = self.factor_keys[col_idx]
+        old = self.factor_title(fkey)
+
+        dlg = tk.Toplevel(self.table_win if self.table_win else self.root)
+        dlg.title("Перейменування фактора")
+        dlg.resizable(False, False)
+        set_window_icon(dlg)
+
+        frm = tk.Frame(dlg, padx=14, pady=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(frm, text=f"Нова назва для {fkey}:", fg="#000000").grid(row=0, column=0, sticky="w")
+        e = tk.Entry(frm, width=36, fg="#000000")
+        e.grid(row=1, column=0, pady=(6, 0))
+        e.insert(0, old)
+        e.select_range(0, "end")
+        e.focus_set()
+
+        def ok():
+            new = e.get().strip()
+            if not new:
+                messagebox.showwarning("Помилка", "Назва не може бути порожньою.")
+                return
+            self._set_factor_title(fkey, new)
+
+            if self.header_labels and col_idx < len(self.header_labels):
+                self.header_labels[col_idx].configure(text=new)
+
+            self.factor_names = [self.factor_title(fk) for fk in self.factor_keys]
+            rep_names = [self.header_labels[j].cget("text") for j in range(self.factors_count, self.cols)]
+            self.column_names = self.factor_names + rep_names
+
+            dlg.destroy()
+
+        btns = tk.Frame(frm)
+        btns.grid(row=2, column=0, pady=(10, 0), sticky="w")
+        tk.Button(btns, text="OK", width=10, command=ok).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Button(btns, text="Скасувати", width=12, command=dlg.destroy).pack(side=tk.LEFT)
+
+        dlg.update_idletasks()
+        center_window(dlg)
+        dlg.bind("<Return>", lambda ev: ok())
+        dlg.grab_set()
+
+    # ---------- Table window ----------
     def open_table(self, factors_count):
         if self.table_win and tk.Toplevel.winfo_exists(self.table_win):
             self.table_win.destroy()
@@ -1171,19 +1683,27 @@ class SADTk:
         self.entries = []
         self.header_labels = []
 
+        # headers
         for j, name in enumerate(self.column_names):
             lbl = tk.Label(self.inner, text=name, relief=tk.RIDGE, width=COL_W, bg="#f0f0f0", fg="#000000")
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             self.header_labels.append(lbl)
+
             if j < self.factors_count:
                 lbl.bind("<Double-Button-1>", lambda e, col=j: self.rename_factor_by_col(col))
 
+        # cells
         for i in range(self.rows):
             row_entries = []
             for j in range(self.cols):
-                e = tk.Entry(self.inner, width=COL_W, fg="#000000",
-                             highlightthickness=1, highlightbackground="#c0c0c0",
-                             highlightcolor="#c0c0c0")
+                e = tk.Entry(
+                    self.inner,
+                    width=COL_W,
+                    fg="#000000",
+                    highlightthickness=1,
+                    highlightbackground="#c0c0c0",
+                    highlightcolor="#c0c0c0"
+                )
                 e.grid(row=i + 1, column=j, padx=2, pady=2)
                 self.bind_cell(e)
                 row_entries.append(e)
@@ -1197,106 +1717,19 @@ class SADTk:
         self.table_win.bind("<Control-v>", self.on_paste)
         self.table_win.bind("<Control-V>", self.on_paste)
 
-    def rename_factor_by_col(self, col_idx: int):
-        if col_idx < 0 or col_idx >= self.factors_count:
-            return
-        fkey = self.factor_keys[col_idx]
-        old = self.factor_title(fkey)
-
-        dlg = tk.Toplevel(self.table_win if self.table_win else self.root)
-        dlg.title("Перейменування фактора")
-        dlg.resizable(False, False)
-        set_window_icon(dlg)
-
-        frm = tk.Frame(dlg, padx=14, pady=12)
-        frm.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(frm, text=f"Нова назва для {fkey}:", fg="#000000").grid(row=0, column=0, sticky="w")
-        e = tk.Entry(frm, width=36, fg="#000000")
-        e.grid(row=1, column=0, pady=(6, 0))
-        e.insert(0, old)
-        e.select_range(0, "end")
-        e.focus_set()
-
-        def ok():
-            new = e.get().strip()
-            if not new:
-                messagebox.showwarning("Помилка", "Назва не може бути порожньою.")
-                return
-            self._set_factor_title(fkey, new)
-            if self.header_labels and col_idx < len(self.header_labels):
-                self.header_labels[col_idx].configure(text=new)
-            self.factor_names = [self.factor_title(fk) for fk in self.factor_keys]
-            rep_names = [self.header_labels[j].cget("text") for j in range(self.factors_count, self.cols)]
-            self.column_names = self.factor_names + rep_names
-            dlg.destroy()
-
-        btns = tk.Frame(frm)
-        btns.grid(row=2, column=0, pady=(10, 0), sticky="w")
-        tk.Button(btns, text="OK", width=10, command=ok).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Button(btns, text="Скасувати", width=12, command=dlg.destroy).pack(side=tk.LEFT)
-
-        dlg.update_idletasks()
-        center_window(dlg)
-        dlg.bind("<Return>", lambda ev: ok())
-        dlg.grab_set()
-
-    def show_about(self):
-        messagebox.showinfo(
-            "Розробник",
-            "S.A.D. — Статистичний аналіз даних\n"
-            "Версія: 1.0\n"
-            "Розробик: Чаплоуцький Андрій Миколайович\n"
-            "Уманський національний університет"
-        )
-
-    def _set_active_cell(self, widget: tk.Entry):
-        if self._active_cell is widget:
-            return
-        if isinstance(self._active_cell, tk.Entry) and self._active_prev_cfg:
-            try:
-                self._active_cell.configure(**self._active_prev_cfg)
-            except Exception:
-                pass
-
-        self._active_cell = widget
-        if isinstance(widget, tk.Entry):
-            self._active_prev_cfg = {
-                "bg": widget.cget("bg"),
-                "highlightthickness": int(widget.cget("highlightthickness")),
-                "highlightbackground": widget.cget("highlightbackground"),
-                "highlightcolor": widget.cget("highlightcolor"),
-                "relief": widget.cget("relief"),
-                "bd": int(widget.cget("bd")) if str(widget.cget("bd")).isdigit() else 1,
-            }
-            try:
-                widget.configure(
-                    bg="#fff3c4",
-                    highlightthickness=3,
-                    highlightbackground="#c62828",
-                    highlightcolor="#c62828",
-                    relief=tk.SOLID,
-                    bd=1
-                )
-            except Exception:
-                pass
-
-    def bind_cell(self, e: tk.Entry):
-        e.bind("<Return>", self.on_enter)
-        e.bind("<Up>", self.on_arrow)
-        e.bind("<Down>", self.on_arrow)
-        e.bind("<Left>", self.on_arrow)
-        e.bind("<Right>", self.on_arrow)
-        e.bind("<Control-v>", self.on_paste)
-        e.bind("<Control-V>", self.on_paste)
-        e.bind("<FocusIn>", lambda ev: self._set_active_cell(ev.widget))
-
+    # ---------- Table editing ----------
     def add_row(self):
         i = len(self.entries)
         row_entries = []
         for j in range(self.cols):
-            e = tk.Entry(self.inner, width=COL_W, fg="#000000",
-                         highlightthickness=1, highlightbackground="#c0c0c0", highlightcolor="#c0c0c0")
+            e = tk.Entry(
+                self.inner,
+                width=COL_W,
+                fg="#000000",
+                highlightthickness=1,
+                highlightbackground="#c0c0c0",
+                highlightcolor="#c0c0c0"
+            )
             e.grid(row=i + 1, column=j, padx=2, pady=2)
             self.bind_cell(e)
             row_entries.append(e)
@@ -1325,8 +1758,14 @@ class SADTk:
         self.header_labels.append(lbl)
 
         for i, row in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=COL_W, fg="#000000",
-                         highlightthickness=1, highlightbackground="#c0c0c0", highlightcolor="#c0c0c0")
+            e = tk.Entry(
+                self.inner,
+                width=COL_W,
+                fg="#000000",
+                highlightthickness=1,
+                highlightbackground="#c0c0c0",
+                highlightcolor="#c0c0c0"
+            )
             e.grid(row=i + 1, column=col_idx, padx=2, pady=2)
             self.bind_cell(e)
             row.append(e)
@@ -1418,6 +1857,7 @@ class SADTk:
                     continue
                 self.entries[rr][cc].delete(0, tk.END)
                 self.entries[rr][cc].insert(0, val)
+
         return "break"
 
     def used_repeat_columns(self):
@@ -1477,7 +1917,7 @@ class SADTk:
         return long, rep_cols
 
     # -------------------------
-    # ANALYZE (формує звіт)
+    # ANALYZE
     # -------------------------
     def analyze(self):
         created_at = datetime.now()
@@ -1501,31 +1941,30 @@ class SADTk:
             messagebox.showinfo("Результат", "Надто мало даних для аналізу.")
             return
 
+        # levels
         levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
-
         variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
         v_names = [" | ".join(map(str, k)) for k in variant_order]
         num_variants = len(variant_order)
 
+        # run design model
         try:
             if design == "crd":
                 res = anova_n_way(long, self.factor_keys, levels_by_factor)
                 residuals = np.array(res.get("residuals", []), dtype=float)
-
             elif design == "rcbd":
                 res = anova_rcbd_ols(long, self.factor_keys, levels_by_factor, block_key="BLOCK")
                 residuals = np.array(res.get("residuals", []), dtype=float)
-
             else:
                 if split_main not in self.factor_keys:
                     split_main = self.factor_keys[0]
                 res = anova_splitplot_ols(long, self.factor_keys, main_factor=split_main, block_key="BLOCK")
                 residuals = np.array(res.get("residuals", []), dtype=float)
-
         except Exception as ex:
             messagebox.showerror("Помилка аналізу", str(ex))
             return
 
+        # normality on residuals
         try:
             W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
         except Exception:
@@ -1556,6 +1995,7 @@ class SADTk:
         df_whole = res.get("df_whole", np.nan)
         split_main_factor = res.get("main_factor", split_main) if design == "split" else None
 
+        # descriptive
         vstats = variant_mean_sd(long, self.factor_keys)
         v_means = {k: vstats[k][0] for k in vstats.keys()}
         v_sds = {k: vstats[k][1] for k in vstats.keys()}
@@ -1563,14 +2003,15 @@ class SADTk:
 
         means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
         ns1 = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
-        groups1 = {v_names[i]: groups_by_keys(long, tuple(self.factor_keys)).get(variant_order[i], []) for i in range(len(variant_order))}
+        groups1 = {}
+        g_variant = groups_by_keys(long, tuple(self.factor_keys))
+        for i, k in enumerate(variant_order):
+            groups1[v_names[i]] = g_variant.get(k, [])
 
-        # factor groups
         factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
         factor_means = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
         factor_ns = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
 
-        # nonparam descriptives
         factor_medians = {}
         factor_q = {}
         for f in self.factor_keys:
@@ -1587,27 +2028,30 @@ class SADTk:
         v_medians = {}
         v_q = {}
         for i, k in enumerate(variant_order):
-            arr = groups1.get(v_names[i], [])
+            name = v_names[i]
+            arr = groups1.get(name, [])
             med, q1, q3 = median_q1_q3(arr)
             v_medians[k] = med
             v_q[k] = (q1, q3)
 
-        # homogeneity
+        # homogeneity (param only)
         bf_F, bf_p = (np.nan, np.nan)
         if method in ("lsd", "tukey", "duncan", "bonferroni"):
             bf_F, bf_p = brown_forsythe_from_groups(groups1)
 
-        # outputs
-        letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
-        letters_named = {name: "" for name in v_names}
-        pairwise_rows = []
-        factor_pairwise_tables = {}
-
+        # nonparam globals
         kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
+        do_posthoc = True
+
         fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
         wil_stat, wil_p = (np.nan, np.nan)
         rcbd_pairwise_rows = []
         rcbd_sig = {}
+
+        letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
+        letters_named = {name: "" for name in v_names}
+        pairwise_rows = []
+        factor_pairwise_tables = {}
 
         if method == "lsd":
             for f in self.factor_keys:
@@ -1650,10 +2094,15 @@ class SADTk:
             except Exception:
                 kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
 
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p < ALPHA:
+            if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
+                do_posthoc = False
+
+            if do_posthoc:
                 pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
                 med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
                 letters_named = cld_multi_letters(v_names, med_tmp, sig)
+            else:
+                letters_named = {name: "" for name in v_names}
 
         elif method == "mw":
             pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
@@ -1687,6 +2136,8 @@ class SADTk:
                 rcbd_pairwise_rows, rcbd_sig = pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=ALPHA)
                 med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
                 letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
+            else:
+                letters_named = {name: "" for name in v_names}
 
         elif method == "wilcoxon":
             if len(v_names) != 2:
@@ -1718,6 +2169,8 @@ class SADTk:
                 rcbd_sig = {(v_names[0], v_names[1]): True}
                 med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
                 letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
+            else:
+                letters_named = {name: "" for name in v_names}
 
         letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
 
@@ -1752,7 +2205,7 @@ class SADTk:
         method_label = {
             "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
             "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
-            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана (наближення).",
+            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
             "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
             "kw": "Непараметричний аналіз: Kruskal–Wallis.",
             "mw": "Непараметричний аналіз: Mann–Whitney.",
@@ -1776,25 +2229,34 @@ class SADTk:
 
         nonparam = method in ("mw", "kw", "friedman", "wilcoxon")
 
-        if method == "kw" and not (isinstance(kw_p, float) and math.isnan(kw_p)):
-            concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
-            seg.append(("text",
-                        f"Глобальний тест між варіантами (Kruskal–Wallis):\t"
-                        f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n"))
-            seg.append(("text", f"Розмір ефекту (ε²):\t{fmt_num(kw_eps2,4)}\n\n"))
+        if method == "kw":
+            if not (isinstance(kw_p, float) and math.isnan(kw_p)):
+                concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
+                seg.append(("text",
+                            f"Глобальний тест між варіантами (Kruskal–Wallis):\t"
+                            f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n"))
+                seg.append(("text", f"Розмір ефекту (ε²):\t{fmt_num(kw_eps2,4)}\n\n"))
+            else:
+                seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
 
-        if method == "friedman" and not (isinstance(fr_p, float) and math.isnan(fr_p)):
-            concl = "істотна різниця " + significance_mark(fr_p) if fr_p < ALPHA else "-"
-            seg.append(("text",
-                        f"Глобальний тест між варіантами (Friedman):\t"
-                        f"χ²={fmt_num(fr_chi2,4)}; df={int(fr_df)}; p={fmt_num(fr_p,4)}\t{concl}\n"))
-            seg.append(("text", f"Розмір ефекту (Kendall’s W):\t{fmt_num(fr_W,4)}\n\n"))
+        if method == "friedman":
+            if not (isinstance(fr_p, float) and math.isnan(fr_p)):
+                concl = "істотна різниця " + significance_mark(fr_p) if fr_p < ALPHA else "-"
+                seg.append(("text",
+                            f"Глобальний тест між варіантами (Friedman):\t"
+                            f"χ²={fmt_num(fr_chi2,4)}; df={int(fr_df)}; p={fmt_num(fr_p,4)}\t{concl}\n"))
+                seg.append(("text", f"Розмір ефекту (Kendall’s W):\t{fmt_num(fr_W,4)}\n\n"))
+            else:
+                seg.append(("text", "Глобальний тест між варіантами (Friedman):\tн/д\n\n"))
 
-        if method == "wilcoxon" and not (isinstance(wil_p, float) and math.isnan(wil_p)):
-            concl = "істотна різниця " + significance_mark(wil_p) if wil_p < ALPHA else "-"
-            seg.append(("text",
-                        f"Парний тест (Wilcoxon signed-rank):\t"
-                        f"W={fmt_num(wil_stat,4)}; p={fmt_num(wil_p,4)}\t{concl}\n\n"))
+        if method == "wilcoxon":
+            if not (isinstance(wil_p, float) and math.isnan(wil_p)):
+                concl = "істотна різниця " + significance_mark(wil_p) if wil_p < ALPHA else "-"
+                seg.append(("text",
+                            f"Парний тест (Wilcoxon signed-rank):\t"
+                            f"W={fmt_num(wil_stat,4)}; p={fmt_num(wil_p,4)}\t{concl}\n\n"))
+            else:
+                seg.append(("text", "Парний тест (Wilcoxon signed-rank):\tн/д\n\n"))
 
         if not nonparam:
             if not any(math.isnan(x) for x in [bf_F, bf_p]):
@@ -1802,23 +2264,36 @@ class SADTk:
                 seg.append(("text",
                             f"Перевірка однорідності дисперсій (Brown–Forsythe):\t"
                             f"F={fmt_num(bf_F,4)}; p={fmt_num(bf_p,4)}\t{bf_concl}\n\n"))
+            else:
+                seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
 
+            if design == "split":
+                seg.append(("text",
+                            "Примітка (Split-plot):\n"
+                            f"• {self.factor_title(split_main_factor)} перевірено на MS(Блоки×{split_main_factor}) (whole-plot error).\n"
+                            "• Інші ефекти перевірено на MS(Залишок) (sub-plot error).\n\n"))
+
+            # ANOVA table
             anova_rows = []
             for name, SSv, dfv, MSv, Fv, pv in res["table"]:
                 df_txt = str(int(dfv)) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
-                title = name
-                if isinstance(title, str) and title.startswith("Фактор "):
-                    rest = title.replace("Фактор ", "")
-                    parts = rest.split("×")
-                    parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
-                    title = "×".join(parts2)
+                # rename "Фактор A" -> custom
+                name2 = name
+                if isinstance(name2, str) and name2.startswith("Фактор "):
+                    try:
+                        rest = name2.replace("Фактор ", "")
+                        parts = rest.split("×")
+                        parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
+                        name2 = "×".join(parts2)
+                    except Exception:
+                        pass
 
-                if "Залишок" in str(title) or "Загальна" in str(title):
-                    anova_rows.append([title, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
+                if name2.startswith("Залишок") or name2 == "Загальна" or "Whole-plot error" in name2 or name2 == "Блоки":
+                    anova_rows.append([name2, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
                 else:
                     mark = significance_mark(pv)
                     concl = f"істотна різниця {mark}" if mark else "-"
-                    anova_rows.append([title, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
+                    anova_rows.append([name2, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
 
             seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
             seg.append(("table", {
@@ -1862,11 +2337,14 @@ class SADTk:
 
             tno = 5
             if method == "lsd":
-                # мінімальний блок НІР (демо): загальний ( Attachment: можна розширити далі )
-                seg.append(("text", "ТАБЛИЦЯ 5. Значення НІР₀₅ (для факторів та варіантів — як у програмі)\n"))
-                seg.append(("table", {"headers": ["Елемент", "НІР₀₅"], "rows": [["—", "—"]]}))
-                seg.append(("text", "\n"))
-                tno = 6
+                nir_rows = []
+                for key, val in res.get("NIR05", {}).items():
+                    nir_rows.append([key.replace("Фактор ", self.factor_title_map.get(key.replace("Фактор ", ""), "Фактор ")), fmt_num(val, 4)])
+                if nir_rows:
+                    seg.append(("text", "ТАБЛИЦЯ 5. Значення НІР₀₅\n"))
+                    seg.append(("table", {"headers": ["Елемент", "НІР₀₅"], "rows": nir_rows}))
+                    seg.append(("text", "\n"))
+                    tno = 6
 
             for f in self.factor_keys:
                 seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору: {self.factor_title(f)}\n"))
@@ -1907,6 +2385,11 @@ class SADTk:
                     seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
                     seg.append(("text", "\n"))
             else:
+                seg.append(("text",
+                            "Примітка (Split-plot): парні порівняння для повних варіантів (комбінацій факторів)\n"
+                            "не подаються, оскільки для таких порівнянь потрібні спеціальні контрасти та коректний\n"
+                            "облік двох різних помилок (whole-plot і sub-plot). Натомість подано парні порівняння\n"
+                            "на рівні факторів з правильними error-term.\n\n"))
                 if method in ("tukey", "duncan", "bonferroni"):
                     for f in self.factor_keys:
                         rows_pf = factor_pairwise_tables.get(f, [])
@@ -1944,14 +2427,13 @@ class SADTk:
                 med = v_medians.get(k, np.nan)
                 q1, q3 = v_q.get(k, (np.nan, np.nan))
                 rank_m = ranks_by_variant.get(name, np.nan)
-                letter = letters_variants.get(k, "")
                 rows.append([
                     name,
                     str(int(v_ns.get(k, 0))),
                     fmt_num(med, 3),
                     f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
                     fmt_num(rank_m, 2),
-                    (letter if letter else "-")
+                    "-"
                 ])
             seg.append(("table", {
                 "headers": ["Варіант", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"],
@@ -1963,19 +2445,30 @@ class SADTk:
             seg.append(("text", "\n"))
             tno += 1
 
-            if method in ("kw", "mw") and pairwise_rows:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння + ефект (Cliff’s δ)\n"))
-                seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
-                seg.append(("text", "\n"))
+            if method == "kw":
+                if not do_posthoc:
+                    seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
+                else:
+                    if pairwise_rows:
+                        seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння + ефект (Cliff’s δ)\n"))
+                        seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
+                        seg.append(("text", "\n"))
 
-            if method == "friedman" and rcbd_pairwise_rows:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Wilcoxon, Bonferroni)\n"))
-                seg.append(("table", {"headers": ["Комбінація варіантів", "W", "p (Bonf.)", "Істотна різниця", "r"], "rows": rcbd_pairwise_rows}))
-                seg.append(("text", "\n"))
+            if method == "friedman":
+                if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p >= ALPHA:
+                    seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Friedman не виявив істотної різниці (p ≥ 0.05).\n\n"))
+                else:
+                    if rcbd_pairwise_rows:
+                        seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Wilcoxon, Bonferroni) + ефект (r)\n"))
+                        seg.append(("table", {"headers": ["Комбінація варіантів", "W", "p (Bonf.)", "Істотна різниця", "r"], "rows": rcbd_pairwise_rows}))
+                        seg.append(("text", "\n"))
 
         seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
         self.show_report_segments(seg)
 
+    # -------------------------
+    # SHOW REPORT
+    # -------------------------
     def show_report_segments(self, segments):
         if self.report_win and tk.Toplevel.winfo_exists(self.report_win):
             self.report_win.destroy()
@@ -2053,7 +2546,7 @@ class SADTk:
 
 
 # -------------------------
-# RUN (ВАЖЛИВО: лише один блок запуску і він в кінці файлу)
+# Run
 # -------------------------
 if __name__ == "__main__":
     root = tk.Tk()
