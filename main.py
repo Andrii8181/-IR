@@ -1991,18 +1991,18 @@ class SADTk:
     # ---------- Table window ----------
     
 
-def start_analysis(self, factors_count):
-    """
-    Новий порядок:
-      1) обрати факторність,
-      2) задати параметри звіту (показник/одиниці/дизайн/повторні вимірювання),
-      3) відкрити таблицю вводу даних.
-    """
-    params = self.ask_indicator_units()
-    if not params.get("ok"):
-        return
-    self.params_current = params
-    self.open_table(factors_count)
+    def start_analysis(self, factors_count):
+        """
+        Новий порядок:
+          1) обрати факторність,
+          2) задати параметри звіту (показник/одиниці/дизайн/повторні вимірювання),
+          3) відкрити таблицю вводу даних.
+        """
+        params = self.ask_indicator_units()
+        if not params.get("ok"):
+            return
+        self.params_current = params
+        self.open_table(factors_count)
 
 
     def open_table(self, factors_count):
