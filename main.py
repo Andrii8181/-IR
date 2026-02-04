@@ -903,7 +903,7 @@ def _ss_terms(y, X_full, term_slices):
     return results, sse_full, df_e_full, mse_full, resid
 
 def build_effect_strength_rows(anova_table):
-    # anova_table: list rows [name, SS, df, MS, F, p]
+    # anova_table: list rows [name,     SS,     df, MS, F, p]
     ss_total = 0.0
     for row in anova_table:
         name, SSv, *_ = row
