@@ -398,9 +398,7 @@ def build_table_block(headers, rows):
     lines.append("	".join("—" * max(3, col_w[j]) for j in range(ncol)))
     for r in rows:
         lines.append("	".join(ccell(v) for v in r))
-    return "
-".join(lines) + "
-"
+    return "\n".join(lines) + "\n"
 
 def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extra_gap_after_col=None, extra_gap_px=0):
     ncol = len(headers)
