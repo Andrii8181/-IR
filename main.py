@@ -2462,7 +2462,7 @@ class SADTk:
 
             seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
             seg.append(("table", {
-                "headers": ["Джерело", "    SS", "df", "MS", "F", "p", "Висновок"],
+                "headers": ["Джерело", "        SS", "df", "MS", "F", "p", "Висновок"],
                 "rows": anova_rows,
                 "padding_px": 32,
                 "extra_gap_after_col": 0,
