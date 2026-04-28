@@ -1,2991 +1,2026 @@
-# main.py
+# main.py  — S.A.D. v2.0
 # -*- coding: utf-8 -*-
 """
-S.A.D. — Статистичний аналіз даних (Tkinter)
-
-Потрібно: Python 3.8+, numpy, scipy, openpyxl
-Встановлення: pip install numpy scipy openpyxl
+S.A.D. — Статистичний аналіз даних  v2.0
+Залежності: pip install numpy scipy openpyxl matplotlib pillow
 """
-
-import os
-import sys
-import math
+import os, sys, math, json, io
 import numpy as np
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, colorchooser
 from tkinter.scrolledtext import ScrolledText
 import tkinter.font as tkfont
 from itertools import combinations
 from collections import defaultdict
 from datetime import datetime
 
-from scipy.stats import shapiro, kruskal, mannwhitneyu, friedmanchisquare, wilcoxon
+from scipy.stats import (shapiro, kruskal, mannwhitneyu, friedmanchisquare,
+                         wilcoxon, levene)
 from scipy.stats import f as f_dist, t as t_dist, norm
 from scipy.stats import studentized_range
 
-# openpyxl для завантаження Excel файлів
 try:
     import openpyxl
     HAS_OPENPYXL = True
 except ImportError:
     HAS_OPENPYXL = False
 
-import io
-import tempfile
-
-# matplotlib (graphical report)
 try:
     from matplotlib.figure import Figure
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    import matplotlib.pyplot as _plt
+    import matplotlib.patches as mpatches
+    HAS_MPL = True
 except Exception:
-    Figure = None
-    FigureCanvasTkAgg = None
-    NavigationToolbar2Tk = None
+    HAS_MPL = False; Figure = None; FigureCanvasTkAgg = None
 
-# Pillow for clipboard (optional)
 try:
-    from PIL import Image
+    from PIL import Image as _PILImage
+    HAS_PIL = True
 except Exception:
-    Image = None
+    HAS_PIL = False
 
-ALPHA = 0.05
-COL_W = 10
+ALPHA   = 0.05
+COL_W   = 10
+APP_VER = "2.0"
 
-# -------------------------
-# DPI awareness (Windows)
-# -------------------------
+# ── APA-style matplotlib defaults ────────────────────────────
+if HAS_MPL:
+    import matplotlib
+    matplotlib.rcParams.update({
+        'font.family':        'serif',
+        'font.serif':         ['Times New Roman','Times','DejaVu Serif'],
+        'font.size':          11,
+        'axes.titlesize':     12,
+        'axes.labelsize':     11,
+        'xtick.labelsize':    10,
+        'ytick.labelsize':    10,
+        'axes.linewidth':     0.8,
+        'axes.spines.top':    False,
+        'axes.spines.right':  False,
+        'figure.dpi':         100,
+    })
+
+# ── DPI awareness ────────────────────────────────────────────
 try:
     import ctypes
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    try:    ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
-except Exception:
-    pass
+        try: ctypes.windll.user32.SetProcessDPIAware()
+        except Exception: pass
+except Exception: pass
 
-
-# -------------------------
-# ICON (robust search)
-# -------------------------
-def _script_dir():
+# ── Icon ─────────────────────────────────────────────────────
+def _find_icon():
+    dirs=[os.getcwd()]
+    try: dirs.insert(0,os.path.dirname(os.path.abspath(__file__)))
+    except Exception: pass
     try:
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            return sys._MEIPASS
-    except Exception:
-        pass
-    try:
-        return os.path.dirname(os.path.abspath(__file__))
-    except Exception:
-        return os.getcwd()
-
-def _exe_dir():
-    try:
-        return os.path.dirname(os.path.abspath(sys.executable))
-    except Exception:
-        return None
-
-def _argv0_dir():
-    try:
-        p = sys.argv[0]
-        if not p:
-            return None
-        return os.path.dirname(os.path.abspath(p))
-    except Exception:
-        return None
-
-def _find_icon_file():
-    candidates = []
-    for base in [_script_dir(), os.getcwd(), _argv0_dir(), _exe_dir()]:
-        if base:
-            candidates.append(os.path.join(base, "icon.ico"))
-    try:
-        if hasattr(sys, "_MEIPASS"):
-            candidates.append(os.path.join(sys._MEIPASS, "icon.ico"))
-    except Exception:
-        pass
-    for p in candidates:
-        if p and os.path.exists(p):
-            return p
+        if hasattr(sys,"_MEIPASS"): dirs.append(sys._MEIPASS)
+    except Exception: pass
+    for d in dirs:
+        p=os.path.join(d,"icon.ico")
+        if os.path.exists(p): return p
     return None
 
-def set_window_icon(win: tk.Tk | tk.Toplevel):
-    ico = _find_icon_file()
-    if not ico:
-        return
-    try:
-        win.iconbitmap(ico)
-        return
+def set_icon(win):
+    ico=_find_icon()
+    if not ico: return
+    try: win.iconbitmap(ico)
     except Exception:
-        pass
+        try: win.iconbitmap(default=ico)
+        except Exception: pass
+
+# ── Clipboard PNG → Windows ───────────────────────────────────
+def _copy_fig_to_clipboard(fig):
+    if not (HAS_MPL and HAS_PIL): return False,"Потрібні matplotlib і Pillow"
     try:
-        win.iconbitmap(default=ico)
-        return
-    except Exception:
-        pass
+        buf=io.BytesIO(); fig.savefig(buf,format="png",dpi=300,bbox_inches="tight"); buf.seek(0)
+        pil=_PILImage.open(buf)
+        ok,msg=_copy_pil_win(pil); buf.close(); return ok,msg
+    except Exception as ex: return False,str(ex)
 
-
-# -------------------------
-# Clipboard helper (PNG -> Windows clipboard as DIB)
-# -------------------------
-def _copy_pil_image_to_clipboard_windows(pil_img):
+def _copy_pil_win(pil_img):
+    try: import ctypes; from ctypes import wintypes
+    except Exception: return False,"ctypes недоступний"
+    if sys.platform!="win32": return False,"Лише для Windows"
+    if pil_img is None: return False,"Немає зображення"
     try:
-        import ctypes
-        from ctypes import wintypes
-        import io
-    except Exception:
-        return False, "ctypes/IO недоступні."
-
-    if sys.platform != "win32":
-        return False, "Копіювання у буфер реалізовано лише для Windows."
-
-    if pil_img is None:
-        return False, "Немає зображення для копіювання."
-
+        buf=io.BytesIO(); pil_img.convert("RGB").save(buf,"BMP"); bmp=buf.getvalue()
+        if len(bmp)<=14: return False,"BMP помилка"
+        data=bmp[14:]
+    except Exception as ex: return False,str(ex)
+    u32=ctypes.WinDLL("user32",use_last_error=True)
+    k32=ctypes.WinDLL("kernel32",use_last_error=True)
+    u32.OpenClipboard.argtypes=[wintypes.HWND];         u32.OpenClipboard.restype=wintypes.BOOL
+    u32.CloseClipboard.argtypes=[];                     u32.CloseClipboard.restype=wintypes.BOOL
+    u32.EmptyClipboard.argtypes=[];                     u32.EmptyClipboard.restype=wintypes.BOOL
+    u32.SetClipboardData.argtypes=[wintypes.UINT,wintypes.HANDLE]; u32.SetClipboardData.restype=wintypes.HANDLE
+    k32.GlobalAlloc.argtypes=[wintypes.UINT,ctypes.c_size_t]; k32.GlobalAlloc.restype=wintypes.HGLOBAL
+    k32.GlobalLock.argtypes=[wintypes.HGLOBAL];         k32.GlobalLock.restype=wintypes.LPVOID
+    k32.GlobalUnlock.argtypes=[wintypes.HGLOBAL];       k32.GlobalUnlock.restype=wintypes.BOOL
+    k32.GlobalFree.argtypes=[wintypes.HGLOBAL];         k32.GlobalFree.restype=wintypes.HGLOBAL
+    if not u32.OpenClipboard(None): return False,f"OpenClipboard err {ctypes.get_last_error()}"
     try:
-        with io.BytesIO() as output:
-            pil_img.convert("RGB").save(output, "BMP")
-            bmp = output.getvalue()
-        if len(bmp) <= 14:
-            return False, "Невірний BMP буфер."
-        data = bmp[14:]
-    except Exception as ex:
-        return False, f"Не вдалося підготувати зображення: {ex}"
+        u32.EmptyClipboard()
+        hg=k32.GlobalAlloc(0x0042,len(data))
+        if not hg: return False,"GlobalAlloc failed"
+        pg=k32.GlobalLock(hg)
+        if not pg: k32.GlobalFree(hg); return False,"GlobalLock failed"
+        try: ctypes.memmove(pg,data,len(data))
+        finally: k32.GlobalUnlock(hg)
+        if not u32.SetClipboardData(8,hg): k32.GlobalFree(hg); return False,"SetClipboardData failed"
+        return True,""
+    finally: u32.CloseClipboard()
 
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+# ═══════════════════════════════════════════════════════════════
+# SMALL STAT HELPERS
+# ═══════════════════════════════════════════════════════════════
+def sig_mark(p):
+    if p is None or (isinstance(p,float) and math.isnan(p)): return ""
+    return "**" if p<0.01 else ("*" if p<0.05 else "")
 
-    user32.OpenClipboard.argtypes = [wintypes.HWND]
-    user32.OpenClipboard.restype  = wintypes.BOOL
-    user32.CloseClipboard.argtypes = []
-    user32.CloseClipboard.restype  = wintypes.BOOL
-    user32.EmptyClipboard.argtypes = []
-    user32.EmptyClipboard.restype  = wintypes.BOOL
-    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
-    user32.SetClipboardData.restype  = wintypes.HANDLE
+def norm_txt(p):
+    if p is None or (isinstance(p,float) and math.isnan(p)): return "н/д"
+    return "нормальний розподіл" if p>0.05 else "ненормальний розподіл"
 
-    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-    kernel32.GlobalAlloc.restype  = wintypes.HGLOBAL
-    kernel32.GlobalLock.argtypes  = [wintypes.HGLOBAL]
-    kernel32.GlobalLock.restype   = wintypes.LPVOID
-    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
-    kernel32.GlobalUnlock.restype  = wintypes.BOOL
-    kernel32.GlobalFree.argtypes  = [wintypes.HGLOBAL]
-    kernel32.GlobalFree.restype   = wintypes.HGLOBAL
+def fmt(x,nd=3):
+    if x is None or (isinstance(x,float) and math.isnan(x)): return ""
+    try: return f"{float(x):.{nd}f}"
+    except: return ""
 
-    CF_DIB = 8
-    GMEM_MOVEABLE = 0x0002
-    GMEM_ZEROINIT = 0x0040
-
-    if not user32.OpenClipboard(None):
-        err = ctypes.get_last_error()
-        return False, f"Не вдалося відкрити буфер обміну (код {err})."
-    try:
-        user32.EmptyClipboard()
-        h_global = kernel32.GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, len(data))
-        if not h_global:
-            err = ctypes.get_last_error()
-            return False, f"GlobalAlloc не спрацював (код {err})."
-        p_global = kernel32.GlobalLock(h_global)
-        if not p_global:
-            err = ctypes.get_last_error()
-            kernel32.GlobalFree(h_global)
-            return False, f"GlobalLock не спрацював (код {err})."
-        try:
-            ctypes.memmove(p_global, data, len(data))
-        finally:
-            kernel32.GlobalUnlock(h_global)
-        if not user32.SetClipboardData(CF_DIB, h_global):
-            err = ctypes.get_last_error()
-            kernel32.GlobalFree(h_global)
-            return False, f"SetClipboardData не спрацював (код {err})."
-        return True, ""
-    finally:
-        user32.CloseClipboard()
-
-def copy_figure_png_to_clipboard(fig):
-    if Figure is None or Image is None:
-        return False, "Для копіювання потрібні matplotlib та Pillow."
-    try:
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-        buf.seek(0)
-        pil = Image.open(buf)
-        ok, msg = _copy_pil_image_to_clipboard_windows(pil)
-        buf.close()
-        return ok, msg
-    except Exception as ex:
-        return False, str(ex)
-
-def save_figure_png(fig, filepath):
-    if Figure is None:
-        raise RuntimeError("matplotlib недоступний.")
-    fig.savefig(filepath, format="png", dpi=300, bbox_inches="tight")
-
-# -------------------------
-# Small helpers
-# -------------------------
-def significance_mark(p):
-    if p is None or (isinstance(p, float) and math.isnan(p)):
-        return ""
-    if p < 0.01:
-        return "**"
-    if p < 0.05:
-        return "*"
-    return ""
-
-def normality_text(p):
-    if p is None or (isinstance(p, float) and math.isnan(p)):
-        return "н/д"
-    return "нормальний розподіл" if p > 0.05 else "не нормальний розподіл"
-
-def fmt_num(x, nd=3):
-    if x is None or (isinstance(x, float) and math.isnan(x)):
-        return ""
-    try:
-        return f"{float(x):.{nd}f}"
-    except Exception:
-        return ""
-
-def first_seen_order(seq):
-    seen = set()
-    out = []
+def first_seen(seq):
+    seen,out=set(),[]
     for x in seq:
-        if x not in seen:
-            seen.add(x)
-            out.append(x)
+        if x not in seen: seen.add(x); out.append(x)
     return out
 
-def center_window(win):
+def center_win(win):
     win.update_idletasks()
-    w = win.winfo_width()
-    h = win.winfo_height()
-    sw = win.winfo_screenwidth()
-    sh = win.winfo_screenheight()
-    x = (sw - w) // 2
-    y = (sh - h) // 2
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    w,h=win.winfo_width(),win.winfo_height()
+    sw,sh=win.winfo_screenwidth(),win.winfo_screenheight()
+    win.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
 
-def median_q1_q3(arr):
-    if arr is None or len(arr) == 0:
-        return (np.nan, np.nan, np.nan)
-    a = np.array(arr, dtype=float)
-    a = a[~np.isnan(a)]
-    if len(a) == 0:
-        return (np.nan, np.nan, np.nan)
-    med = float(np.median(a))
-    q1 = float(np.percentile(a, 25))
-    q3 = float(np.percentile(a, 75))
-    return med, q1, q3
+def median_q(arr):
+    if not arr: return np.nan,np.nan,np.nan
+    a=np.array(arr,dtype=float); a=a[~np.isnan(a)]
+    if len(a)==0: return np.nan,np.nan,np.nan
+    return float(np.median(a)),float(np.percentile(a,25)),float(np.percentile(a,75))
 
-def cv_percent_from_values(values):
-    a = np.array(values, dtype=float)
-    a = a[~np.isnan(a)]
-    if len(a) < 2:
-        return np.nan
-    m = float(np.mean(a))
-    if m == 0:
-        return np.nan
-    sd = float(np.std(a, ddof=1))
-    return (sd / m) * 100.0
+def cv_vals(vals):
+    a=np.array(vals,dtype=float); a=a[~np.isnan(a)]
+    if len(a)<2: return np.nan
+    m=float(np.mean(a)); return np.nan if m==0 else float(np.std(a,ddof=1)/m*100)
 
-def cv_percent_from_level_means(level_means):
-    vals = [float(x) for x in level_means if x is not None and not (isinstance(x, float) and math.isnan(x))]
-    if len(vals) < 2:
-        return np.nan
-    m = float(np.mean(vals))
-    if m == 0:
-        return np.nan
-    sd = float(np.std(vals, ddof=1))
-    return (sd / m) * 100.0
+def cv_means(means):
+    v=[float(x) for x in means if x is not None and not (isinstance(x,float) and math.isnan(x))]
+    if len(v)<2: return np.nan
+    m=float(np.mean(v)); return np.nan if m==0 else float(np.std(v,ddof=1)/m*100)
 
-def partial_eta2_label(pe2: float) -> str:
-    if pe2 is None or (isinstance(pe2, float) and math.isnan(pe2)):
-        return ""
-    if pe2 < 0.01:
-        return "дуже слабкий"
-    if pe2 < 0.06:
-        return "слабкий"
-    if pe2 < 0.14:
-        return "середній"
+def eta2_label(pe2):
+    if pe2 is None or math.isnan(pe2): return ""
+    if pe2<0.01: return "дуже слабкий"
+    if pe2<0.06: return "слабкий"
+    if pe2<0.14: return "середній"
     return "сильний"
 
-def epsilon_squared_kw(H: float, n: int, k: int) -> float:
-    if any(x is None for x in [H, n, k]):
-        return np.nan
-    if isinstance(H, float) and math.isnan(H):
-        return np.nan
-    if n <= k or k < 2:
-        return np.nan
-    return float((H - k + 1.0) / (n - k))
+def eps2_kw(H,n,k):
+    if any(x is None for x in [H,n,k]) or math.isnan(H) or n<=k or k<2: return np.nan
+    return float((H-k+1)/(n-k))
 
-def kendalls_w_from_friedman(chisq: float, n_blocks: int, k_treat: int) -> float:
-    if any(x is None for x in [chisq, n_blocks, k_treat]):
-        return np.nan
-    if isinstance(chisq, float) and math.isnan(chisq):
-        return np.nan
-    if n_blocks <= 0 or k_treat <= 1:
-        return np.nan
-    return float(chisq / (n_blocks * (k_treat - 1)))
+def kendalls_w(chisq,nb,kt):
+    if any(x is None for x in [chisq,nb,kt]) or math.isnan(chisq) or nb<=0 or kt<=1: return np.nan
+    return float(chisq/(nb*(kt-1)))
 
-def cliffs_delta(x, y):
-    x = np.array(x, dtype=float)
-    y = np.array(y, dtype=float)
-    x = x[~np.isnan(x)]
-    y = y[~np.isnan(y)]
-    nx, ny = len(x), len(y)
-    if nx == 0 or ny == 0:
-        return np.nan
-    # vectorized version
-    gt = int(np.sum(x[:, None] > y[None, :]))
-    lt = int(np.sum(x[:, None] < y[None, :]))
-    return float((gt - lt) / (nx * ny))
+def cliffs_d(x,y):
+    x=np.array(x,dtype=float); y=np.array(y,dtype=float)
+    x=x[~np.isnan(x)]; y=y[~np.isnan(y)]
+    nx,ny=len(x),len(y)
+    if nx==0 or ny==0: return np.nan
+    gt=int(np.sum(x[:,None]>y[None,:])); lt=int(np.sum(x[:,None]<y[None,:]))
+    return float((gt-lt)/(nx*ny))
 
-def cliffs_label(delta_abs: float) -> str:
-    if delta_abs is None or (isinstance(delta_abs, float) and math.isnan(delta_abs)):
-        return ""
-    if delta_abs < 0.147:
-        return "дуже слабкий"
-    if delta_abs < 0.33:
-        return "слабкий"
-    if delta_abs < 0.474:
-        return "середній"
+def cliffs_lbl(d):
+    if d is None or math.isnan(d): return ""
+    if d<0.147: return "дуже слабкий"
+    if d<0.33:  return "слабкий"
+    if d<0.474: return "середній"
     return "сильний"
 
+# ═══════════════════════════════════════════════════════════════
+# REPORT — Treeview-based tables (no column drift)
+# ═══════════════════════════════════════════════════════════════
+def make_tv_table(parent, headers, rows, min_col_px=90):
+    """Return a Frame containing a fixed-column Treeview table."""
+    frame=tk.Frame(parent, bd=1, relief=tk.SUNKEN)
+    vsb=ttk.Scrollbar(frame,orient="vertical")
+    hsb=ttk.Scrollbar(frame,orient="horizontal")
+    tv=ttk.Treeview(frame,columns=headers,show="headings",
+                    yscrollcommand=vsb.set,xscrollcommand=hsb.set,
+                    height=min(len(rows)+1,22))
+    vsb.config(command=tv.yview); hsb.config(command=tv.xview)
+    vsb.pack(side=tk.RIGHT,fill=tk.Y)
+    hsb.pack(side=tk.BOTTOM,fill=tk.X)
+    tv.pack(fill=tk.BOTH,expand=True)
+    fnt=tkfont.Font(family="Times New Roman",size=11)
+    for i,h in enumerate(headers):
+        cw=max(fnt.measure(str(h))+24, min_col_px,
+               max((fnt.measure(str(r[i] if i<len(r) else ""))+20) for r in rows) if rows else min_col_px)
+        tv.heading(h,text=str(h),anchor="center")
+        tv.column(h,width=cw,minwidth=50,anchor="center",stretch=True)
+    for row in rows:
+        tv.insert("","end",values=[("" if v is None else str(v)) for v in row])
+    style=ttk.Style()
+    style.configure("Treeview",font=("Times New Roman",11),rowheight=22)
+    style.configure("Treeview.Heading",font=("Times New Roman",11,"bold"))
+    return frame, tv
 
-# -------------------------
-# Text table helpers (report)
-# -------------------------
-def build_table_block(headers, rows):
-    def ccell(x):
-        return "" if x is None else str(x)
-
-    ncol = len(headers)
-    col_w = [len(str(h)) for h in headers]
-    for r in rows:
-        for j in range(ncol):
-            try:
-                col_w[j] = max(col_w[j], len(ccell(r[j])))
-            except Exception:
-                pass
-
-    lines = []
-    lines.append("	".join(str(h) for h in headers))
-    lines.append("	".join("—" * max(3, col_w[j]) for j in range(ncol)))
-    for r in rows:
-        lines.append("	".join(ccell(v) for v in r))
-    return "\n".join(lines) + "\n"
-
-def tabs_from_table_px(font_obj: tkfont.Font, headers, rows, padding_px=32, extra_gap_after_col=None, extra_gap_px=0):
-    ncol = len(headers)
-    maxw = [0] * ncol
-
-    for j in range(ncol):
-        maxw[j] = font_obj.measure(str(headers[j]))
-
-    for r in rows:
-        for j in range(ncol):
-            s = "" if r[j] is None else str(r[j])
-            w = font_obj.measure(s)
-            if w > maxw[j]:
-                maxw[j] = w
-
-    widths = [w + padding_px for w in maxw]
-
-    tabs = []
-    acc = 0
-    for j, w in enumerate(widths[:-1]):
-        acc += w
-        if extra_gap_after_col is not None and j == extra_gap_after_col:
-            acc += extra_gap_px
-        tabs.append(acc)
-    return tuple(tabs)
-
-def fit_font_size_to_texts(texts, family="Times New Roman", start=13, min_size=9, target_px=155):
-    f = tkfont.Font(family=family, size=start)
-    size = start
-    while size > min_size:
-        maxw = max(f.measure(t) for t in texts)
-        if maxw <= target_px:
-            break
-        size -= 1
-        f.configure(size=size)
-    return f
-
-
-# -------------------------
-# Data grouping helpers
-# -------------------------
-def groups_by_keys(long, keys):
-    g = defaultdict(list)
+# ═══════════════════════════════════════════════════════════════
+# DATA HELPERS
+# ═══════════════════════════════════════════════════════════════
+def groups_by(long,keys):
+    g=defaultdict(list)
     for r in long:
-        v = r.get("value", np.nan)
-        if v is None or math.isnan(v):
-            continue
-        k = tuple(r.get(x) for x in keys)
-        g[k].append(float(v))
+        v=r.get("value",np.nan)
+        if v is None or math.isnan(v): continue
+        g[tuple(r.get(x) for x in keys)].append(float(v))
     return g
 
-def variant_mean_sd(long, factor_keys):
-    vals = defaultdict(list)
+def vstats(long,fkeys):
+    vals=defaultdict(list)
     for r in long:
-        v = r.get("value", np.nan)
-        if v is None or math.isnan(v):
-            continue
-        k = tuple(r.get(k) for k in factor_keys)
-        vals[k].append(float(v))
-    out = {}
-    for k, arr in vals.items():
-        n = len(arr)
-        m = float(np.mean(arr)) if n > 0 else np.nan
-        if n >= 2:
-            sd = float(np.std(arr, ddof=1))
-        elif n == 1:
-            sd = 0.0
-        else:
-            sd = np.nan
-        out[k] = (m, sd, n)
+        v=r.get("value",np.nan)
+        if v is None or math.isnan(v): continue
+        vals[tuple(r.get(k) for k in fkeys)].append(float(v))
+    out={}
+    for k,a in vals.items():
+        n=len(a); m=float(np.mean(a)) if n else np.nan
+        sd=float(np.std(a,ddof=1)) if n>=2 else (0. if n==1 else np.nan)
+        out[k]=(m,sd,n)
     return out
 
-def mean_ranks_by_key(long, key_func):
-    vals = []
-    keys = []
+def mean_ranks(long,keyfn):
+    vals=[]; ks=[]
     for r in long:
-        v = r.get("value", np.nan)
-        if v is None or math.isnan(v):
-            continue
-        vals.append(float(v))
-        keys.append(key_func(r))
-    if len(vals) == 0:
-        return {}
-    order = np.argsort(vals)
-    ranks = np.empty(len(vals), dtype=float)
-    sorted_vals = np.array(vals)[order]
-    i = 0
-    while i < len(sorted_vals):
-        j = i
-        while j < len(sorted_vals) and sorted_vals[j] == sorted_vals[i]:
-            j += 1
-        avg_rank = (i + 1 + j) / 2.0
-        ranks[order[i:j]] = avg_rank
-        i = j
-    agg = defaultdict(list)
-    for k, rnk in zip(keys, ranks):
-        agg[k].append(float(rnk))
-    return {k: float(np.mean(v)) for k, v in agg.items()}
+        v=r.get("value",np.nan)
+        if v is None or math.isnan(v): continue
+        vals.append(float(v)); ks.append(keyfn(r))
+    if not vals: return {}
+    order=np.argsort(vals); sv=np.array(vals)[order]
+    ranks=np.empty(len(vals),dtype=float)
+    i=0
+    while i<len(sv):
+        j=i
+        while j<len(sv) and sv[j]==sv[i]: j+=1
+        ar=(i+1+j)/2.; ranks[order[i:j]]=ar; i=j
+    agg=defaultdict(list)
+    for k,rk in zip(ks,ranks): agg[k].append(float(rk))
+    return {k:float(np.mean(v)) for k,v in agg.items()}
 
-
-# -------------------------
-# CLD letters
-# -------------------------
-def cld_multi_letters(levels_order, means_dict, sig_matrix):
-    valid = [lvl for lvl in levels_order if not math.isnan(means_dict.get(lvl, np.nan))]
-    if not valid:
-        return {lvl: "" for lvl in levels_order}
-
-    sorted_lvls = sorted(valid, key=lambda z: means_dict[z], reverse=True)
-
-    def is_sig(x, y):
-        if x == y:
-            return False
-        return bool(sig_matrix.get((x, y), False) or sig_matrix.get((y, x), False))
-
-    groups = []
-    for lvl in sorted_lvls:
-        compatible = []
-        for gi, grp in enumerate(groups):
-            if all(not is_sig(lvl, other) for other in grp):
-                compatible.append(gi)
-        if not compatible:
-            groups.append(set([lvl]))
+# ═══════════════════════════════════════════════════════════════
+# CLD
+# ═══════════════════════════════════════════════════════════════
+def cld(levels_order,means_dict,sig_matrix):
+    valid=[l for l in levels_order if not math.isnan(means_dict.get(l,np.nan))]
+    if not valid: return {l:"" for l in levels_order}
+    sl=sorted(valid,key=lambda z:means_dict[z],reverse=True)
+    def sig(a,b): return bool(sig_matrix.get((a,b),False) or sig_matrix.get((b,a),False))
+    groups=[]
+    for lv in sl:
+        compat=[gi for gi,g in enumerate(groups) if all(not sig(lv,o) for o in g)]
+        if not compat: groups.append({lv})
         else:
-            for gi in compatible:
-                groups[gi].add(lvl)
-
-    def share_group(a, b):
-        return any((a in g and b in g) for g in groups)
-
-    for i in range(len(sorted_lvls)):
-        for j in range(i + 1, len(sorted_lvls)):
-            a, b = sorted_lvls[i], sorted_lvls[j]
-            if is_sig(a, b):
-                continue
-            if share_group(a, b):
-                continue
-            newg = set([a, b])
-            for c in sorted_lvls:
-                if c in newg:
-                    continue
-                if (not is_sig(c, a)) and (not is_sig(c, b)) and all(not is_sig(c, x) for x in newg):
-                    newg.add(c)
-            groups.append(newg)
-
-    uniq = []
+            for gi in compat: groups[gi].add(lv)
+    def shared(a,b): return any(a in g and b in g for g in groups)
+    for i in range(len(sl)):
+        for j in range(i+1,len(sl)):
+            a,b=sl[i],sl[j]
+            if sig(a,b) or shared(a,b): continue
+            ng={a,b}
+            for c in sl:
+                if c in ng: continue
+                if not sig(c,a) and not sig(c,b) and all(not sig(c,x) for x in ng): ng.add(c)
+            groups.append(ng)
+    uniq=[]
     for g in groups:
-        if any(g == h for h in uniq):
-            continue
-        uniq.append(g)
+        if not any(g==h for h in uniq): uniq.append(g)
+    cleaned=[g for g in uniq if not any(g<h for h in uniq)]
+    alpha_="abcdefghijklmnopqrstuvwxyz"
+    mapping={lv:[] for lv in sl}
+    for gi,g in enumerate(cleaned):
+        lt=alpha_[gi] if gi<len(alpha_) else f"g{gi}"
+        for lv in g: mapping[lv].append(lt)
+    return {lv:"".join(sorted(mapping.get(lv,[]))) for lv in levels_order}
 
-    cleaned = []
-    for g in uniq:
-        if any((g < h) for h in uniq):
-            continue
-        cleaned.append(g)
-    groups = cleaned
+# ═══════════════════════════════════════════════════════════════
+# LEVENE TEST
+# ═══════════════════════════════════════════════════════════════
+def levene_test(groups_dict):
+    arrs=[np.array(v,dtype=float) for v in groups_dict.values() if len(v)>0]
+    if len(arrs)<2: return np.nan,np.nan
+    try:
+        stat,p=levene(*arrs,center='median')
+        return float(stat),float(p)
+    except Exception: return np.nan,np.nan
 
-    alphabet = "abcdefghijklmnopqrstuvwxyz"
-    letters_for_group = []
-    for idx in range(len(groups)):
-        letters_for_group.append(alphabet[idx] if idx < len(alphabet) else f"g{idx}")
-
-    mapping = {lvl: [] for lvl in sorted_lvls}
-    for gi, grp in enumerate(groups):
-        letter = letters_for_group[gi]
-        for lvl in grp:
-            mapping[lvl].append(letter)
-
-    out = {}
-    for lvl in levels_order:
-        out[lvl] = "".join(sorted(mapping.get(lvl, [])))
-    return out
-
-
-# -------------------------
-# Brown–Forsythe
-# -------------------------
-def brown_forsythe_from_groups(groups_dict):
-    arrs = [np.array(v, dtype=float) for v in groups_dict.values() if len(v) > 0]
-    if len(arrs) < 2:
-        return (np.nan, np.nan)
-    z_groups = []
-    for a in arrs:
-        med = np.median(a)
-        z_groups.append(np.abs(a - med))
-    allz = np.concatenate(z_groups)
-    grand = np.mean(allz)
-    ss_between = 0.0
-    ss_within = 0.0
-    n_total = len(allz)
-    k = len(z_groups)
-    for zg in z_groups:
-        ni = len(zg)
-        mi = np.mean(zg)
-        ss_between += ni * (mi - grand) ** 2
-        ss_within += np.sum((zg - mi) ** 2)
-    dfb = k - 1
-    dfw = n_total - k
-    if dfb <= 0 or dfw <= 0 or ss_within <= 0:
-        return (np.nan, np.nan)
-    msb = ss_between / dfb
-    msw = ss_within / dfw
-    F = msb / msw
-    p = float(1.0 - f_dist.cdf(F, dfb, dfw))
-    return (float(F), p)
-
-
-# -------------------------
-# Pairwise helpers (parametric)
-# -------------------------
-def lsd_sig_matrix(levels, means, ns, MS, df, alpha=ALPHA):
-    sig = {}
-    if MS is None or df is None or any(math.isnan(x) for x in [MS, df]):
-        return sig
-    df = int(df)
-    if df <= 0:
-        return sig
-    tcrit = float(t_dist.ppf(1 - alpha / 2.0, df))
-    for a, b in combinations(levels, 2):
-        ma, mb = means.get(a, np.nan), means.get(b, np.nan)
-        na, nb = ns.get(a, 0), ns.get(b, 0)
-        if any(math.isnan(x) for x in [ma, mb]) or na <= 0 or nb <= 0:
-            continue
-        se = math.sqrt(MS * (1.0 / na + 1.0 / nb))
-        lsd = tcrit * se
-        sig[(a, b)] = (abs(ma - mb) > lsd)
+# ═══════════════════════════════════════════════════════════════
+# PAIRWISE — parametric
+# ═══════════════════════════════════════════════════════════════
+def lsd_sig(levels,means,ns,MS,df,alpha=ALPHA):
+    sig={}
+    if MS is None or df is None or math.isnan(MS) or math.isnan(df): return sig
+    df=int(df)
+    if df<=0: return sig
+    tc=float(t_dist.ppf(1-alpha/2,df))
+    for a,b in combinations(levels,2):
+        ma,mb=means.get(a,np.nan),means.get(b,np.nan)
+        na,nb=ns.get(a,0),ns.get(b,0)
+        if any(math.isnan(x) for x in [ma,mb]) or na<=0 or nb<=0: continue
+        se=math.sqrt(MS*(1/na+1/nb))
+        sig[(a,b)]=(abs(ma-mb)>tc*se)
     return sig
 
-def pairwise_param_short_variants_pm(levels, means, ns, MS, df, method, alpha=ALPHA):
-    rows = []
-    sig = {}
-    if MS is None or df is None or any(math.isnan(x) for x in [MS, df]):
-        return rows, sig
-    df = int(df)
-    if df <= 0:
-        return rows, sig
+def pairwise_param(levels,means,ns,MS,df,method,alpha=ALPHA):
+    rows=[]; sig={}
+    if MS is None or df is None or math.isnan(MS) or math.isnan(df): return rows,sig
+    df=int(df)
+    if df<=0: return rows,sig
+    lvls=[x for x in levels if not math.isnan(means.get(x,np.nan)) and ns.get(x,0)>0]
+    m=len(lvls)
+    if m<2: return rows,sig
+    for a,b in combinations(lvls,2):
+        ma,mb=means[a],means[b]; na,nb=ns[a],ns[b]
+        se=math.sqrt(MS*(1/na+1/nb))
+        if se<=0: continue
+        tv=abs(ma-mb)/se; pr=2*(1-float(t_dist.cdf(tv,df)))
+        if method=="bonferroni":       pa=min(1.,pr*(m*(m-1)/2))
+        elif method in ("tukey","duncan"): pa=float(1-studentized_range.cdf(math.sqrt(2)*tv,m,df))
+        else: pa=pr
+        is_s=(pa<alpha); sig[(a,b)]=is_s
+        rows.append([f"{a} vs {b}",fmt(pa,4),
+                     ("істотна різниця "+sig_mark(pa)) if is_s else "-"])
+    return rows,sig
 
-    lvls = [x for x in levels if not math.isnan(means.get(x, np.nan)) and ns.get(x, 0) > 0]
-    if len(lvls) < 2:
-        return rows, sig
-
-    m = len(lvls)
-    for a, b in combinations(lvls, 2):
-        ma, mb = means[a], means[b]
-        na, nb = ns[a], ns[b]
-        se = math.sqrt(MS * (1.0 / na + 1.0 / nb))
-        if se <= 0:
-            continue
-        tval = abs(ma - mb) / se
-        p_raw = 2 * (1 - float(t_dist.cdf(tval, df)))
-
-        if method == "bonferroni":
-            p_adj = min(1.0, p_raw * (m * (m - 1) / 2.0))
-        elif method == "tukey":
-            q = math.sqrt(2.0) * tval
-            p_adj = float(1 - studentized_range.cdf(q, m, df))
-        elif method == "duncan":
-            q = math.sqrt(2.0) * tval
-            p_adj = float(1 - studentized_range.cdf(q, m, df))
-        else:
-            p_adj = p_raw
-
-        is_sig = (p_adj < alpha)
-        sig[(a, b)] = is_sig
-        rows.append([f"{a} vs {b}", fmt_num(p_adj, 4), ("істотна різниця " + significance_mark(p_adj)) if is_sig else "-"])
-    return rows, sig
-
-
-# -------------------------
-# Pairwise helpers (nonparametric)
-# -------------------------
-def pairwise_mw_bonf_with_effect(levels, groups, alpha=ALPHA):
-    rows = []
-    sig = {}
-    lvls = [x for x in levels if len(groups.get(x, [])) > 0]
-    m = len(lvls)
-    if m < 2:
-        return rows, sig
-    mtests = m * (m - 1) / 2.0
-    for a, b in combinations(lvls, 2):
-        x = np.array(groups[a], dtype=float)
-        y = np.array(groups[b], dtype=float)
+# ═══════════════════════════════════════════════════════════════
+# PAIRWISE — nonparametric
+# ═══════════════════════════════════════════════════════════════
+def pairwise_mw(levels,groups,alpha=ALPHA):
+    rows=[]; sig={}
+    lvls=[x for x in levels if len(groups.get(x,[]))>0]
+    m=len(lvls); mt=m*(m-1)/2
+    if m<2: return rows,sig
+    for a,b in combinations(lvls,2):
+        x=np.array(groups[a],dtype=float); y=np.array(groups[b],dtype=float)
         try:
-            U, p = mannwhitneyu(x, y, alternative="two-sided")
-            p_adj = min(1.0, float(p) * mtests)
-            delta = cliffs_delta(x, y)
-            concl = "істотна різниця " + significance_mark(p_adj) if p_adj < alpha else "-"
-            sig[(a, b)] = (p_adj < alpha)
-            rows.append([f"{a} vs {b}", fmt_num(float(U), 3), fmt_num(p_adj, 4), concl, fmt_num(delta, 4), cliffs_label(abs(delta))])
-        except Exception:
-            continue
-    return rows, sig
+            U,p=mannwhitneyu(x,y,alternative="two-sided")
+            pa=min(1.,float(p)*mt); d=cliffs_d(x,y)
+            sig[(a,b)]=(pa<alpha)
+            rows.append([f"{a} vs {b}",fmt(float(U),3),fmt(pa,4),
+                         ("істотна різниця "+sig_mark(pa)) if pa<alpha else "-",
+                         fmt(d,4),cliffs_lbl(abs(d))])
+        except Exception: continue
+    return rows,sig
 
-def pairwise_wilcoxon_bonf(levels, mat_rows, alpha=ALPHA):
-    rows = []
-    sig = {}
-    k = len(levels)
-    if k < 2:
-        return rows, sig
-    mtests = k * (k - 1) / 2.0
-    arr = np.array(mat_rows, dtype=float)
+def pairwise_wilcox(levels,mat,alpha=ALPHA):
+    rows=[]; sig={}
+    k=len(levels); mt=k*(k-1)/2
+    if k<2: return rows,sig
+    arr=np.array(mat,dtype=float)
     for i in range(k):
-        for j in range(i + 1, k):
-            x = arr[:, i]
-            y = arr[:, j]
+        for j in range(i+1,k):
+            x,y=arr[:,i],arr[:,j]
             try:
-                stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
-                p_adj = min(1.0, float(p) * mtests)
-                if p_adj > 0 and p_adj < 1:
-                    z = abs(norm.ppf(p_adj / 2.0))
-                else:
-                    z = 0.0
-                r_eff = z / math.sqrt(len(x)) if len(x) > 0 else np.nan
-                concl = "істотна різниця " + significance_mark(p_adj) if p_adj < alpha else "-"
-                sig[(levels[i], levels[j])] = (p_adj < alpha)
-                rows.append([f"{levels[i]} vs {levels[j]}", fmt_num(float(stat), 3), fmt_num(p_adj, 4), concl, fmt_num(r_eff, 4)])
-            except Exception:
-                continue
-    return rows, sig
+                st,p=wilcoxon(x,y,zero_method="wilcox",alternative="two-sided",mode="auto")
+                pa=min(1.,float(p)*mt)
+                z=abs(norm.ppf(pa/2)) if 0<pa<1 else 0.
+                r=z/math.sqrt(len(x)) if len(x)>0 else np.nan
+                sig[(levels[i],levels[j])]=(pa<alpha)
+                rows.append([f"{levels[i]} vs {levels[j]}",fmt(float(st),3),fmt(pa,4),
+                             ("істотна різниця "+sig_mark(pa)) if pa<alpha else "-",fmt(r,4)])
+            except Exception: continue
+    return rows,sig
 
-
-# -------------------------
-# RCBD matrix builder
-# -------------------------
-def rcbd_matrix_from_long(long, variant_names, block_names, variant_key="VARIANT", block_key="BLOCK"):
-    by_block = defaultdict(dict)
+# ═══════════════════════════════════════════════════════════════
+# RCBD MATRIX
+# ═══════════════════════════════════════════════════════════════
+def rcbd_matrix(long,vnames,bnames,vk="VARIANT",bk="BLOCK"):
+    bb=defaultdict(dict)
     for r in long:
-        v = r.get("value", np.nan)
-        if v is None or math.isnan(v):
-            continue
-        b = r.get(block_key)
-        vname = r.get(variant_key)
-        if b is None or vname is None:
-            continue
-        by_block[b][vname] = float(v)
+        v=r.get("value",np.nan)
+        if v is None or math.isnan(v): continue
+        b=r.get(bk); vn=r.get(vk)
+        if b is None or vn is None: continue
+        bb[b][vn]=float(v)
+    mat=[]; kept=[]
+    for b in bnames:
+        d=bb.get(b,{})
+        if all(vn in d for vn in vnames): mat.append([d[vn] for vn in vnames]); kept.append(b)
+    return mat,kept
 
-    mat = []
-    kept = []
-    for b in block_names:
-        d = by_block.get(b, {})
-        ok = all(vn in d for vn in variant_names)
-        if ok:
-            mat.append([d[vn] for vn in variant_names])
-            kept.append(b)
-    return mat, kept
+# ═══════════════════════════════════════════════════════════════
+# GLM / OLS
+# ═══════════════════════════════════════════════════════════════
+def _encode(col_vals,levels):
+    cols,names=[],[]
+    for lv in levels[1:]:
+        cols.append(np.array([1. if v==lv else 0. for v in col_vals],dtype=float))
+        names.append(str(lv))
+    return cols,names
 
-
-# -------------------------
-# GLM utilities (OLS)
-# -------------------------
-def _encode_factor(col_values, levels):
-    ref = levels[0]
-    cols = []
-    names = []
-    for lvl in levels[1:]:
-        x = np.array([1.0 if v == lvl else 0.0 for v in col_values], dtype=float)
-        cols.append(x)
-        names.append(str(lvl))
-    return cols, names, ref
-
-def _build_full_factorial_design(long, factor_keys, levels_by_factor, extra_terms=None):
-    n = len(long)
-    y = np.array([float(r["value"]) for r in long], dtype=float)
-
-    X_cols = [np.ones(n, dtype=float)]
-    colnames = ["Intercept"]
-    term_slices = {"Intercept": [0]}
-
-    factor_dummy_cols = {}
-    factor_dummy_names = {}
-    for f in factor_keys:
-        vals = [r.get(f) for r in long]
-        lvls = levels_by_factor[f]
-        cols, names, ref = _encode_factor(vals, lvls)
-        factor_dummy_cols[f] = cols
-        factor_dummy_names[f] = names
+def _build_X(long,fkeys,lbf,extra=None):
+    n=len(long); y=np.array([float(r["value"]) for r in long],dtype=float)
+    Xc=[np.ones(n,dtype=float)]; cn=["Intercept"]; ts={"Intercept":[0]}
+    fdc={}; fdn={}
+    for f in fkeys:
+        vals=[r.get(f) for r in long]; cols,names=_encode(vals,lbf[f])
+        fdc[f]=cols; fdn[f]=names
         if cols:
-            idxs = []
-            for c, nm in zip(cols, names):
-                X_cols.append(c)
-                colnames.append(f"{f}:{nm}")
-                idxs.append(len(X_cols) - 1)
-            term_slices[f"Фактор {f}"] = idxs
-        else:
-            term_slices[f"Фактор {f}"] = []
+            idx=[]
+            for c,nm in zip(cols,names): Xc.append(c); cn.append(f"{f}:{nm}"); idx.append(len(Xc)-1)
+            ts[f"Фактор {f}"]=idx
+        else: ts[f"Фактор {f}"]=[]
+    for r2 in range(2,len(fkeys)+1):
+        for cmb in combinations(fkeys,r2):
+            lists=[fdc[f] for f in cmb]; nls=[fdn[f] for f in cmb]
+            if any(len(L)==0 for L in lists): ts["Фактор "+"×".join(cmb)]=[]; continue
+            idx=[]
+            def rec(i,cc,cn_,idx=idx,cmb=cmb,lists=lists,nls=nls):
+                if i==len(lists):
+                    Xc.append(cc); cn.append("×".join(f"{cmb[j]}:{cn_[j]}" for j in range(len(cmb)))); idx.append(len(Xc)-1); return
+                for ci,nm in zip(lists[i],nls[i]): rec(i+1,(ci.copy() if cc is None else cc*ci),cn_+[nm])
+            rec(0,None,[])
+            ts["Фактор "+"×".join(cmb)]=idx
+    if extra:
+        for nm,cols,coln in extra:
+            idx=[]
+            for c,cn_ in zip(cols,coln): Xc.append(c); cn.append(f"{nm}:{cn_}"); idx.append(len(Xc)-1)
+            ts[nm]=idx
+    X=np.column_stack(Xc); return y,X,ts,cn
 
-    def _all_interactions(keys):
-        out = []
-        for r in range(2, len(keys) + 1):
-            for comb in combinations(keys, r):
-                out.append(comb)
-        return out
+def _ols(y,X):
+    beta,*_=np.linalg.lstsq(X,y,rcond=None); yh=X@beta; res=y-yh; sse=float(np.sum(res**2))
+    n,p=X.shape; dfe=n-p; return beta,yh,res,sse,dfe,(sse/dfe if dfe>0 else np.nan)
 
-    for comb in _all_interactions(factor_keys):
-        lists = [factor_dummy_cols[f] for f in comb]
-        names_lists = [factor_dummy_names[f] for f in comb]
-        if any(len(L) == 0 for L in lists):
-            term_slices["Фактор " + "×".join(comb)] = []
-            continue
-        idxs = []
-        def rec_build(i, cur_col, cur_name, idxs=idxs, comb=comb, lists=lists, names_lists=names_lists):
-            if i == len(lists):
-                X_cols.append(cur_col)
-                colnames.append("×".join([f"{comb[j]}:{cur_name[j]}" for j in range(len(comb))]))
-                idxs.append(len(X_cols) - 1)
-                return
-            for ci, nm in zip(lists[i], names_lists[i]):
-                if cur_col is None:
-                    rec_build(i + 1, ci.copy(), cur_name + [nm])
-                else:
-                    rec_build(i + 1, cur_col * ci, cur_name + [nm])
-        rec_build(0, None, [])
-        term_slices["Фактор " + "×".join(comb)] = idxs
+def _ss(y,Xf,ts):
+    _,_,res,sse,dfe,mse=_ols(y,Xf); out={}
+    for term,idx in ts.items():
+        if term=="Intercept": continue
+        if not idx: out[term]=(np.nan,0,np.nan,np.nan,np.nan); continue
+        keep=[i for i in range(Xf.shape[1]) if i not in idx]
+        Xr=Xf[:,keep]; _,_,_,sse_r,_,_=_ols(y,Xr)
+        ss=float(sse_r-sse); df=len(idx); ms=ss/df if df>0 else np.nan
+        F=(ms/mse) if (df>0 and not math.isnan(mse) and mse>0) else np.nan
+        p=float(1-f_dist.cdf(F,df,dfe)) if (not math.isnan(F) and dfe>0) else np.nan
+        out[term]=(ss,df,ms,F,p)
+    return out,sse,dfe,mse,res
 
-    if extra_terms:
-        for name, cols, coln in extra_terms:
-            idxs = []
-            for c, nm in zip(cols, coln):
-                X_cols.append(c)
-                colnames.append(f"{name}:{nm}")
-                idxs.append(len(X_cols) - 1)
-            term_slices[name] = idxs
-
-    X = np.column_stack(X_cols)
-    return y, X, term_slices, colnames
-
-def _ols_fit(y, X):
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    yhat = X @ beta
-    resid = y - yhat
-    sse = float(np.sum(resid ** 2))
-    n, p = X.shape
-    df_e = n - p
-    mse = sse / df_e if df_e > 0 else np.nan
-    return beta, yhat, resid, sse, df_e, mse
-
-def _ss_terms(y, X_full, term_slices):
-    beta, yhat, resid, sse_full, df_e_full, mse_full = _ols_fit(y, X_full)
-    results = {}
-    for term, idxs in term_slices.items():
-        if term == "Intercept":
-            continue
-        if not idxs:
-            results[term] = (np.nan, 0, np.nan, np.nan, np.nan)
-            continue
-        keep = [i for i in range(X_full.shape[1]) if i not in idxs]
-        X_red = X_full[:, keep]
-        _, _, _, sse_red, df_e_red, _ = _ols_fit(y, X_red)
-        ss = float(sse_red - sse_full)
-        df = len(idxs)
-        ms = ss / df if df > 0 else np.nan
-        F = (ms / mse_full) if (df > 0 and not math.isnan(mse_full) and mse_full > 0) else np.nan
-        p = float(1.0 - f_dist.cdf(F, df, df_e_full)) if (not math.isnan(F) and df_e_full > 0) else np.nan
-        results[term] = (ss, df, ms, F, p)
-    return results, sse_full, df_e_full, mse_full, resid
-
-def build_effect_strength_rows(anova_table):
-    ss_total = 0.0
-    for row in anova_table:
-        name, SSv, *_ = row
-        if name == "Загальна":
-            ss_total = float(SSv) if not (SSv is None or (isinstance(SSv, float) and math.isnan(SSv))) else 0.0
-            break
-    if ss_total <= 0:
-        ss_total = 0.0
-        for row in anova_table:
-            if row[0].startswith("Залишок"):
-                continue
-            if row[1] is None or (isinstance(row[1], float) and math.isnan(row[1])):
-                continue
-            ss_total += float(row[1])
-
-    out = []
-    for row in anova_table:
-        name, SSv, *_ = row
-        if name.startswith("Залишок") or name == "Загальна":
-            continue
-        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)):
-            continue
-        pct = (float(SSv) / ss_total * 100.0) if ss_total > 0 else np.nan
-        out.append([name, fmt_num(pct, 2)])
-    return out
-
-def build_partial_eta2_rows_with_label(anova_table):
-    ss_err = None
-    for row in anova_table:
-        if row[0].startswith("Залишок"):
-            ss_err = row[1]
-            break
-    if ss_err is None or (isinstance(ss_err, float) and math.isnan(ss_err)):
-        ss_err = np.nan
-    out = []
-    for row in anova_table:
-        name, SSv, *_ = row
-        if name.startswith("Залишок") or name == "Загальна":
-            continue
-        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)) or (isinstance(ss_err, float) and math.isnan(ss_err)):
-            continue
-        pe2 = float(SSv) / (float(SSv) + float(ss_err)) if (float(SSv) + float(ss_err)) > 0 else np.nan
-        out.append([name, fmt_num(pe2, 4), partial_eta2_label(pe2)])
-    return out
-
-
-# -------------------------
-# CRD / RCBD / Split-plot
-# -------------------------
-def anova_n_way(long, factor_keys, levels_by_factor):
-    y, X, term_slices, colnames = _build_full_factorial_design(long, factor_keys, levels_by_factor)
-    terms, sse, df_e, mse, resid = _ss_terms(y, X, term_slices)
-
-    ss_total = float(np.sum((y - np.mean(y)) ** 2))
-    table = []
-    ordered = []
-    for f in factor_keys:
-        ordered.append(f"Фактор {f}")
-    for r in range(2, len(factor_keys) + 1):
-        for comb in combinations(factor_keys, r):
-            ordered.append("Фактор " + "×".join(comb))
-
-    for name in ordered:
-        ss, df, ms, F, p = terms.get(name, (np.nan, 0, np.nan, np.nan, np.nan))
-        table.append([name, ss, df, ms, F, p])
-
-    table.append(["Залишок", sse, df_e, mse, np.nan, np.nan])
-    table.append(["Загальна", ss_total, len(y) - 1, np.nan, np.nan, np.nan])
-
-    NIR05 = {}
-    if not (math.isnan(mse) or df_e <= 0):
-        tcrit = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_e)))
-        for f in factor_keys:
-            n_level = defaultdict(int)
-            for r in long:
-                if r.get(f) is None:
-                    continue
-                if r.get("value") is None or math.isnan(r.get("value", np.nan)):
-                    continue
-                n_level[r.get(f)] += 1
-            ns = [n for n in n_level.values() if n > 0]
-            if ns:
-                nh = len(ns) / sum(1.0 / n for n in ns)
-                NIR05[f"Фактор {f}"] = tcrit * math.sqrt(2.0 * mse / nh)
-        n_cell = defaultdict(int)
-        for r in long:
-            key = tuple(r.get(f) for f in factor_keys)
-            if r.get("value") is None or math.isnan(r.get("value", np.nan)):
-                continue
-            n_cell[key] += 1
-        ns = [n for n in n_cell.values() if n > 0]
-        if ns:
-            nh = len(ns) / sum(1.0 / n for n in ns)
-            NIR05["Загальна"] = tcrit * math.sqrt(2.0 * mse / nh)
-
-    return {
-        "table": table,
-        "SS_error": sse,
-        "df_error": df_e,
-        "MS_error": mse,
-        "SS_total": ss_total,
-        "residuals": resid.tolist(),
-        "NIR05": NIR05,
-    }
-
-def _block_dummies(long, block_key="BLOCK"):
-    blocks = first_seen_order([r.get(block_key) for r in long if r.get(block_key) is not None])
-    if not blocks:
-        return [], [], blocks
-    cols = []
-    names = []
-    vals = [r.get(block_key) for r in long]
+def _block_dum(long,bk="BLOCK"):
+    blocks=first_seen([r.get(bk) for r in long if r.get(bk) is not None])
+    if not blocks: return [],[],blocks
+    vals=[r.get(bk) for r in long]; cols=[]; names=[]
     for b in blocks[1:]:
-        cols.append(np.array([1.0 if v == b else 0.0 for v in vals], dtype=float))
-        names.append(str(b))
-    return cols, names, blocks
+        cols.append(np.array([1. if v==b else 0. for v in vals],dtype=float)); names.append(str(b))
+    return cols,names,blocks
 
-def anova_rcbd_ols(long, factor_keys, levels_by_factor, block_key="BLOCK"):
-    bcols, bnames, blocks = _block_dummies(long, block_key=block_key)
-    extra = [("Блоки", bcols, bnames)] if bcols else []
-    y, X, term_slices, colnames = _build_full_factorial_design(long, factor_keys, levels_by_factor, extra_terms=extra)
-    terms, sse, df_e, mse, resid = _ss_terms(y, X, term_slices)
-
-    ss_total = float(np.sum((y - np.mean(y)) ** 2))
-    table = []
-
-    if bcols:
-        ss, df, ms, F, p = terms.get("Блоки", (np.nan, 0, np.nan, np.nan, np.nan))
-        table.append(["Блоки", ss, df, ms, F, p])
-
-    ordered = []
-    for f in factor_keys:
-        ordered.append(f"Фактор {f}")
-    for r in range(2, len(factor_keys) + 1):
-        for comb in combinations(factor_keys, r):
-            ordered.append("Фактор " + "×".join(comb))
-    for name in ordered:
-        ss, df, ms, F, p = terms.get(name, (np.nan, 0, np.nan, np.nan, np.nan))
-        table.append([name, ss, df, ms, F, p])
-
-    table.append(["Залишок", sse, df_e, mse, np.nan, np.nan])
-    table.append(["Загальна", ss_total, len(y) - 1, np.nan, np.nan, np.nan])
-
-    NIR05 = {}
-    if not (math.isnan(mse) or df_e <= 0):
-        tcrit = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_e)))
-        for f in factor_keys:
-            n_level = defaultdict(int)
-            for r in long:
-                if r.get(f) is None:
-                    continue
-                if r.get("value") is None or math.isnan(r.get("value", np.nan)):
-                    continue
-                n_level[r.get(f)] += 1
-            ns = [n for n in n_level.values() if n > 0]
-            if ns:
-                nh = len(ns) / sum(1.0 / n for n in ns)
-                NIR05[f"Фактор {f}"] = tcrit * math.sqrt(2.0 * mse / nh)
-        n_cell = defaultdict(int)
+def _nir05(long,fkeys,mse,dfe,lbf):
+    nir={}
+    if math.isnan(mse) or dfe<=0: return nir
+    tc=float(t_dist.ppf(1-ALPHA/2,int(dfe)))
+    for f in fkeys:
+        nl=defaultdict(int)
         for r in long:
-            key = tuple(r.get(f) for f in factor_keys)
-            if r.get("value") is None or math.isnan(r.get("value", np.nan)):
-                continue
-            n_cell[key] += 1
-        ns = [n for n in n_cell.values() if n > 0]
-        if ns:
-            nh = len(ns) / sum(1.0 / n for n in ns)
-            NIR05["Загальна"] = tcrit * math.sqrt(2.0 * mse / nh)
+            v=r.get("value",np.nan)
+            if v is None or math.isnan(v): continue
+            if r.get(f): nl[r[f]]+=1
+        ns=[n for n in nl.values() if n>0]
+        if ns: nir[f"Фактор {f}"]=tc*math.sqrt(2*mse/(len(ns)/sum(1/n for n in ns)))
+    nc=defaultdict(int)
+    for r in long:
+        v=r.get("value",np.nan)
+        if v is None or math.isnan(v): continue
+        nc[tuple(r.get(f) for f in fkeys)]+=1
+    ns=[n for n in nc.values() if n>0]
+    if ns: nir["Загальна"]=tc*math.sqrt(2*mse/(len(ns)/sum(1/n for n in ns)))
+    return nir
 
-    return {
-        "table": table,
-        "SS_error": sse,
-        "df_error": df_e,
-        "MS_error": mse,
-        "SS_total": ss_total,
-        "residuals": resid.tolist(),
-        "NIR05": NIR05,
-    }
+def build_eff_rows(table):
+    ss_tot=0.
+    for row in table:
+        if row[0]=="Загальна" and row[1] is not None and not (isinstance(row[1],float) and math.isnan(row[1])):
+            ss_tot=float(row[1]); break
+    if ss_tot<=0:
+        ss_tot=sum(float(r[1]) for r in table if r[1] is not None
+                   and not (isinstance(r[1],float) and math.isnan(r[1])) and not r[0].startswith("Залишок"))
+    out=[]
+    for row in table:
+        nm,SSv=row[0],row[1]
+        if nm.startswith("Залишок") or nm=="Загальна": continue
+        if SSv is None or (isinstance(SSv,float) and math.isnan(SSv)): continue
+        out.append([nm,fmt((float(SSv)/ss_tot*100) if ss_tot>0 else np.nan,2)])
+    return out
 
-def anova_splitplot_ols(long, factor_keys, main_factor="A", block_key="BLOCK"):
-    if main_factor not in factor_keys:
-        main_factor = factor_keys[0]
+def build_pe2_rows(table):
+    ss_err=np.nan
+    for row in table:
+        if row[0].startswith("Залишок"): ss_err=row[1]; break
+    out=[]
+    for row in table:
+        nm,SSv=row[0],row[1]
+        if nm.startswith("Залишок") or nm=="Загальна": continue
+        if SSv is None or (isinstance(SSv,float) and math.isnan(SSv)): continue
+        if isinstance(ss_err,float) and math.isnan(ss_err): continue
+        d=float(SSv)+float(ss_err); pe2=float(SSv)/d if d>0 else np.nan
+        out.append([nm,fmt(pe2,4),eta2_label(pe2)])
+    return out
 
-    bcols, bnames, blocks = _block_dummies(long, block_key=block_key)
+# ═══════════════════════════════════════════════════════════════
+# ANOVA MODELS
+# ═══════════════════════════════════════════════════════════════
+def anova_crd(long,fkeys,lbf):
+    y,X,ts,_=_build_X(long,fkeys,lbf)
+    terms,sse,dfe,mse,res=_ss(y,X,ts)
+    sst=float(np.sum((y-np.mean(y))**2))
+    ord_=[f"Фактор {f}" for f in fkeys]
+    for r2 in range(2,len(fkeys)+1):
+        for c in combinations(fkeys,r2): ord_.append("Фактор "+"×".join(c))
+    table=[[nm,*terms.get(nm,(np.nan,0,np.nan,np.nan,np.nan))] for nm in ord_]
+    table.append(["Залишок",sse,dfe,mse,np.nan,np.nan])
+    table.append(["Загальна",sst,len(y)-1,np.nan,np.nan,np.nan])
+    return {"table":table,"SS_error":sse,"df_error":dfe,"MS_error":mse,
+            "SS_total":sst,"residuals":res.tolist(),"NIR05":_nir05(long,fkeys,mse,dfe,lbf)}
 
-    main_levels = first_seen_order([r.get(main_factor) for r in long if r.get(main_factor) is not None])
-    if len(main_levels) < 2:
-        raise ValueError("Split-plot: головний фактор має мати щонайменше 2 рівні.")
+def anova_rcbd(long,fkeys,lbf,bk="BLOCK"):
+    bc,bn,_=_block_dum(long,bk)
+    extra=[("Блоки",bc,bn)] if bc else []
+    y,X,ts,_=_build_X(long,fkeys,lbf,extra)
+    terms,sse,dfe,mse,res=_ss(y,X,ts)
+    sst=float(np.sum((y-np.mean(y))**2))
+    table=[]
+    if bc: table.append(["Блоки",*terms.get("Блоки",(np.nan,0,np.nan,np.nan,np.nan))])
+    ord_=[f"Фактор {f}" for f in fkeys]
+    for r2 in range(2,len(fkeys)+1):
+        for c in combinations(fkeys,r2): ord_.append("Фактор "+"×".join(c))
+    for nm in ord_: table.append([nm,*terms.get(nm,(np.nan,0,np.nan,np.nan,np.nan))])
+    table.append(["Залишок",sse,dfe,mse,np.nan,np.nan])
+    table.append(["Загальна",sst,len(y)-1,np.nan,np.nan,np.nan])
+    return {"table":table,"SS_error":sse,"df_error":dfe,"MS_error":mse,
+            "SS_total":sst,"residuals":res.tolist(),"NIR05":_nir05(long,fkeys,mse,dfe,lbf)}
 
-    main_vals = [r.get(main_factor) for r in long]
-    main_cols, main_names, main_ref = _encode_factor(main_vals, main_levels)
-
-    wp_cols = []
-    wp_names = []
-    for bi, bcol in enumerate(bcols):
-        for mi, mcol in enumerate(main_cols):
-            wp_cols.append(bcol * mcol)
-            wp_names.append(f"{bnames[bi]}×{main_names[mi]}")
-    extra = []
-    if bcols:
-        extra.append(("Блоки", bcols, bnames))
-    if wp_cols:
-        extra.append((f"Whole-plot error (Блоки×{main_factor})", wp_cols, wp_names))
-
-    levels_by_factor = {f: first_seen_order([r.get(f) for r in long if r.get(f) is not None]) for f in factor_keys}
-    y, X, term_slices, colnames = _build_full_factorial_design(long, factor_keys, levels_by_factor, extra_terms=extra)
-
-    beta, yhat, resid, sse_full, df_e, mse = _ols_fit(y, X)
-
-    wp_term = f"Whole-plot error (Блоки×{main_factor})"
-    wp_idxs = term_slices.get(wp_term, [])
-    if not wp_idxs:
-        raise ValueError("Split-plot: неможливо сформувати whole-plot error (перевірте блоки/головний фактор).")
-
-    keep = [i for i in range(X.shape[1]) if i not in wp_idxs]
-    X_red = X[:, keep]
-    _, _, _, sse_red, df_e_red, _ = _ols_fit(y, X_red)
-    ss_wp = float(sse_red - sse_full)
-    df_wp = len(wp_idxs)
-    ms_wp = ss_wp / df_wp if df_wp > 0 else np.nan
-
-    ss_total = float(np.sum((y - np.mean(y)) ** 2))
-
-    terms, _, _, _, _ = _ss_terms(y, X, term_slices)
-
-    table = []
-    if bcols:
-        ss, df, ms, F, p = terms.get("Блоки", (np.nan, 0, np.nan, np.nan, np.nan))
-        table.append(["Блоки", ss, df, ms, np.nan, np.nan])
-
-    table.append([wp_term, ss_wp, df_wp, ms_wp, np.nan, np.nan])
-
-    ordered = []
-    for f in factor_keys:
-        ordered.append(f"Фактор {f}")
-    for rnk in range(2, len(factor_keys) + 1):
-        for comb in combinations(factor_keys, rnk):
-            ordered.append("Фактор " + "×".join(comb))
-
-    for name in ordered:
-        ss, df, ms, F, p = terms.get(name, (np.nan, 0, np.nan, np.nan, np.nan))
-        if name == f"Фактор {main_factor}":
-            if df > 0 and not any(math.isnan(x) for x in [ms, ms_wp]) and ms_wp > 0 and df_wp > 0:
-                Fm = ms / ms_wp
-                pm = float(1.0 - f_dist.cdf(Fm, df, df_wp))
-            else:
-                Fm, pm = (np.nan, np.nan)
-            table.append([name, ss, df, ms, Fm, pm])
+def anova_split(long,fkeys,main_f,bk="BLOCK"):
+    if main_f not in fkeys: main_f=fkeys[0]
+    bc,bn,_=_block_dum(long,bk)
+    ml=first_seen([r.get(main_f) for r in long if r.get(main_f) is not None])
+    if len(ml)<2: raise ValueError("Головний фактор має мати ≥ 2 рівні")
+    mv=[r.get(main_f) for r in long]; mc,mn=_encode(mv,ml)
+    wpc=[]; wpn=[]
+    for bi,bc_ in enumerate(bc):
+        for mi,mc_ in enumerate(mc): wpc.append(bc_*mc_); wpn.append(f"{bn[bi]}×{mn[mi]}")
+    extra=[]
+    if bc: extra.append(("Блоки",bc,bn))
+    wt=f"WP-error(Блоки×{main_f})"
+    if wpc: extra.append((wt,wpc,wpn))
+    lbf={f:first_seen([r.get(f) for r in long if r.get(f) is not None]) for f in fkeys}
+    y,X,ts,_=_build_X(long,fkeys,lbf,extra)
+    _,_,res,sse,dfe,mse=_ols(y,X)
+    wp_idx=ts.get(wt,[])
+    if not wp_idx: raise ValueError("Неможливо побудувати whole-plot error")
+    keep=[i for i in range(X.shape[1]) if i not in wp_idx]
+    _,_,_,sse_r,_,_=_ols(y,X[:,keep])
+    ss_wp=float(sse_r-sse); df_wp=len(wp_idx); ms_wp=ss_wp/df_wp if df_wp>0 else np.nan
+    sst=float(np.sum((y-np.mean(y))**2))
+    terms,_,_,_,_=_ss(y,X,ts)
+    table=[]
+    if bc: table.append(["Блоки",*terms.get("Блоки",(np.nan,0,np.nan,np.nan,np.nan))[:4],np.nan,np.nan])
+    table.append([wt,ss_wp,df_wp,ms_wp,np.nan,np.nan])
+    ord_=[f"Фактор {f}" for f in fkeys]
+    for r2 in range(2,len(fkeys)+1):
+        for c in combinations(fkeys,r2): ord_.append("Фактор "+"×".join(c))
+    for nm in ord_:
+        ss,df,ms,F,p=terms.get(nm,(np.nan,0,np.nan,np.nan,np.nan))
+        if nm==f"Фактор {main_f}":
+            F2=(ms/ms_wp) if (df>0 and not any(math.isnan(x) for x in [ms,ms_wp]) and ms_wp>0) else np.nan
+            p2=float(1-f_dist.cdf(F2,df,df_wp)) if (not math.isnan(F2) and df_wp>0) else np.nan
         else:
-            if df > 0 and not any(math.isnan(x) for x in [ms, mse]) and mse > 0 and df_e > 0:
-                Fm = ms / mse
-                pm = float(1.0 - f_dist.cdf(Fm, df, df_e))
-            else:
-                Fm, pm = (np.nan, np.nan)
-            table.append([name, ss, df, ms, Fm, pm])
+            F2=(ms/mse) if (df>0 and not any(math.isnan(x) for x in [ms,mse]) and mse>0) else np.nan
+            p2=float(1-f_dist.cdf(F2,df,dfe)) if (not math.isnan(F2) and dfe>0) else np.nan
+        table.append([nm,ss,df,ms,F2,p2])
+    table.append(["Залишок",sse,dfe,mse,np.nan,np.nan])
+    table.append(["Загальна",sst,len(y)-1,np.nan,np.nan,np.nan])
+    nir={}
+    if not (math.isnan(mse) or dfe<=0 or math.isnan(ms_wp) or df_wp<=0):
+        def nh_f(f):
+            nl=defaultdict(int)
+            for r in long:
+                v=r.get("value",np.nan)
+                if v is None or math.isnan(v): continue
+                if r.get(f): nl[r[f]]+=1
+            ns=[n for n in nl.values() if n>0]
+            return (len(ns)/sum(1/n for n in ns)) if ns else np.nan
+        tc_s=float(t_dist.ppf(1-ALPHA/2,int(dfe))) if dfe>0 else np.nan
+        tc_w=float(t_dist.ppf(1-ALPHA/2,int(df_wp))) if df_wp>0 else np.nan
+        for f in fkeys:
+            nh=nh_f(f)
+            if math.isnan(nh) or nh<=0: continue
+            if f==main_f: nir[f"Фактор {f}(WP)"]=tc_w*math.sqrt(2*ms_wp/nh)
+            else:          nir[f"Фактор {f}"]=tc_s*math.sqrt(2*mse/nh)
+    return {"table":table,"SS_error":sse,"df_error":dfe,"MS_error":mse,
+            "SS_total":sst,"residuals":res.tolist(),
+            "MS_whole":ms_wp,"df_whole":df_wp,"main_factor":main_f,"NIR05":nir}
 
-    table.append(["Залишок", sse_full, df_e, mse, np.nan, np.nan])
-    table.append(["Загальна", ss_total, len(y) - 1, np.nan, np.nan, np.nan])
+# ═══════════════════════════════════════════════════════════════
+# PROJECT SAVE / LOAD  (.sadp = JSON)
+# ═══════════════════════════════════════════════════════════════
+def project_to_dict(app):
+    rows=[[e.get() for e in row] for row in app.entries]
+    return {"version":APP_VER,"factors_count":app.factors_count,
+            "factor_title_map":app.factor_title_map,"cols":app.cols,"rows_data":rows}
 
-    NIR05 = {}
-    def _harm_n_for_factor(f):
-        n_level = defaultdict(int)
-        for r in long:
-            if r.get(f) is None:
-                continue
-            if r.get("value") is None or math.isnan(r.get("value", np.nan)):
-                continue
-            n_level[r.get(f)] += 1
-        ns = [n for n in n_level.values() if n > 0]
-        if not ns:
-            return np.nan
-        nh = len(ns) / sum(1.0 / n for n in ns)
-        return float(nh)
+def project_from_dict(app,d):
+    fc=d.get("factors_count",1)
+    app.open_table(fc)
+    app.factor_title_map=d.get("factor_title_map",{})
+    for j,fk in enumerate(app.factor_keys):
+        t=app.factor_title_map.get(fk,f"Фактор {fk}")
+        if j<len(app.header_labels): app.header_labels[j].configure(text=t)
+    sc=d.get("cols",app.cols)
+    while app.cols<sc: app.add_column()
+    rd=d.get("rows_data",[])
+    while len(app.entries)<len(rd): app.add_row()
+    for i,rv in enumerate(rd):
+        for j,v in enumerate(rv):
+            if i<len(app.entries) and j<len(app.entries[i]):
+                app.entries[i][j].delete(0,tk.END); app.entries[i][j].insert(0,v)
 
-    if not (math.isnan(mse) or df_e <= 0 or math.isnan(ms_wp) or df_wp <= 0):
-        tcrit_sub = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_e))) if df_e > 0 else np.nan
-        tcrit_whole = float(t_dist.ppf(1 - ALPHA / 2.0, int(df_wp))) if df_wp > 0 else np.nan
-        for f in factor_keys:
-            nh = _harm_n_for_factor(f)
-            if math.isnan(nh) or nh <= 0:
-                continue
-            if f == main_factor:
-                NIR05[f"Фактор {f} (whole-plot)"] = tcrit_whole * math.sqrt(2.0 * ms_wp / nh)
-            else:
-                NIR05[f"Фактор {f}"] = tcrit_sub * math.sqrt(2.0 * mse / nh)
+# ═══════════════════════════════════════════════════════════════
+# GRAPH SETTINGS  (APA defaults)
+# ═══════════════════════════════════════════════════════════════
+DEF_GS = {
+    "font_family":"Times New Roman","font_style":"normal","font_size":11,
+    "box_color":"#ffffff","median_color":"#c62828",
+    "whisker_color":"#000000","flier_color":"#555555",
+    "venn_colors":["#4c72b0","#dd8452","#55a868","#c44e52"],
+    "venn_alpha":0.45,"venn_font_size":11,"venn_font_color":"#000000",
+}
 
-    return {
-        "table": table,
-        "SS_error": sse_full,
-        "df_error": df_e,
-        "MS_error": mse,
-        "SS_total": ss_total,
-        "residuals": resid.tolist(),
-        "MS_whole": ms_wp,
-        "df_whole": df_wp,
-        "main_factor": main_factor,
-        "NIR05": NIR05,
+# ═══════════════════════════════════════════════════════════════
+# FONT HELPERS
+# ═══════════════════════════════════════════════════════════════
+def mpl_font_props(gs):
+    """Return matplotlib FontProperties-like dict from graph settings."""
+    fs=gs["font_style"]
+    weight="bold" if "bold" in fs else "normal"
+    style="italic" if "italic" in fs else "normal"
+    return {"fontfamily":gs["font_family"],"fontsize":gs["font_size"],
+            "fontweight":weight,"fontstyle":style}
+
+def fit_font(texts,family="Times New Roman",start=13,min_s=9,target=155):
+    f=tkfont.Font(family=family,size=start); sz=start
+    while sz>min_s:
+        if max(f.measure(t) for t in texts)<=target: break
+        sz-=1; f.configure(size=sz)
+    return f
+
+# ═══════════════════════════════════════════════════════════════
+# GRAPH SETTINGS DIALOG
+# ═══════════════════════════════════════════════════════════════
+class GraphSettingsDlg(tk.Toplevel):
+    FONTS=["Times New Roman","Arial","Calibri","Georgia","Verdana","Courier New"]
+    STYLES=["normal","bold","italic","bold italic"]
+
+    def __init__(self, parent, gs: dict):
+        super().__init__(parent)
+        self.title("Налаштування графіків")
+        self.resizable(False,False)
+        set_icon(self)
+        self.gs=dict(gs); self.result=None
+
+        nb=ttk.Notebook(self)
+        nb.pack(fill=tk.BOTH,expand=True,padx=8,pady=8)
+
+        # ── Boxplot tab ──
+        bp=tk.Frame(nb,padx=12,pady=10); nb.add(bp,text="Boxplot")
+        self._var_ff=tk.StringVar(value=gs["font_family"])
+        self._var_fs=tk.StringVar(value=gs["font_style"])
+        self._var_fz=tk.IntVar(value=gs["font_size"])
+        self._col_box=gs["box_color"]; self._col_med=gs["median_color"]
+        self._col_wh=gs["whisker_color"]; self._col_fl=gs["flier_color"]
+
+        r=0
+        tk.Label(bp,text="Шрифт:").grid(row=r,column=0,sticky="w",pady=4)
+        ttk.Combobox(bp,textvariable=self._var_ff,values=self.FONTS,state="readonly",width=22).grid(row=r,column=1,sticky="w",padx=6)
+        r+=1
+        tk.Label(bp,text="Стиль:").grid(row=r,column=0,sticky="w",pady=4)
+        ttk.Combobox(bp,textvariable=self._var_fs,values=self.STYLES,state="readonly",width=22).grid(row=r,column=1,sticky="w",padx=6)
+        r+=1
+        tk.Label(bp,text="Розмір:").grid(row=r,column=0,sticky="w",pady=4)
+        tk.Spinbox(bp,from_=7,to=28,textvariable=self._var_fz,width=6).grid(row=r,column=1,sticky="w",padx=6)
+        r+=1
+        for lbl,attr in [("Колір коробки:","_col_box"),("Колір медіани:","_col_med"),
+                          ("Колір вусів:","_col_wh"),("Колір викидів:","_col_fl")]:
+            tk.Label(bp,text=lbl).grid(row=r,column=0,sticky="w",pady=4)
+            btn=tk.Button(bp,width=6,relief=tk.SUNKEN,
+                          command=lambda a=attr: self._pick_color(a,a_widget))
+            btn.configure(bg=getattr(self,attr))
+            btn.grid(row=r,column=1,sticky="w",padx=6)
+            a_widget=btn; r+=1
+
+        # ── Venn tab ──
+        vf=tk.Frame(nb,padx=12,pady=10); nb.add(vf,text="Діаграма Венна")
+        self._var_vff=tk.StringVar(value=gs["font_family"])
+        self._var_vfz=tk.IntVar(value=gs["venn_font_size"])
+        self._var_valpha=tk.DoubleVar(value=gs["venn_alpha"])
+        self._venn_fc=gs["venn_font_color"]
+        self._venn_cols=list(gs["venn_colors"])
+
+        r=0
+        tk.Label(vf,text="Шрифт:").grid(row=r,column=0,sticky="w",pady=4)
+        ttk.Combobox(vf,textvariable=self._var_vff,values=self.FONTS,state="readonly",width=22).grid(row=r,column=1,sticky="w",padx=6)
+        r+=1
+        tk.Label(vf,text="Розмір:").grid(row=r,column=0,sticky="w",pady=4)
+        tk.Spinbox(vf,from_=7,to=28,textvariable=self._var_vfz,width=6).grid(row=r,column=1,sticky="w",padx=6)
+        r+=1
+        tk.Label(vf,text="Прозорість (0–1):").grid(row=r,column=0,sticky="w",pady=4)
+        tk.Scale(vf,from_=0.,to=1.,resolution=0.05,orient="horizontal",
+                 variable=self._valpha_var() if False else self._var_valpha,length=180).grid(row=r,column=1,sticky="w",padx=6)
+        r+=1
+        tk.Label(vf,text="Колір тексту:").grid(row=r,column=0,sticky="w",pady=4)
+        self._vfc_btn=tk.Button(vf,width=6,relief=tk.SUNKEN,bg=self._venn_fc,
+                                command=self._pick_venn_fc)
+        self._vfc_btn.grid(row=r,column=1,sticky="w",padx=6); r+=1
+        tk.Label(vf,text="Кольори кіл:").grid(row=r,column=0,sticky="w",pady=4)
+        self._vci_btns=[]
+        bf=tk.Frame(vf); bf.grid(row=r,column=1,sticky="w",padx=6)
+        for idx in range(4):
+            b=tk.Button(bf,width=4,relief=tk.SUNKEN,bg=self._venn_cols[idx],
+                        command=lambda i=idx: self._pick_venn_ci(i))
+            b.pack(side=tk.LEFT,padx=2); self._vci_btns.append(b)
+        r+=1
+
+        # ── Buttons ──
+        bf2=tk.Frame(self); bf2.pack(fill=tk.X,padx=10,pady=(0,10))
+        tk.Button(bf2,text="OK",width=10,command=self._ok).pack(side=tk.LEFT,padx=4)
+        tk.Button(bf2,text="Скасувати",width=12,command=self.destroy).pack(side=tk.LEFT)
+        tk.Button(bf2,text="За замовч.",width=14,command=self._reset).pack(side=tk.RIGHT,padx=4)
+
+        self.update_idletasks(); center_win(self)
+        self.grab_set()
+
+    def _valpha_var(self): pass  # unused placeholder
+
+    def _pick_color(self,attr,btn_ref=None):
+        cur=getattr(self,attr)
+        c=colorchooser.askcolor(color=cur,parent=self,title="Виберіть колір")
+        if c and c[1]:
+            setattr(self,attr,c[1])
+            # find button by re-scanning
+            for w in self.winfo_children():
+                for ww in self._all_widgets(w):
+                    if isinstance(ww,tk.Button) and ww.cget("bg")==cur and ww is not self._vfc_btn:
+                        ww.configure(bg=c[1])
+
+    def _all_widgets(self,w):
+        yield w
+        for c in w.winfo_children():
+            yield from self._all_widgets(c)
+
+    def _pick_venn_fc(self):
+        c=colorchooser.askcolor(color=self._venn_fc,parent=self,title="Колір тексту")
+        if c and c[1]: self._venn_fc=c[1]; self._vfc_btn.configure(bg=c[1])
+
+    def _pick_venn_ci(self,idx):
+        c=colorchooser.askcolor(color=self._venn_cols[idx],parent=self,title=f"Колір кола {idx+1}")
+        if c and c[1]: self._venn_cols[idx]=c[1]; self._vci_btns[idx].configure(bg=c[1])
+
+    def _reset(self):
+        import importlib
+        # just restore defaults visually is complex; notify user
+        messagebox.showinfo("За замовчуванням","Закрийте і відкрийте графік — APA стиль буде застосовано.")
+
+    def _ok(self):
+        self.result={
+            "font_family":self._var_ff.get(),"font_style":self._var_fs.get(),
+            "font_size":self._var_fz.get(),
+            "box_color":self._col_box,"median_color":self._col_med,
+            "whisker_color":self._col_wh,"flier_color":self._col_fl,
+            "venn_colors":list(self._venn_cols),"venn_alpha":float(self._var_valpha.get()),
+            "venn_font_size":self._var_vfz.get(),"venn_font_color":self._venn_fc,
+        }
+        self.destroy()
+
+# ═══════════════════════════════════════════════════════════════
+# VENN  (custom, lightweight — no matplotlib-venn dep needed)
+# ═══════════════════════════════════════════════════════════════
+def draw_venn(ax, labels, values, colors, alpha, font_size, font_color, font_family):
+    """
+    Draw a proportional Venn-like diagram (circles) for 1–4 factors.
+    `values`: list of (label, percent) for each factor.
+    """
+    n=len(values)
+    ax.set_aspect("equal"); ax.axis("off")
+    if n==0: return
+
+    import matplotlib.patches as mpatches
+
+    # layout centres for up to 4 circles
+    layouts={
+        1:[(0,0)],
+        2:[(-0.35,0),(0.35,0)],
+        3:[(0,0.35),(-0.35,-0.2),(0.35,-0.2)],
+        4:[(-0.35,0.35),(0.35,0.35),(-0.35,-0.35),(0.35,-0.35)],
     }
+    centres=layouts.get(n,layouts[4])[:n]
+    radius=0.42
 
+    for i,(cx,cy) in enumerate(centres):
+        circle=mpatches.Circle((cx,cy),radius,
+                               fc=colors[i % len(colors)],alpha=alpha,
+                               ec="#555555",lw=1.0)
+        ax.add_patch(circle)
+        nm,pct=values[i]
+        ax.text(cx,cy+0.02,f"{nm}\n{fmt(pct,1)}%",
+                ha="center",va="center",
+                fontsize=font_size,color=font_color,fontfamily=font_family,
+                fontweight="bold",linespacing=1.4)
 
-# =========================================================
-# GUI
-# =========================================================
+    ax.set_xlim(-1,1); ax.set_ylim(-1,1)
+    ax.set_title("Сила впливу факторів",
+                 fontsize=font_size+1,fontfamily=font_family,pad=8)
+
+# ═══════════════════════════════════════════════════════════════
+# GUI — SADTk
+# ═══════════════════════════════════════════════════════════════
 class SADTk:
-    # Кольори виділення комірок
-    SEL_BG       = "#cce5ff"   # звичайне виділення
-    SEL_BG_ANCHOR= "#99ccff"   # "якірна" комірка (початок виділення)
-    ACTIVE_BG    = "#fff3c4"   # активна (фокус) комірка
+    SEL_BG="#cce5ff"; SEL_ANC="#99ccff"; ACT_BG="#fff3c4"
 
     def __init__(self, root):
-        self.root = root
+        self.root=root
         root.title("S.A.D. — Статистичний аналіз даних")
-        root.geometry("1000x560")
-        set_window_icon(root)
+        root.geometry("1000x560"); set_icon(root)
+        root.option_add("*Font","Times New Roman 15")
+        root.option_add("*Foreground","#000000")
+        try: ttk.Style().theme_use("clam")
+        except Exception: pass
 
-        self.base_font = ("Times New Roman", 15)
-        root.option_add("*Font", self.base_font)
-        root.option_add("*Foreground", "#000000")
+        mf=tk.Frame(root,bg="white"); mf.pack(expand=True,fill=tk.BOTH)
+        tk.Label(mf,text="S.A.D. — Статистичний аналіз даних",
+                 font=("Times New Roman",20,"bold"),fg="#000000",bg="white").pack(pady=18)
 
+        bf=tk.Frame(mf,bg="white"); bf.pack(pady=10)
+        for i,(txt,fc) in enumerate([("Однофакторний аналіз",1),("Двофакторний аналіз",2),
+                                      ("Трифакторний аналіз",3),("Чотирифакторний аналіз",4)]):
+            tk.Button(bf,text=txt,width=22,height=2,command=lambda f=fc: self.open_table(f)
+                      ).grid(row=i//2,column=i%2,padx=10,pady=8)
+
+        btm=tk.Frame(mf,bg="white"); btm.pack(pady=6)
+        tk.Button(btm,text="📂 Відкрити проект",width=20,command=self.load_project).pack(side=tk.LEFT,padx=8)
+        tk.Button(btm,text="💾 Зберегти проект",width=20,command=self.save_project).pack(side=tk.LEFT,padx=8)
+
+        tk.Label(mf,text="Виберіть тип аналізу → Введіть дані → Натисніть «Аналіз даних»",
+                 fg="#000000",bg="white").pack(pady=8)
+
+        self.table_win=None; self.report_win=None; self.graph_win=None
+        self._graph_fig_bp=None; self._graph_fig_vn=None
+        self._active_cell=None; self._active_prev=None
+        # selection
+        self._sel_anchor=None; self._sel_cells=set(); self._sel_orig={}
+        # fill drag
+        self._fill_drag=False; self._fill_rows=[]; self._fill_cols=[]
+        self.factor_title_map={}
+        self.graph_settings=dict(DEF_GS)
+        self._current_project_path=None
+
+    # ── factor titles ─────────────────────────────────────────
+    def ftitle(self,fk): return self.factor_title_map.get(fk,f"Фактор {fk}")
+    def _set_ftitle(self,fk,t): self.factor_title_map[fk]=t.strip() or f"Фактор {fk}"
+
+    # ── project save/load ─────────────────────────────────────
+    def save_project(self):
+        if not hasattr(self,"entries") or not self.entries:
+            messagebox.showwarning("Проект","Спочатку відкрийте таблицю та введіть дані."); return
+        path=filedialog.asksaveasfilename(
+            parent=self.root,title="Зберегти проект",
+            defaultextension=".sadp",
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json"),("Усі файли","*.*")])
+        if not path: return
         try:
-            style = ttk.Style()
-            style.theme_use("clam")
-        except Exception:
-            pass
+            d=project_to_dict(self)
+            with open(path,"w",encoding="utf-8") as f: json.dump(d,f,ensure_ascii=False,indent=2)
+            self._current_project_path=path
+            messagebox.showinfo("Збережено",f"Проект збережено:\n{path}")
+        except Exception as ex: messagebox.showerror("Помилка",str(ex))
 
-        self.main_frame = tk.Frame(root, bg="white")
-        self.main_frame.pack(expand=True, fill=tk.BOTH)
-
-        tk.Label(
-            self.main_frame,
-            text="S.A.D. — Статистичний аналіз даних",
-            font=("Times New Roman", 20, "bold"),
-            fg="#000000",
-            bg="white"
-        ).pack(pady=18)
-
-        btn_frame = tk.Frame(self.main_frame, bg="white")
-        btn_frame.pack(pady=10)
-
-        tk.Button(btn_frame, text="Однофакторний аналіз", width=22, height=2,
-                  command=lambda: self.open_table(1)).grid(row=0, column=0, padx=10, pady=8)
-        tk.Button(btn_frame, text="Двофакторний аналіз", width=22, height=2,
-                  command=lambda: self.open_table(2)).grid(row=0, column=1, padx=10, pady=8)
-        tk.Button(btn_frame, text="Трифакторний аналіз", width=22, height=2,
-                  command=lambda: self.open_table(3)).grid(row=1, column=0, padx=10, pady=8)
-        tk.Button(btn_frame, text="Чотирифакторний аналіз", width=22, height=2,
-                  command=lambda: self.open_table(4)).grid(row=1, column=1, padx=10, pady=8)
-
-        tk.Label(
-            self.main_frame,
-            text="Виберіть тип аналізу → Внесіть дані → Натисніть «Аналіз даних»",
-            fg="#000000",
-            bg="white"
-        ).pack(pady=10)
-
-        self.table_win = None
-        self.report_win = None
-        self.graph_win = None
-        self._graph_fig = None
-        self._graph_canvas = None
-
-        # active cell
-        self._active_cell = None
-        self._active_prev_cfg = None
-
-        # -------------------------------------------------------
-        # Виділення комірок (multi-cell selection)
-        # -------------------------------------------------------
-        self._sel_anchor = None   # (row, col) — початок виділення
-        self._sel_cells  = set()  # set of (row, col)
-        self._sel_orig_bg = {}    # {(r,c): original_bg}
-
-        # -------------------------------------------------------
-        # Fill-handle (одна або кілька виділених комірок → вниз)
-        # -------------------------------------------------------
-        self._fill_dragging   = False
-        self._fill_src_rows   = []   # список рядків-джерел (впорядкований)
-        self._fill_src_cols   = []   # список колонок-джерел
-        self._fill_last_row   = None
-
-        self.factor_title_map = {}
-
-    # ----------------------------------------------------------
-    # Factor titles
-    # ----------------------------------------------------------
-    def factor_title(self, fkey: str) -> str:
-        return self.factor_title_map.get(fkey, f"Фактор {fkey}")
-
-    def _set_factor_title(self, fkey: str, title: str):
-        self.factor_title_map[fkey] = title.strip() if title else f"Фактор {fkey}"
-
-    # ----------------------------------------------------------
-    # Selection helpers
-    # ----------------------------------------------------------
-    def _clear_selection(self):
-        """Зняти виділення з усіх комірок."""
-        for (r, c) in list(self._sel_cells):
-            self._restore_cell_bg(r, c)
-        self._sel_cells.clear()
-        self._sel_anchor = None
-        self._sel_orig_bg.clear()
-
-    def _restore_cell_bg(self, r, c):
+    def load_project(self):
+        path=filedialog.askopenfilename(
+            parent=self.root,title="Відкрити проект",
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json"),("Усі файли","*.*")])
+        if not path: return
         try:
-            e = self.entries[r][c]
-            orig = self._sel_orig_bg.get((r, c), "white")
-            e.configure(bg=orig)
-        except Exception:
-            pass
+            with open(path,"r",encoding="utf-8") as f: d=json.load(f)
+            project_from_dict(self,d)
+            self._current_project_path=path
+            messagebox.showinfo("Відкрито",f"Проект відкрито:\n{path}")
+        except Exception as ex: messagebox.showerror("Помилка",str(ex))
 
-    def _apply_selection(self, cells: set):
-        """Виділити набір (r,c) синім кольором."""
-        for (r, c) in cells:
+    # ── selection helpers ─────────────────────────────────────
+    def _clear_sel(self):
+        for (r,c) in list(self._sel_cells): self._restore_bg(r,c)
+        self._sel_cells.clear(); self._sel_anchor=None; self._sel_orig.clear()
+
+    def _restore_bg(self,r,c):
+        try: self.entries[r][c].configure(bg=self._sel_orig.get((r,c),"white"))
+        except Exception: pass
+
+    def _apply_sel(self,cells):
+        for (r,c) in cells:
             try:
-                e = self.entries[r][c]
-                if (r, c) not in self._sel_orig_bg:
-                    self._sel_orig_bg[(r, c)] = e.cget("bg")
-                bg = self.SEL_BG_ANCHOR if (r, c) == self._sel_anchor else self.SEL_BG
-                e.configure(bg=bg)
-            except Exception:
-                pass
+                e=self.entries[r][c]
+                if (r,c) not in self._sel_orig: self._sel_orig[(r,c)]=e.cget("bg")
+                e.configure(bg=self.SEL_ANC if (r,c)==self._sel_anchor else self.SEL_BG)
+            except Exception: pass
 
-    def _select_range(self, r1, c1, r2, c2):
-        """Виділити прямокутний блок між двома кутами."""
-        prev = set(self._sel_cells)
-        new  = set()
-        for r in range(min(r1, r2), max(r1, r2) + 1):
-            for c in range(min(c1, c2), max(c1, c2) + 1):
-                if r < len(self.entries) and c < len(self.entries[r]):
-                    new.add((r, c))
-
-        # зняти зайві
-        for rc in prev - new:
-            self._restore_cell_bg(*rc)
-        # додати нові
-        self._apply_selection(new - prev)
-        # оновити anchor-колір
+    def _sel_range(self,r1,c1,r2,c2):
+        prev=set(self._sel_cells)
+        new={(r,c) for r in range(min(r1,r2),max(r1,r2)+1)
+             for c in range(min(c1,c2),max(c1,c2)+1)
+             if r<len(self.entries) and c<len(self.entries[r])}
+        for rc in prev-new: self._restore_bg(*rc)
+        self._apply_sel(new-prev)
         if self._sel_anchor in new:
-            try:
-                self.entries[self._sel_anchor[0]][self._sel_anchor[1]].configure(bg=self.SEL_BG_ANCHOR)
-            except Exception:
-                pass
+            try: self.entries[self._sel_anchor[0]][self._sel_anchor[1]].configure(bg=self.SEL_ANC)
+            except Exception: pass
+        self._sel_cells=new
 
-        self._sel_cells = new
+    def _sel_bounds(self):
+        if not self._sel_cells: return None
+        rs=[r for r,c in self._sel_cells]; cs=[c for r,c in self._sel_cells]
+        return min(rs),min(cs),max(rs),max(cs)
 
-    def _get_selection_bounds(self):
-        """Повертає (r_min, c_min, r_max, c_max) або None."""
-        if not self._sel_cells:
-            return None
-        rows = [r for r, c in self._sel_cells]
-        cols = [c for r, c in self._sel_cells]
-        return min(rows), min(cols), max(rows), max(cols)
-
-    # ----------------------------------------------------------
-    # Active cell highlight
-    # ----------------------------------------------------------
-    def _set_active_cell(self, widget: tk.Entry):
-        if self._active_cell is widget:
-            return
-        if isinstance(self._active_cell, tk.Entry) and self._active_prev_cfg:
-            try:
-                self._active_cell.configure(**self._active_prev_cfg)
-            except Exception:
-                pass
-        self._active_cell = widget
-        if isinstance(widget, tk.Entry):
-            self._active_prev_cfg = {
-                "bg": widget.cget("bg"),
-                "highlightthickness": int(widget.cget("highlightthickness")),
-                "highlightbackground": widget.cget("highlightbackground"),
-                "highlightcolor": widget.cget("highlightcolor"),
-                "relief": widget.cget("relief"),
-                "bd": int(widget.cget("bd")) if str(widget.cget("bd")).isdigit() else 1,
-            }
-            try:
-                widget.configure(
-                    bg=self.ACTIVE_BG,
-                    highlightthickness=3,
-                    highlightbackground="#c62828",
-                    highlightcolor="#c62828",
-                    relief=tk.SOLID,
-                    bd=1
-                )
-            except Exception:
-                pass
-
-    # ----------------------------------------------------------
-    # Fill-handle geometry helpers
-    # ----------------------------------------------------------
-    def _near_bottom_right(self, w: tk.Entry, margin=6) -> bool:
+    def _near_br(self,w,mg=6):
         try:
-            px = w.winfo_pointerx()
-            py = w.winfo_pointery()
-            x0 = w.winfo_rootx()
-            y0 = w.winfo_rooty()
-            ww = w.winfo_width()
-            hh = w.winfo_height()
-            return (x0 + ww - margin <= px <= x0 + ww) and (y0 + hh - margin <= py <= y0 + hh)
-        except Exception:
-            return False
+            px=w.winfo_pointerx(); py=w.winfo_pointery()
+            x0=w.winfo_rootx(); y0=w.winfo_rooty()
+            ww=w.winfo_width(); hh=w.winfo_height()
+            return (x0+ww-mg<=px<=x0+ww) and (y0+hh-mg<=py<=y0+hh)
+        except Exception: return False
 
-    def _selection_bottom_right_cell(self):
-        """Повертає (r, c) нижнього-правого кута виділення."""
-        b = self._get_selection_bounds()
-        if b is None:
-            return None
-        return (b[2], b[3])
+    def _sel_handle_cell(self):
+        b=self._sel_bounds()
+        if b is None: return None
+        r,c=b[2],b[3]
+        try: return self.entries[r][c]
+        except Exception: return None
 
-    def _cursor_near_selection_handle(self, w: tk.Entry) -> bool:
-        """Чи знаходиться курсор біля fill-handle виділення (нижній-правий кут виділення)?"""
-        br = self._selection_bottom_right_cell()
-        if br is None:
-            return False
-        try:
-            cell = self.entries[br[0]][br[1]]
-        except Exception:
-            return False
-        if cell is not w:
-            return False
-        return self._near_bottom_right(w)
+    # ── active cell ───────────────────────────────────────────
+    def _set_active(self,w):
+        if self._active_cell is w: return
+        if isinstance(self._active_cell,tk.Entry) and self._active_prev:
+            try: self._active_cell.configure(**self._active_prev)
+            except Exception: pass
+        self._active_cell=w
+        if isinstance(w,tk.Entry):
+            self._active_prev={"bg":w.cget("bg"),"highlightthickness":int(w.cget("highlightthickness")),
+                               "highlightbackground":w.cget("highlightbackground"),
+                               "highlightcolor":w.cget("highlightcolor"),
+                               "relief":w.cget("relief"),"bd":int(w.cget("bd")) if str(w.cget("bd")).isdigit() else 1}
+            try: w.configure(bg=self.ACT_BG,highlightthickness=3,highlightbackground="#c62828",highlightcolor="#c62828",relief=tk.SOLID,bd=1)
+            except Exception: pass
 
-    # ----------------------------------------------------------
-    # Bind cell
-    # ----------------------------------------------------------
-    def bind_cell(self, e: tk.Entry):
-        e.bind("<Return>",       self.on_enter)
-        e.bind("<Up>",           self.on_arrow)
-        e.bind("<Down>",         self.on_arrow)
-        e.bind("<Left>",         self.on_arrow)
-        e.bind("<Right>",        self.on_arrow)
-        e.bind("<Control-v>",    self.on_paste)
-        e.bind("<Control-V>",    self.on_paste)
+    # ── cell binding ──────────────────────────────────────────
+    def bind_cell(self,e):
+        e.bind("<Return>",         self._on_enter)
+        e.bind("<Up>",             self._on_arrow)
+        e.bind("<Down>",           self._on_arrow)
+        e.bind("<Left>",           self._on_arrow)
+        e.bind("<Right>",          self._on_arrow)
+        e.bind("<Control-c>",      self._on_copy_sel)
+        e.bind("<Control-C>",      self._on_copy_sel)
+        e.bind("<Control-v>",      self._on_paste)
+        e.bind("<Control-V>",      self._on_paste)
+        e.bind("<FocusIn>",        lambda ev: self._set_active(ev.widget))
+        e.bind("<ButtonPress-1>",  self._on_press)
+        e.bind("<B1-Motion>",      self._on_drag)
+        e.bind("<ButtonRelease-1>",self._on_release)
+        e.bind("<Motion>",         self._on_motion)
+        e.bind("<Leave>",          lambda ev: ev.widget.configure(cursor=""))
+        e.bind("<Shift-ButtonPress-1>",self._on_shift_click)
 
-        e.bind("<FocusIn>",      self._on_cell_focus_in)
-
-        # миша: виділення + fill-handle
-        e.bind("<ButtonPress-1>",   self._on_cell_press)
-        e.bind("<B1-Motion>",       self._on_cell_drag)
-        e.bind("<ButtonRelease-1>", self._on_cell_release)
-        e.bind("<Motion>",          self._on_cell_motion)
-        e.bind("<Leave>",           self._on_cell_leave)
-        e.bind("<Shift-ButtonPress-1>", self._on_shift_click)
-
-    # ----------------------------------------------------------
-    # Cell events
-    # ----------------------------------------------------------
-    def _on_cell_focus_in(self, event):
-        self._set_active_cell(event.widget)
-
-    def _on_cell_motion(self, event):
-        """Змінити курсор якщо поблизу fill-handle виділення або правого нижнього кута одиночної комірки."""
-        w = event.widget
-        if not isinstance(w, tk.Entry):
-            return
-        pos = self.find_pos(w)
-        if not pos:
-            return
-        r, c = pos
-
-        # Дозволяємо fill-handle лише у факторних колонках
-        if c >= self.factors_count:
-            w.configure(cursor="")
-            return
-
-        # Якщо є виділення і курсор біля його handle — показуємо crosshair
-        if self._sel_cells and self._cursor_near_selection_handle(w):
+    # ── mouse events ──────────────────────────────────────────
+    def _on_motion(self,event):
+        w=event.widget
+        if not isinstance(w,tk.Entry): return
+        pos=self._pos(w)
+        if not pos: return
+        r,c=pos
+        if c>=self.factors_count: w.configure(cursor=""); return
+        # show crosshair near fill-handle of selection OR own bottom-right
+        if self._sel_cells and self._sel_handle_cell() is w and self._near_br(w):
             w.configure(cursor="crosshair")
-        elif not self._sel_cells and self._near_bottom_right(w):
-            # одиночна комірка — стара поведінка
+        elif not self._sel_cells and self._near_br(w):
             w.configure(cursor="crosshair")
         else:
             w.configure(cursor="")
 
-    def _on_cell_leave(self, event):
-        w = event.widget
-        if isinstance(w, tk.Entry):
-            w.configure(cursor="")
-
-    def _on_cell_press(self, event):
-        """ButtonPress-1: або починаємо fill-drag, або починаємо виділення."""
-        w = event.widget
-        if not isinstance(w, tk.Entry):
-            return
-        pos = self.find_pos(w)
-        if not pos:
-            return
-        r, c = pos
-
-        # --- fill-handle? ---
-        fill_allowed = (c < self.factors_count)
-        if fill_allowed:
-            # виділення є і курсор біля його кута
-            if self._sel_cells and self._cursor_near_selection_handle(w):
-                self._start_fill_drag(use_selection=True)
-                return "break"
-            # або одиночна комірка
-            if not self._sel_cells and self._near_bottom_right(w):
-                self._clear_selection()
-                self._sel_anchor = (r, c)
-                self._sel_cells  = {(r, c)}
-                self._sel_orig_bg[(r, c)] = w.cget("bg")
-                self._start_fill_drag(use_selection=False)
-                return "break"
-
-        # --- нове виділення (звичайний клік) ---
-        self._fill_dragging = False
-        self._clear_selection()
-        self._sel_anchor = (r, c)
-        self._sel_cells  = {(r, c)}
-        self._sel_orig_bg[(r, c)] = w.cget("bg")
-        self._apply_selection({(r, c)})
+    def _on_press(self,event):
+        w=event.widget
+        if not isinstance(w,tk.Entry): return
+        pos=self._pos(w)
+        if not pos: return
+        r,c=pos
+        # fill-handle?
+        if c<self.factors_count:
+            if self._sel_cells and self._sel_handle_cell() is w and self._near_br(w):
+                self._start_fill(use_sel=True); return "break"
+            if not self._sel_cells and self._near_br(w):
+                self._clear_sel()
+                self._sel_anchor=(r,c); self._sel_cells={(r,c)}
+                self._sel_orig[(r,c)]=w.cget("bg"); self._apply_sel({(r,c)})
+                self._start_fill(use_sel=False); return "break"
+        self._fill_drag=False
+        self._clear_sel()
+        self._sel_anchor=(r,c); self._sel_cells={(r,c)}
+        self._sel_orig[(r,c)]=w.cget("bg"); self._apply_sel({(r,c)})
         w.focus_set()
 
-    def _on_shift_click(self, event):
-        """Shift+Click: розширити виділення."""
-        w = event.widget
-        pos = self.find_pos(w)
-        if not pos or self._sel_anchor is None:
-            return
-        r, c = pos
-        ar, ac = self._sel_anchor
-        self._select_range(ar, ac, r, c)
-        return "break"
+    def _on_shift_click(self,event):
+        w=event.widget; pos=self._pos(w)
+        if not pos or self._sel_anchor is None: return
+        ar,ac=self._sel_anchor; r,c=pos
+        self._sel_range(ar,ac,r,c); return "break"
 
-    def _on_cell_drag(self, event):
-        """B1-Motion: або fill-drag, або розширення виділення мишею."""
-        w = event.widget
-        if not isinstance(w, tk.Entry):
-            return
-
-        if self._fill_dragging:
-            self._do_fill_drag(event)
-            return "break"
-
-        # розширення виділення drag-ом
-        if self._sel_anchor is None:
-            return
-        ar, ac = self._sel_anchor
-        pos = self.find_pos(w)
-        if pos:
-            r, c = pos
+    def _on_drag(self,event):
+        w=event.widget
+        if not isinstance(w,tk.Entry): return
+        if self._fill_drag: self._do_fill(event); return "break"
+        if self._sel_anchor is None: return
+        ar,ac=self._sel_anchor
+        pos=self._pos(w)
+        if pos: r,c=pos
         else:
-            # визначити комірку по координатах вказівника
-            py = w.winfo_pointery()
-            px = w.winfo_pointerx()
-            r, c = ar, ac
+            py=w.winfo_pointery(); px=w.winfo_pointerx(); r,c=ar,ac
             for ri in range(len(self.entries)):
                 for ci in range(len(self.entries[ri])):
-                    cell = self.entries[ri][ci]
-                    x0 = cell.winfo_rootx()
-                    y0 = cell.winfo_rooty()
-                    if x0 <= px <= x0 + cell.winfo_width() and y0 <= py <= y0 + cell.winfo_height():
-                        r, c = ri, ci
-                        break
-        self._select_range(ar, ac, r, c)
+                    cell=self.entries[ri][ci]
+                    x0=cell.winfo_rootx(); y0=cell.winfo_rooty()
+                    if x0<=px<=x0+cell.winfo_width() and y0<=py<=y0+cell.winfo_height():
+                        r,c=ri,ci; break
+        self._sel_range(ar,ac,r,c)
 
-    def _on_cell_release(self, event):
-        if self._fill_dragging:
-            self._fill_dragging = False
-            self._fill_src_rows  = []
-            self._fill_src_cols  = []
-            self._fill_last_row  = None
+    def _on_release(self,event):
+        if self._fill_drag:
+            self._fill_drag=False; self._fill_rows=[]; self._fill_cols=[]; return "break"
+
+    # ── fill drag ─────────────────────────────────────────────
+    def _start_fill(self,use_sel):
+        self._fill_drag=True
+        if use_sel and self._sel_cells:
+            b=self._sel_bounds()
+            if b is None: self._fill_drag=False; return
+            self._fill_rows=list(range(b[0],b[2]+1))
+            self._fill_cols=list(range(b[1],b[3]+1))
+        elif self._sel_anchor:
+            self._fill_rows=[self._sel_anchor[0]]
+            self._fill_cols=[self._sel_anchor[1]]
+        else:
+            self._fill_drag=False
+
+    def _do_fill(self,event):
+        w=event.widget
+        if not isinstance(w,tk.Entry) or not self._fill_rows or not self._fill_cols: return
+        last_src=self._fill_rows[-1]
+        py=w.winfo_pointery(); target=last_src
+        for rr in range(last_src,len(self.entries)):
+            cell=self.entries[rr][self._fill_cols[0]]
+            y0=cell.winfo_rooty()
+            if y0<=py<=y0+cell.winfo_height(): target=rr; break
+        else:
+            if py>self.entries[-1][self._fill_cols[0]].winfo_rooty():
+                target=len(self.entries)
+        if target<=last_src: return
+        n_src=len(self._fill_rows)
+        dst=last_src+1
+        while dst<=target:
+            while dst>=len(self.entries): self.add_row()
+            src_r=self._fill_rows[(dst-last_src-1)%n_src]
+            for c in self._fill_cols:
+                if c>=self.factors_count: break
+                self.entries[dst][c].delete(0,tk.END)
+                self.entries[dst][c].insert(0,self.entries[src_r][c].get())
+            dst+=1
+        self.inner.update_idletasks()
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
+    # ── copy selection (Ctrl+C) ───────────────────────────────
+    def _on_copy_sel(self,event=None):
+        """Copy selected rectangle to clipboard as tab-separated text."""
+        if not self._sel_cells:
+            # fallback: copy focused cell
+            w=event.widget if event else self.table_win.focus_get()
+            if isinstance(w,tk.Entry):
+                try:
+                    sel=w.get("sel.first","sel.last")
+                except Exception:
+                    sel=w.get()
+                self.table_win.clipboard_clear(); self.table_win.clipboard_append(sel)
             return "break"
-
-    # ----------------------------------------------------------
-    # Fill-drag logic
-    # ----------------------------------------------------------
-    def _start_fill_drag(self, use_selection: bool):
-        """Ініціювати fill-drag."""
-        self._fill_dragging = True
-        self._fill_last_row = None
-
-        if use_selection and self._sel_cells:
-            b = self._get_selection_bounds()
-            if b is None:
-                self._fill_dragging = False
-                return
-            r_min, c_min, r_max, c_max = b
-            self._fill_src_rows = list(range(r_min, r_max + 1))
-            self._fill_src_cols = list(range(c_min, c_max + 1))
-        else:
-            # одиночна комірка
-            if self._sel_anchor is None:
-                self._fill_dragging = False
-                return
-            r, c = self._sel_anchor
-            self._fill_src_rows = [r]
-            self._fill_src_cols = [c]
-
-    def _do_fill_drag(self, event):
-        """Виконати заповнення під час перетягування."""
-        w = event.widget
-        if not isinstance(w, tk.Entry):
-            return
-        if not self._fill_src_rows or not self._fill_src_cols:
-            return
-
-        src_last_row = self._fill_src_rows[-1]
-        src_first_row = self._fill_src_rows[0]
-
-        # Визначити рядок, на який вказує курсор
-        py = w.winfo_pointery()
-        target_r = src_last_row
-        for rr in range(src_last_row, len(self.entries)):
-            cell = self.entries[rr][self._fill_src_cols[0]]
-            y0 = cell.winfo_rooty()
-            y1 = y0 + cell.winfo_height()
-            if y0 <= py <= y1:
-                target_r = rr
-                break
-        else:
-            # курсор нижче останнього рядка — додаємо рядки
-            if py > self.entries[-1][self._fill_src_cols[0]].winfo_rooty():
-                target_r = len(self.entries) - 1 + 1
-
-        if target_r <= src_last_row:
-            return
-
-        # Кількість рядків-джерел
-        n_src = len(self._fill_src_rows)
-
-        # Заповнюємо кожен рядок нижче джерела
-        dst_row = src_last_row + 1
-        while dst_row <= target_r:
-            while dst_row >= len(self.entries):
-                self.add_row()
-
-            # Визначаємо відповідний рядок-зразок (циклічно по src-рядках)
-            src_r = self._fill_src_rows[(dst_row - src_last_row - 1) % n_src]
-
-            for c in self._fill_src_cols:
-                if c >= self.factors_count:
-                    dst_row += 1
-                    break
-                src_text = self.entries[src_r][c].get()
-                dst_cell = self.entries[dst_row][c]
-                dst_cell.delete(0, tk.END)
-                dst_cell.insert(0, src_text)
-            else:
-                dst_row += 1
-
-        self._fill_last_row = target_r
-        self.inner.update_idletasks()
-        self.canvas.config(scrollregion=self.canvas.bbox("all"))
-
-    # ----------------------------------------------------------
-    # Design help / About / etc.
-    # ----------------------------------------------------------
-    def show_design_help(self):
-        w = tk.Toplevel(self.root)
-        w.title("Пояснення дизайнів")
-        w.resizable(False, False)
-        set_window_icon(w)
-
-        frm = tk.Frame(w, padx=16, pady=14)
-        frm.pack(fill=tk.BOTH, expand=True)
-
-        txt = (
-            "CRD (повна рандомізація)\n"
-            "• Усі варіанти розміщені випадково без блоків.\n"
-            "• Підходить, коли ділянка однорідна.\n\n"
-            "RCBD (блочна рандомізація)\n"
-            "• Є блоки (повторності), всередині блоку — всі варіанти.\n"
-            "• Підходить, коли є градієнт поля (рельєф, ґрунт тощо).\n\n"
-            "Split-plot (спліт-плот)\n"
-            "• Є головний фактор (whole-plot) і підплощі (sub-plot) всередині.\n"
-            "• Для головного фактора використовується інша (більша) помилка, ніж для підфакторів.\n"
-        )
-
-        t = tk.Text(frm, width=62, height=16, wrap="word")
-        t.insert("1.0", txt)
-        t.configure(state="disabled")
-        t.pack(fill=tk.BOTH, expand=True)
-
-        btns = tk.Frame(frm)
-        btns.pack(fill=tk.X, pady=(10, 0))
-        tk.Button(btns, text="OK", width=10, command=w.destroy).pack(side=tk.LEFT, padx=6)
-
-        w.update_idletasks()
-        center_window(w)
-        w.grab_set()
-
-    def ask_indicator_units(self):
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Параметри звіту")
-        dlg.resizable(False, False)
-        set_window_icon(dlg)
-
-        frm = tk.Frame(dlg, padx=16, pady=16)
-        frm.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(frm, text="Назва показника:", fg="#000000").grid(row=0, column=0, sticky="w", pady=6)
-        e_ind = tk.Entry(frm, width=40, fg="#000000")
-        e_ind.grid(row=0, column=1, pady=6)
-
-        tk.Label(frm, text="Одиниці виміру:", fg="#000000").grid(row=1, column=0, sticky="w", pady=6)
-        e_units = tk.Entry(frm, width=40, fg="#000000")
-        e_units.grid(row=1, column=1, pady=6)
-
-        row_design = tk.Frame(frm)
-        row_design.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 4))
-        tk.Label(row_design, text="Дизайн експерименту:", fg="#000000").pack(side=tk.LEFT)
-        tk.Button(row_design, text=" ? ", width=3, command=self.show_design_help).pack(side=tk.LEFT, padx=(8, 0))
-
-        design_var = tk.StringVar(value="crd")
-        rfrm = tk.Frame(frm)
-        rfrm.grid(row=2, column=1, sticky="w", pady=(10, 4), padx=(220, 0))
-        rb_font = ("Times New Roman", 16)
-
-        tk.Radiobutton(rfrm, text="Повна рандомізація (CRD)", variable=design_var, value="crd",
-                       font=rb_font).pack(anchor="w", pady=2)
-        tk.Radiobutton(rfrm, text="Блочна рандомізація (RCBD)", variable=design_var, value="rcbd",
-                       font=rb_font).pack(anchor="w", pady=2)
-        tk.Radiobutton(rfrm, text="Спліт-плот (Split-plot) — лише параметричний", variable=design_var, value="split",
-                       font=rb_font).pack(anchor="w", pady=2)
-
-        main_factor_var = tk.StringVar(value="A")
-        sp_frame = tk.Frame(frm)
-        sp_frame.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
-
-        lbl_sp = tk.Label(sp_frame, text="Головний фактор (Whole-plot factor):", fg="#000000")
-        lbl_sp.pack(side=tk.LEFT)
-
-        cmb = ttk.Combobox(sp_frame, textvariable=main_factor_var, width=8, state="readonly",
-                           values=("A", "B", "C", "D"))
-        cmb.pack(side=tk.LEFT, padx=8)
-
-        def _fit_dialog_to_content():
-            dlg.update_idletasks()
-            req_w = frm.winfo_reqwidth()
-            req_h = frm.winfo_reqheight()
-            dlg.geometry(f"{req_w + 24}x{req_h + 18}")
-            center_window(dlg)
-
-        def sp_visible(is_on: bool):
-            if is_on:
-                sp_frame.grid()
-            else:
-                sp_frame.grid_remove()
-            _fit_dialog_to_content()
-
-        sp_visible(False)
-
-        def on_design_change(*_):
-            sp_visible(design_var.get() == "split")
-
-        design_var.trace_add("write", on_design_change)
-
-        out = {"ok": False, "indicator": "", "units": "", "design": "crd", "split_main": "A"}
-
-        def on_ok():
-            out["indicator"] = e_ind.get().strip()
-            out["units"] = e_units.get().strip()
-            out["design"] = design_var.get()
-            out["split_main"] = main_factor_var.get()
-
-            if not out["indicator"] or not out["units"]:
-                messagebox.showwarning("Помилка", "Заповніть назву показника та одиниці виміру.")
-                return
-
-            out["ok"] = True
-            dlg.destroy()
-
-        btns = tk.Frame(frm)
-        btns.grid(row=4, column=0, columnspan=2, pady=(12, 0))
-        tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=6)
-        tk.Button(btns, text="Скасувати", width=12, command=lambda: dlg.destroy()).pack(side=tk.LEFT, padx=6)
-
-        _fit_dialog_to_content()
-        e_ind.focus_set()
-        dlg.bind("<Return>", lambda e: on_ok())
-        dlg.grab_set()
-        self.root.wait_window(dlg)
-        return out
-
-    def choose_method_window(self, p_norm, design, num_variants):
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Вибір виду аналізу")
-        dlg.resizable(False, False)
-        set_window_icon(dlg)
-
-        frm = tk.Frame(dlg, padx=16, pady=14)
-        frm.pack(fill=tk.BOTH, expand=True)
-
-        normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
-        rb_font = ("Times New Roman", 16)
-
-        if normal:
-            msg = ("Дані експерименту відповідають принципам нормального розподілу\n"
-                   "за методом Шапіра-Вілка.")
-            tk.Label(frm, text=msg, fg="#000000", justify="left").pack(anchor="w", pady=(0, 10))
-            options = [
-                ("НІР₀₅", "lsd"),
-                ("Тест Тьюкі", "tukey"),
-                ("Тест Дункана", "duncan"),
-                ("Тест Бонферроні", "bonferroni"),
-            ]
-        else:
-            if design == "split":
-                tk.Label(
-                    frm,
-                    text=("Для спліт-плоту в цій програмі реалізовано лише параметричний аналіз.\n"
-                          "Оскільки залишки моделі не відповідають нормальному розподілу (p ≤ 0.05),\n"
-                          "параметричний split-plot аналіз є методично некоректним.\n\n"
-                          "Що можна зробити:\n"
-                          "• спробувати трансформацію даних (log/√/Box-Cox) і повторити;\n"
-                          "• або вибрати CRD/RCBD і виконати непараметричний аналіз."),
-                    fg="#c62828",
-                    justify="left"
-                ).pack(anchor="w", pady=(0, 10))
-                options = []
-            else:
-                msg = ("Дані експерименту не відповідають принципам нормального розподілу\n"
-                       "за методом Шапіра-Вілка.\n"
-                       "Виберіть один з непараметричних типів аналізу.")
-                tk.Label(frm, text=msg, fg="#c62828", justify="left").pack(anchor="w", pady=(0, 10))
-
-                if design == "crd":
-                    options = [
-                        ("Краскела–Уолліса", "kw"),
-                        ("Манна-Уітні", "mw"),
-                    ]
-                else:
-                    if num_variants == 2:
-                        options = [("Wilcoxon (парний)", "wilcoxon")]
-                    else:
-                        options = [("Friedman", "friedman")]
-
-        out = {"ok": False, "method": None}
-
-        if not options:
-            def on_ok_close():
-                dlg.destroy()
-            btns = tk.Frame(frm)
-            btns.pack(fill=tk.X, pady=(12, 0))
-            tk.Button(btns, text="OK", width=10, command=on_ok_close).pack(side=tk.LEFT, padx=6)
-            dlg.update_idletasks()
-            center_window(dlg)
-            dlg.bind("<Return>", lambda e: on_ok_close())
-            dlg.grab_set()
-            self.root.wait_window(dlg)
-            return out
-
-        var = tk.StringVar(value=options[0][1])
-        for text, val in options:
-            tk.Radiobutton(frm, text=text, variable=var, value=val, font=rb_font).pack(anchor="w", pady=3)
-
-        def on_ok():
-            out["ok"] = True
-            out["method"] = var.get()
-            dlg.destroy()
-
-        btns = tk.Frame(frm)
-        btns.pack(fill=tk.X, pady=(12, 0))
-        tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=6)
-        tk.Button(btns, text="Скасувати", width=12, command=lambda: dlg.destroy()).pack(side=tk.LEFT, padx=6)
-
-        dlg.update_idletasks()
-        center_window(dlg)
-        dlg.bind("<Return>", lambda e: on_ok())
-        dlg.grab_set()
-        self.root.wait_window(dlg)
-        return out
-
-    def show_about(self):
-        messagebox.showinfo(
-            "Розробник",
-            "S.A.D. — Статистичний аналіз даних\n"
-            "Версія: 1.0\n"
-            "Розробик: Чаплоуцький Андрій Миколайович\n"
-            "Уманський національний університет"
-        )
-
-    # ----------------------------------------------------------
-    # Rename factor
-    # ----------------------------------------------------------
-    def rename_factor_by_col(self, col_idx: int):
-        if col_idx < 0 or col_idx >= self.factors_count:
-            return
-        fkey = self.factor_keys[col_idx]
-        old = self.factor_title(fkey)
-
-        dlg = tk.Toplevel(self.table_win if self.table_win else self.root)
-        dlg.title("Перейменування фактора")
-        dlg.resizable(False, False)
-        set_window_icon(dlg)
-
-        frm = tk.Frame(dlg, padx=14, pady=12)
-        frm.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(frm, text=f"Нова назва для {fkey}:", fg="#000000").grid(row=0, column=0, sticky="w")
-        e = tk.Entry(frm, width=36, fg="#000000")
-        e.grid(row=1, column=0, pady=(6, 0))
-        e.insert(0, old)
-        e.select_range(0, "end")
-        e.focus_set()
-
-        def ok():
-            new = e.get().strip()
-            if not new:
-                messagebox.showwarning("Помилка", "Назва не може бути порожньою.")
-                return
-            self._set_factor_title(fkey, new)
-
-            if self.header_labels and col_idx < len(self.header_labels):
-                self.header_labels[col_idx].configure(text=new)
-
-            self.factor_names = [self.factor_title(fk) for fk in self.factor_keys]
-            rep_names = [self.header_labels[j].cget("text") for j in range(self.factors_count, self.cols)]
-            self.column_names = self.factor_names + rep_names
-
-            dlg.destroy()
-
-        btns = tk.Frame(frm)
-        btns.grid(row=2, column=0, pady=(10, 0), sticky="w")
-        tk.Button(btns, text="OK", width=10, command=ok).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Button(btns, text="Скасувати", width=12, command=dlg.destroy).pack(side=tk.LEFT)
-
-        dlg.update_idletasks()
-        center_window(dlg)
-        dlg.bind("<Return>", lambda ev: ok())
-        dlg.grab_set()
-
-    # ----------------------------------------------------------
-    # Table window
-    # ----------------------------------------------------------
-    def open_table(self, factors_count):
-        if self.table_win and tk.Toplevel.winfo_exists(self.table_win):
-            self.table_win.destroy()
-
-        self.factors_count = factors_count
-        self.factor_keys = ["A", "B", "C", "D"][:factors_count]
-
-        for fk in self.factor_keys:
-            if fk not in self.factor_title_map:
-                self._set_factor_title(fk, f"Фактор {fk}")
-
-        self.table_win = tk.Toplevel(self.root)
-        self.table_win.title(f"S.A.D. — {factors_count}-факторний аналіз")
-        self.table_win.geometry("1280x720")
-        set_window_icon(self.table_win)
-
-        self.repeat_count = 6
-        self.factor_names = [self.factor_title(fk) for fk in self.factor_keys]
-        self.column_names = self.factor_names + [f"Повт.{i+1}" for i in range(self.repeat_count)]
-
-        ctl = tk.Frame(self.table_win, padx=6, pady=6)
-        ctl.pack(fill=tk.X)
-
-        btn_texts = [
-            "Додати рядок", "Видалити рядок",
-            "Додати стовпчик", "Видалити стовпчик",
-            "Вставити з буфера", "Завантажити Excel",
-            "Аналіз даних", "Розробник",
-        ]
-        btn_font = fit_font_size_to_texts(btn_texts, family="Times New Roman", start=14, min_size=9, target_px=150)
-
-        bw = 16
-        bh = 1
-        padx = 3
-        pady = 2
-
-        tk.Button(ctl, text="Додати рядок", width=bw, height=bh, font=btn_font,
-                  command=self.add_row).pack(side=tk.LEFT, padx=padx, pady=pady)
-        tk.Button(ctl, text="Видалити рядок", width=bw, height=bh, font=btn_font,
-                  command=self.delete_row).pack(side=tk.LEFT, padx=padx, pady=pady)
-        tk.Button(ctl, text="Додати стовпчик", width=bw, height=bh, font=btn_font,
-                  command=self.add_column).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
-        tk.Button(ctl, text="Видалити стовпчик", width=bw, height=bh, font=btn_font,
-                  command=self.delete_column).pack(side=tk.LEFT, padx=padx, pady=pady)
-        tk.Button(ctl, text="Вставити з буфера", width=bw + 2, height=bh, font=btn_font,
-                  command=self.paste_from_focus).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
-
-        # ── НОВА КНОПКА: Завантажити з Excel ──
-        excel_btn = tk.Button(ctl, text="Завантажити Excel", width=bw + 2, height=bh, font=btn_font,
-                              bg="#1a6b1a", fg="white", command=self.load_from_excel)
-        excel_btn.pack(side=tk.LEFT, padx=padx, pady=pady)
-        if not HAS_OPENPYXL:
-            excel_btn.configure(state="disabled", text="Excel (встановіть openpyxl)")
-
-        tk.Button(ctl, text="Аналіз даних", width=bw, height=bh, font=btn_font,
-                  bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=(10, padx), pady=pady)
-        tk.Button(ctl, text="Розробник", width=bw, height=bh, font=btn_font,
-                  command=self.show_about).pack(side=tk.RIGHT, padx=padx, pady=pady)
-
-        self.canvas = tk.Canvas(self.table_win)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        sb = ttk.Scrollbar(self.table_win, orient="vertical", command=self.canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.configure(yscrollcommand=sb.set)
-
-        self.inner = tk.Frame(self.canvas)
-        self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-
-        self.rows = 12
-        self.cols = len(self.column_names)
-        self.entries = []
-        self.header_labels = []
-
-        # headers
-        for j, name in enumerate(self.column_names):
-            lbl = tk.Label(self.inner, text=name, relief=tk.RIDGE, width=COL_W, bg="#f0f0f0", fg="#000000")
-            lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
-            self.header_labels.append(lbl)
-            if j < self.factors_count:
-                lbl.bind("<Double-Button-1>", lambda e, col=j: self.rename_factor_by_col(col))
-
-        # cells
-        for i in range(self.rows):
-            row_entries = []
-            for j in range(self.cols):
-                e = self._make_entry(self.inner)
-                e.grid(row=i + 1, column=j, padx=2, pady=2)
-                self.bind_cell(e)
-                row_entries.append(e)
-            self.entries.append(row_entries)
-
-        self.inner.update_idletasks()
-        self.canvas.config(scrollregion=self.canvas.bbox("all"))
-
-        self.entries[0][0].focus_set()
-
-        self.table_win.bind("<Control-v>", self.on_paste)
-        self.table_win.bind("<Control-V>", self.on_paste)
-
-    def _make_entry(self, parent, **kwargs) -> tk.Entry:
-        """Фабричний метод для створення комірки таблиці."""
-        return tk.Entry(
-            parent,
-            width=COL_W,
-            fg="#000000",
-            highlightthickness=1,
-            highlightbackground="#c0c0c0",
-            highlightcolor="#c0c0c0",
-            **kwargs
-        )
-
-    # ----------------------------------------------------------
-    # Table editing
-    # ----------------------------------------------------------
-    def add_row(self):
-        i = len(self.entries)
-        row_entries = []
-        for j in range(self.cols):
-            e = self._make_entry(self.inner)
-            e.grid(row=i + 1, column=j, padx=2, pady=2)
-            self.bind_cell(e)
-            row_entries.append(e)
-        self.entries.append(row_entries)
-        self.rows += 1
-        self.inner.update_idletasks()
-        self.canvas.config(scrollregion=self.canvas.bbox("all"))
-
-    def delete_row(self):
-        if not self.entries:
-            return
-        last = self.entries.pop()
-        for e in last:
-            e.destroy()
-        self.rows -= 1
-        self.inner.update_idletasks()
-        self.canvas.config(scrollregion=self.canvas.bbox("all"))
-
-    def add_column(self):
-        self.cols += 1
-        col_idx = self.cols - 1
-        name = f"Повт.{col_idx - self.factors_count + 1}"
-
-        lbl = tk.Label(self.inner, text=name, relief=tk.RIDGE, width=COL_W, bg="#f0f0f0", fg="#000000")
-        lbl.grid(row=0, column=col_idx, padx=2, pady=2, sticky="nsew")
-        self.header_labels.append(lbl)
-
-        for i, row in enumerate(self.entries):
-            e = self._make_entry(self.inner)
-            e.grid(row=i + 1, column=col_idx, padx=2, pady=2)
-            self.bind_cell(e)
-            row.append(e)
-
-        self.inner.update_idletasks()
-        self.canvas.config(scrollregion=self.canvas.bbox("all"))
-
-    def delete_column(self):
-        if self.cols <= self.factors_count + 1:
-            return
-        if self.header_labels:
-            lbl = self.header_labels.pop()
-            lbl.destroy()
-        for row in self.entries:
-            w = row.pop()
-            w.destroy()
-        self.cols -= 1
-        self.inner.update_idletasks()
-        self.canvas.config(scrollregion=self.canvas.bbox("all"))
-
-    def find_pos(self, widget):
-        for i, row in enumerate(self.entries):
-            for j, cell in enumerate(row):
-                if cell is widget:
-                    return i, j
+        b=self._sel_bounds()
+        if b is None: return "break"
+        r1,c1,r2,c2=b
+        lines=[]
+        for r in range(r1,r2+1):
+            row=[]
+            for c in range(c1,c2+1):
+                try: row.append(self.entries[r][c].get())
+                except Exception: row.append("")
+            lines.append("\t".join(row))
+        text="\n".join(lines)
+        self.table_win.clipboard_clear(); self.table_win.clipboard_append(text)
+        return "break"
+
+    # ── navigation ────────────────────────────────────────────
+    def _on_enter(self,event=None):
+        pos=self._pos(event.widget)
+        if not pos: return "break"
+        i,j=pos; ni=i+1
+        if ni>=len(self.entries): self.add_row()
+        self.entries[ni][j].focus_set(); self.entries[ni][j].icursor(tk.END)
+        return "break"
+
+    def _on_arrow(self,event=None):
+        pos=self._pos(event.widget)
+        if not pos: return "break"
+        i,j=pos
+        if event.keysym=="Up":    i=max(0,i-1)
+        elif event.keysym=="Down":  i=min(len(self.entries)-1,i+1)
+        elif event.keysym=="Left":  j=max(0,j-1)
+        elif event.keysym=="Right": j=min(len(self.entries[i])-1,j+1)
+        self.entries[i][j].focus_set(); self.entries[i][j].icursor(tk.END)
+        return "break"
+
+    def _on_paste(self,event=None):
+        widget=event.widget if event else self.table_win.focus_get()
+        if not isinstance(widget,tk.Entry): return "break"
+        try: data=self.table_win.clipboard_get()
+        except Exception: return "break"
+        rows=[r for r in data.splitlines() if r!=""]
+        pos=self._pos(widget)
+        if not pos: return "break"
+        r0,c0=pos
+        for ir,rt in enumerate(rows):
+            cols=rt.split("\t")
+            for jc,val in enumerate(cols):
+                rr=r0+ir; cc=c0+jc
+                while rr>=len(self.entries): self.add_row()
+                if cc>=self.cols: continue
+                self.entries[rr][cc].delete(0,tk.END); self.entries[rr][cc].insert(0,val)
+        return "break"
+
+    def _pos(self,widget):
+        for i,row in enumerate(self.entries):
+            for j,cell in enumerate(row):
+                if cell is widget: return i,j
         return None
 
-    def on_enter(self, event=None):
-        pos = self.find_pos(event.widget)
-        if not pos:
-            return "break"
-        i, j = pos
-        ni = i + 1
-        if ni >= len(self.entries):
-            self.add_row()
-        self.entries[ni][j].focus_set()
-        self.entries[ni][j].icursor(tk.END)
-        return "break"
+    # ── entry factory ─────────────────────────────────────────
+    def _mk_entry(self,parent):
+        return tk.Entry(parent,width=COL_W,fg="#000000",
+                        highlightthickness=1,highlightbackground="#c0c0c0",highlightcolor="#c0c0c0")
 
-    def on_arrow(self, event=None):
-        pos = self.find_pos(event.widget)
-        if not pos:
-            return "break"
-        i, j = pos
-        if event.keysym == "Up":
-            i = max(0, i - 1)
-        elif event.keysym == "Down":
-            i = min(len(self.entries) - 1, i + 1)
-        elif event.keysym == "Left":
-            j = max(0, j - 1)
-        elif event.keysym == "Right":
-            j = min(len(self.entries[i]) - 1, j + 1)
-        self.entries[i][j].focus_set()
-        self.entries[i][j].icursor(tk.END)
-        return "break"
-
-    def paste_from_focus(self):
-        w = self.table_win.focus_get()
-        if isinstance(w, tk.Entry):
-            class E:
-                pass
-            ev = E()
-            ev.widget = w
-            self.on_paste(ev)
-
-    def on_paste(self, event=None):
-        widget = event.widget if event else self.table_win.focus_get()
-        if not isinstance(widget, tk.Entry):
-            return "break"
-        try:
-            data = self.table_win.clipboard_get()
-        except Exception:
-            return "break"
-
-        rows_text = [r for r in data.splitlines() if r != ""]
-        pos = self.find_pos(widget)
-        if not pos:
-            return "break"
-        r0, c0 = pos
-
-        for i_r, row_text in enumerate(rows_text):
-            cols = row_text.split("\t")
-            for j_c, val in enumerate(cols):
-                rr = r0 + i_r
-                cc = c0 + j_c
-                while rr >= len(self.entries):
-                    self.add_row()
-                if cc >= self.cols:
-                    continue
-                self.entries[rr][cc].delete(0, tk.END)
-                self.entries[rr][cc].insert(0, val)
-
-        return "break"
-
-    # ----------------------------------------------------------
-    # ══ НОВА ФУНКЦІЯ: Завантаження з Excel файлу ══
-    # ----------------------------------------------------------
-    def load_from_excel(self):
-        """Відкрити Excel файл і завантажити дані у таблицю."""
-        if not HAS_OPENPYXL:
-            messagebox.showerror(
-                "openpyxl не встановлено",
-                "Для завантаження Excel файлів потрібна бібліотека openpyxl.\n"
-                "Встановіть її командою:\n\n  pip install openpyxl"
-            )
-            return
-
-        filepath = filedialog.askopenfilename(
-            parent=self.table_win,
-            title="Відкрити Excel файл",
-            filetypes=[
-                ("Excel файли", "*.xlsx *.xlsm *.xls"),
-                ("Усі файли", "*.*"),
-            ]
-        )
-        if not filepath:
-            return
-
-        # Якщо кілька аркушів — запитати який
-        try:
-            wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
-            sheet_names = wb.sheetnames
-        except Exception as ex:
-            messagebox.showerror("Помилка відкриття", f"Не вдалося відкрити файл:\n{ex}")
-            return
-
-        sheet_name = sheet_names[0]
-        if len(sheet_names) > 1:
-            sheet_name = self._ask_sheet(sheet_names)
-            if sheet_name is None:
-                wb.close()
-                return
-
-        try:
-            ws = wb[sheet_name]
-            raw_data = []
-            for row in ws.iter_rows(values_only=True):
-                raw_data.append(list(row))
-            wb.close()
-        except Exception as ex:
-            messagebox.showerror("Помилка читання", f"Не вдалося прочитати аркуш:\n{ex}")
-            return
-
-        if not raw_data:
-            messagebox.showwarning("Порожній файл", "Вибраний аркуш не містить даних.")
-            return
-
-        # Прибрати повністю порожні рядки/стовпці з кінця
-        raw_data = self._trim_empty(raw_data)
-        if not raw_data:
-            messagebox.showwarning("Порожній файл", "Аркуш не містить даних після очищення.")
-            return
-
-        ncols = max(len(r) for r in raw_data)
-        nrows = len(raw_data)
-
-        # Переконатись що в таблиці достатньо рядків і стовпців
-        while len(self.entries) < nrows:
-            self.add_row()
-        while self.cols < ncols:
-            self.add_column()
-
-        # Заповнити комірки
-        for i, row in enumerate(raw_data):
-            for j, val in enumerate(row):
-                if j >= self.cols:
-                    break
-                cell_val = "" if val is None else str(val).replace(",", ".")
-                # Замінити крапку назад якщо це рядок (назва рівня)
-                try:
-                    float(cell_val)
-                except ValueError:
-                    cell_val = "" if val is None else str(val)
-                self.entries[i][j].delete(0, tk.END)
-                self.entries[i][j].insert(0, cell_val)
-
-        self.inner.update_idletasks()
-        self.canvas.config(scrollregion=self.canvas.bbox("all"))
-
-        messagebox.showinfo(
-            "Завантажено",
-            f"Дані успішно завантажено з аркуша «{sheet_name}».\n"
-            f"Рядків: {nrows}, Стовпців: {ncols}."
-        )
-
-    def _ask_sheet(self, sheet_names: list) -> str | None:
-        """Діалог вибору аркуша Excel."""
-        dlg = tk.Toplevel(self.table_win)
-        dlg.title("Вибір аркуша")
-        dlg.resizable(False, False)
-        set_window_icon(dlg)
-
-        frm = tk.Frame(dlg, padx=14, pady=12)
-        frm.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(frm, text="Файл містить кілька аркушів.\nВиберіть потрібний:", fg="#000000").pack(anchor="w", pady=(0, 8))
-
-        var = tk.StringVar(value=sheet_names[0])
-        lb_frame = tk.Frame(frm)
-        lb_frame.pack(fill=tk.BOTH, expand=True)
-
-        scrollbar = ttk.Scrollbar(lb_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        lb = tk.Listbox(lb_frame, yscrollcommand=scrollbar.set, selectmode="single", height=min(10, len(sheet_names)))
-        for name in sheet_names:
-            lb.insert(tk.END, name)
-        lb.select_set(0)
-        lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=lb.yview)
-
-        out = {"name": None}
-
-        def on_ok():
-            sel = lb.curselection()
-            if sel:
-                out["name"] = sheet_names[sel[0]]
+    # ── rename factor ─────────────────────────────────────────
+    def rename_factor(self,col):
+        if col<0 or col>=self.factors_count: return
+        fk=self.factor_keys[col]; old=self.ftitle(fk)
+        dlg=tk.Toplevel(self.table_win or self.root)
+        dlg.title("Перейменування"); dlg.resizable(False,False); set_icon(dlg)
+        frm=tk.Frame(dlg,padx=14,pady=12); frm.pack()
+        tk.Label(frm,text=f"Назва для {fk}:").grid(row=0,column=0,sticky="w")
+        e=tk.Entry(frm,width=36,fg="#000000"); e.grid(row=1,column=0,pady=6)
+        e.insert(0,old); e.select_range(0,"end"); e.focus_set()
+        def ok():
+            new=e.get().strip()
+            if not new: messagebox.showwarning("","Назва не може бути порожньою."); return
+            self._set_ftitle(fk,new)
+            if col<len(self.header_labels): self.header_labels[col].configure(text=new)
             dlg.destroy()
+        bf=tk.Frame(frm); bf.grid(row=2,column=0,sticky="w",pady=(8,0))
+        tk.Button(bf,text="OK",width=10,command=ok).pack(side=tk.LEFT,padx=(0,6))
+        tk.Button(bf,text="Скасувати",width=12,command=dlg.destroy).pack(side=tk.LEFT)
+        dlg.update_idletasks(); center_win(dlg); dlg.bind("<Return>",lambda e:ok()); dlg.grab_set()
 
-        btns = tk.Frame(frm)
-        btns.pack(fill=tk.X, pady=(10, 0))
-        tk.Button(btns, text="OK", width=10, command=on_ok).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Button(btns, text="Скасувати", width=12, command=dlg.destroy).pack(side=tk.LEFT)
+    # ── design help ───────────────────────────────────────────
+    def show_design_help(self):
+        w=tk.Toplevel(self.root); w.title("Пояснення дизайнів"); w.resizable(False,False); set_icon(w)
+        frm=tk.Frame(w,padx=16,pady=14); frm.pack(fill=tk.BOTH,expand=True)
+        txt=("CRD (повна рандомізація)\n• Усі варіанти розміщені випадково без блоків.\n\n"
+             "RCBD (блочна рандомізація)\n• Є блоки; всередині блоку — всі варіанти.\n\n"
+             "Split-plot (спліт-плот)\n• Є головний фактор і підплощі.\n"
+             "• Для головного фактора використовується більша помилка (whole-plot error).")
+        t=tk.Text(frm,width=60,height=12,wrap="word"); t.insert("1.0",txt); t.configure(state="disabled"); t.pack()
+        tk.Button(frm,text="OK",width=10,command=w.destroy).pack(pady=(10,0))
+        w.update_idletasks(); center_win(w); w.grab_set()
 
-        lb.bind("<Double-Button-1>", lambda e: on_ok())
-        dlg.bind("<Return>", lambda e: on_ok())
+    # ── about ─────────────────────────────────────────────────
+    def show_about(self):
+        messagebox.showinfo("Розробник",
+            f"S.A.D. — Статистичний аналіз даних  v{APP_VER}\n"
+            "Розробник: Чаплоуцький Андрій Миколайович\n"
+            "Уманський національний університет")
 
-        dlg.update_idletasks()
-        center_window(dlg)
-        dlg.grab_set()
-        self.root.wait_window(dlg)
+    # ══════════════════════════════════════════════════════════
+    # OPEN TABLE
+    # ══════════════════════════════════════════════════════════
+    def open_table(self,fc):
+        if self.table_win and tk.Toplevel.winfo_exists(self.table_win):
+            self.table_win.destroy()
+        self.factors_count=fc
+        self.factor_keys=["A","B","C","D"][:fc]
+        for fk in self.factor_keys:
+            if fk not in self.factor_title_map: self._set_ftitle(fk,f"Фактор {fk}")
+        self.table_win=tk.Toplevel(self.root)
+        self.table_win.title(f"S.A.D. — {fc}-факторний аналіз")
+        self.table_win.geometry("1280x720"); set_icon(self.table_win)
+
+        self.repeat_count=6
+        self.column_names=[self.ftitle(fk) for fk in self.factor_keys]+[f"Повт.{i+1}" for i in range(self.repeat_count)]
+        ctl=tk.Frame(self.table_win,padx=6,pady=6); ctl.pack(fill=tk.X)
+
+        btn_texts=["Додати рядок","Видалити рядок","Додати стовпчик","Видалити стовпчик",
+                   "Вставити з буфера","Завантажити Excel","Аналіз даних","Розробник"]
+        bf_=fit_font(btn_texts,start=14,min_s=9,target=150)
+        bw,bh,px,py_=16,1,3,2
+
+        tk.Button(ctl,text="Додати рядок",width=bw,height=bh,font=bf_,command=self.add_row).pack(side=tk.LEFT,padx=px,pady=py_)
+        tk.Button(ctl,text="Видалити рядок",width=bw,height=bh,font=bf_,command=self.delete_row).pack(side=tk.LEFT,padx=px,pady=py_)
+        tk.Button(ctl,text="Додати стовпчик",width=bw,height=bh,font=bf_,command=self.add_column).pack(side=tk.LEFT,padx=(10,px),pady=py_)
+        tk.Button(ctl,text="Видалити стовпчик",width=bw,height=bh,font=bf_,command=self.delete_column).pack(side=tk.LEFT,padx=px,pady=py_)
+
+        tk.Button(ctl,text="Зберегти проект",width=bw,height=bh,font=bf_,
+                  command=self.save_project).pack(side=tk.LEFT,padx=(10,px),pady=py_)
+
+        tk.Button(ctl,text="Вставити з буфера",width=bw+2,height=bh,font=bf_,
+                  command=self._paste_from_focus).pack(side=tk.LEFT,padx=(6,px),pady=py_)
+        xbtn=tk.Button(ctl,text="Завантажити Excel",width=bw+2,height=bh,font=bf_,
+                       bg="#1a6b1a",fg="white",command=self.load_excel)
+        xbtn.pack(side=tk.LEFT,padx=px,pady=py_)
+        if not HAS_OPENPYXL: xbtn.configure(state="disabled",text="Excel (openpyxl!)")
+        tk.Button(ctl,text="Аналіз даних",width=bw,height=bh,font=bf_,
+                  bg="#c62828",fg="white",command=self.analyze).pack(side=tk.LEFT,padx=(10,px),pady=py_)
+        tk.Button(ctl,text="Розробник",width=bw,height=bh,font=bf_,
+                  command=self.show_about).pack(side=tk.RIGHT,padx=px,pady=py_)
+
+        self.canvas=tk.Canvas(self.table_win); self.canvas.pack(side=tk.LEFT,fill=tk.BOTH,expand=True)
+        sb=ttk.Scrollbar(self.table_win,orient="vertical",command=self.canvas.yview)
+        sb.pack(side=tk.RIGHT,fill=tk.Y); self.canvas.configure(yscrollcommand=sb.set)
+        self.inner=tk.Frame(self.canvas); self.canvas.create_window((0,0),window=self.inner,anchor="nw")
+
+        self.rows=12; self.cols=len(self.column_names)
+        self.entries=[]; self.header_labels=[]
+        for j,nm in enumerate(self.column_names):
+            lbl=tk.Label(self.inner,text=nm,relief=tk.RIDGE,width=COL_W,bg="#f0f0f0",fg="#000000")
+            lbl.grid(row=0,column=j,padx=2,pady=2,sticky="nsew")
+            self.header_labels.append(lbl)
+            if j<self.factors_count: lbl.bind("<Double-Button-1>",lambda e,c=j:self.rename_factor(c))
+        for i in range(self.rows):
+            row_e=[]
+            for j in range(self.cols):
+                e=self._mk_entry(self.inner); e.grid(row=i+1,column=j,padx=2,pady=2)
+                self.bind_cell(e); row_e.append(e)
+            self.entries.append(row_e)
+        self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        self.entries[0][0].focus_set()
+        self.table_win.bind("<Control-v>",self._on_paste)
+        self.table_win.bind("<Control-V>",self._on_paste)
+
+    # ── table editing ─────────────────────────────────────────
+    def add_row(self):
+        i=len(self.entries); row_e=[]
+        for j in range(self.cols):
+            e=self._mk_entry(self.inner); e.grid(row=i+1,column=j,padx=2,pady=2)
+            self.bind_cell(e); row_e.append(e)
+        self.entries.append(row_e); self.rows+=1
+        self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
+    def delete_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.rows-=1; self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
+    def add_column(self):
+        self.cols+=1; ci=self.cols-1
+        nm=f"Повт.{ci-self.factors_count+1}"
+        lbl=tk.Label(self.inner,text=nm,relief=tk.RIDGE,width=COL_W,bg="#f0f0f0",fg="#000000")
+        lbl.grid(row=0,column=ci,padx=2,pady=2,sticky="nsew"); self.header_labels.append(lbl)
+        for i,row in enumerate(self.entries):
+            e=self._mk_entry(self.inner); e.grid(row=i+1,column=ci,padx=2,pady=2)
+            self.bind_cell(e); row.append(e)
+        self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
+    def delete_column(self):
+        if self.cols<=self.factors_count+1: return
+        self.header_labels.pop().destroy()
+        for row in self.entries: row.pop().destroy()
+        self.cols-=1; self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
+    # ── paste from focused cell ───────────────────────────────
+    def _paste_from_focus(self):
+        w=self.table_win.focus_get()
+        if isinstance(w,tk.Entry):
+            class _E: widget=w
+            self._on_paste(_E())
+
+    # ── load Excel ────────────────────────────────────────────
+    def load_excel(self):
+        if not HAS_OPENPYXL: messagebox.showerror("","Встановіть openpyxl: pip install openpyxl"); return
+        path=filedialog.askopenfilename(parent=self.table_win,title="Відкрити Excel",
+                                        filetypes=[("Excel","*.xlsx *.xlsm *.xls"),("Усі","*.*")])
+        if not path: return
+        try:
+            wb=openpyxl.load_workbook(path,data_only=True,read_only=True)
+            snames=wb.sheetnames
+        except Exception as ex: messagebox.showerror("Помилка",str(ex)); return
+
+        sn=snames[0]
+        if len(snames)>1: sn=self._ask_sheet(snames); wb.close()
+        if sn is None: return
+
+        try:
+            wb2=openpyxl.load_workbook(path,data_only=True,read_only=True)
+            ws=wb2[sn]
+            raw=[[cell for cell in row] for row in ws.iter_rows(values_only=True)]
+            wb2.close()
+        except Exception as ex: messagebox.showerror("",str(ex)); return
+
+        while raw and all(v is None or str(v).strip()=="" for v in raw[-1]): raw.pop()
+        if not raw: messagebox.showwarning("","Аркуш порожній."); return
+        nc=max(len(r) for r in raw); nr=len(raw)
+        while len(self.entries)<nr: self.add_row()
+        while self.cols<nc: self.add_column()
+        for i,row in enumerate(raw):
+            for j,v in enumerate(row):
+                if j>=self.cols: break
+                cv="" if v is None else str(v).replace(",",".")
+                try: float(cv)
+                except ValueError: cv="" if v is None else str(v)
+                self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,cv)
+        self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        messagebox.showinfo("Завантажено",f"Аркуш «{sn}»: {nr} рядків, {nc} стовпців.")
+
+    def _ask_sheet(self,names):
+        dlg=tk.Toplevel(self.table_win); dlg.title("Вибір аркуша"); dlg.resizable(False,False); set_icon(dlg)
+        frm=tk.Frame(dlg,padx=14,pady=12); frm.pack()
+        tk.Label(frm,text="Виберіть аркуш:").pack(anchor="w",pady=(0,6))
+        sf=tk.Frame(frm); sf.pack()
+        sc=ttk.Scrollbar(sf); sc.pack(side=tk.RIGHT,fill=tk.Y)
+        lb=tk.Listbox(sf,yscrollcommand=sc.set,height=min(10,len(names)),selectmode="single")
+        for n in names: lb.insert(tk.END,n)
+        lb.select_set(0); lb.pack(side=tk.LEFT); sc.config(command=lb.yview)
+        out={"name":None}
+        def ok():
+            s=lb.curselection()
+            if s: out["name"]=names[s[0]]
+            dlg.destroy()
+        bf=tk.Frame(frm); bf.pack(pady=(10,0))
+        tk.Button(bf,text="OK",width=10,command=ok).pack(side=tk.LEFT,padx=(0,6))
+        tk.Button(bf,text="Скасувати",width=12,command=dlg.destroy).pack(side=tk.LEFT)
+        lb.bind("<Double-Button-1>",lambda e:ok()); dlg.bind("<Return>",lambda e:ok())
+        dlg.update_idletasks(); center_win(dlg); dlg.grab_set(); self.root.wait_window(dlg)
         return out["name"]
 
-    @staticmethod
-    def _trim_empty(data: list) -> list:
-        """Видалити порожні рядки з кінця."""
-        while data and all(v is None or str(v).strip() == "" for v in data[-1]):
-            data.pop()
-        return data
-
-    # ----------------------------------------------------------
-    # Collect data
-    # ----------------------------------------------------------
-    def used_repeat_columns(self):
-        rep_start = self.factors_count
-        rep_cols = list(range(rep_start, self.cols))
-        used = []
-        for c in rep_cols:
-            any_num = False
+    # ── collect data ──────────────────────────────────────────
+    def _used_rep(self):
+        rep_cols=[]
+        for c in range(self.factors_count,self.cols):
             for r in range(len(self.entries)):
-                s = self.entries[r][c].get().strip()
-                if not s:
-                    continue
-                try:
-                    float(s.replace(",", "."))
-                    any_num = True
-                    break
-                except Exception:
-                    continue
-            if any_num:
-                used.append(c)
-        return used
+                s=self.entries[r][c].get().strip()
+                if not s: continue
+                try: float(s.replace(",",".")); rep_cols.append(c); break
+                except Exception: continue
+        return rep_cols
 
-    def collect_long(self, design):
-        long = []
-        rep_cols = self.used_repeat_columns()
-        if not rep_cols:
-            return long, rep_cols
-
-        for i, row in enumerate(self.entries):
-            levels = []
-            for k in range(self.factors_count):
-                v = row[k].get().strip()
-                if v == "":
-                    v = f"рядок{i+1}"
-                levels.append(v)
-
-            for idx_c, c in enumerate(rep_cols):
-                s = row[c].get().strip()
-                if not s:
-                    continue
-                try:
-                    val = float(s.replace(",", "."))
-                except Exception:
-                    continue
-
-                rec = {"value": val}
-                if self.factors_count >= 1: rec["A"] = levels[0]
-                if self.factors_count >= 2: rec["B"] = levels[1]
-                if self.factors_count >= 3: rec["C"] = levels[2]
-                if self.factors_count >= 4: rec["D"] = levels[3]
-
-                if design in ("rcbd", "split"):
-                    rec["BLOCK"] = f"Блок {idx_c + 1}"
-
+    def collect_long(self,design):
+        long=[]; rep=self._used_rep()
+        if not rep: return long,rep
+        for i,row in enumerate(self.entries):
+            lvls=[row[k].get().strip() or f"рядок{i+1}" for k in range(self.factors_count)]
+            for ic,c in enumerate(rep):
+                s=row[c].get().strip()
+                if not s: continue
+                try: val=float(s.replace(",","."))
+                except Exception: continue
+                rec={"value":val}
+                for ki,fk in enumerate(self.factor_keys): rec[fk]=lvls[ki]
+                if design in ("rcbd","split"): rec["BLOCK"]=f"Блок {ic+1}"
                 long.append(rec)
+        return long,rep
 
-        return long, rep_cols
+    # ════════════════════════════════════════════════════════════
+    # DIALOGS: indicator/units, design, method
+    # ════════════════════════════════════════════════════════════
+    def ask_params(self):
+        dlg=tk.Toplevel(self.root); dlg.title("Параметри звіту"); dlg.resizable(False,False); set_icon(dlg)
+        frm=tk.Frame(dlg,padx=16,pady=16); frm.pack()
+        tk.Label(frm,text="Назва показника:").grid(row=0,column=0,sticky="w",pady=5)
+        e_ind=tk.Entry(frm,width=38,fg="#000000"); e_ind.grid(row=0,column=1,pady=5,padx=6)
+        tk.Label(frm,text="Одиниці виміру:").grid(row=1,column=0,sticky="w",pady=5)
+        e_un=tk.Entry(frm,width=38,fg="#000000"); e_un.grid(row=1,column=1,pady=5,padx=6)
 
-    # =========================================================
+        row_d=tk.Frame(frm); row_d.grid(row=2,column=0,columnspan=2,sticky="w",pady=(10,4))
+        tk.Label(row_d,text="Дизайн:").pack(side=tk.LEFT)
+        tk.Button(row_d,text=" ? ",width=3,command=self.show_design_help).pack(side=tk.LEFT,padx=6)
+        dv=tk.StringVar(value="crd"); rf=tk.Frame(frm); rf.grid(row=2,column=1,sticky="w",pady=(10,4),padx=(180,0))
+        rb_f=("Times New Roman",15)
+        tk.Radiobutton(rf,text="CRD",variable=dv,value="crd",font=rb_f).pack(anchor="w")
+        tk.Radiobutton(rf,text="RCBD",variable=dv,value="rcbd",font=rb_f).pack(anchor="w")
+        tk.Radiobutton(rf,text="Split-plot (лише параметричний)",variable=dv,value="split",font=rb_f).pack(anchor="w")
+
+        mfv=tk.StringVar(value="A"); sp_frm=tk.Frame(frm); sp_frm.grid(row=3,column=0,columnspan=2,sticky="w",pady=(6,0))
+        tk.Label(sp_frm,text="Головний фактор:").pack(side=tk.LEFT)
+        ttk.Combobox(sp_frm,textvariable=mfv,width=6,state="readonly",values=("A","B","C","D")).pack(side=tk.LEFT,padx=6)
+        sp_frm.grid_remove()
+        def _update_sp(*_): sp_frm.grid() if dv.get()=="split" else sp_frm.grid_remove(); dlg.update_idletasks()
+        dv.trace_add("write",_update_sp)
+
+        out={"ok":False,"indicator":"","units":"","design":"crd","split_main":"A"}
+        def ok():
+            out["indicator"]=e_ind.get().strip(); out["units"]=e_un.get().strip()
+            out["design"]=dv.get(); out["split_main"]=mfv.get()
+            if not out["indicator"] or not out["units"]:
+                messagebox.showwarning("","Заповніть показник та одиниці виміру."); return
+            out["ok"]=True; dlg.destroy()
+        bf=tk.Frame(frm); bf.grid(row=4,column=0,columnspan=2,pady=(12,0))
+        tk.Button(bf,text="OK",width=10,command=ok).pack(side=tk.LEFT,padx=4)
+        tk.Button(bf,text="Скасувати",width=12,command=dlg.destroy).pack(side=tk.LEFT,padx=4)
+        dlg.update_idletasks(); center_win(dlg); e_ind.focus_set()
+        dlg.bind("<Return>",lambda e:ok()); dlg.grab_set(); self.root.wait_window(dlg)
+        return out
+
+    def choose_method(self,p_norm,design,n_var):
+        dlg=tk.Toplevel(self.root); dlg.title("Вибір методу"); dlg.resizable(False,False); set_icon(dlg)
+        frm=tk.Frame(dlg,padx=16,pady=14); frm.pack()
+        normal=(p_norm is not None) and (not math.isnan(p_norm)) and (p_norm>0.05)
+        rb_f=("Times New Roman",15)
+
+        if normal:
+            tk.Label(frm,text="Дані відповідають нормальному розподілу (Shapiro–Wilk).",
+                     fg="#000000",justify="left").pack(anchor="w",pady=(0,8))
+            options=[("НІР₀₅ (LSD)","lsd"),("Тест Тьюкі","tukey"),("Тест Дункана","duncan"),("Бонферроні","bonferroni")]
+        else:
+            if design=="split":
+                tk.Label(frm,text=(
+                    "Split-plot підтримує лише параметричний аналіз.\n"
+                    "Залишки не відповідають нормальному розподілу → аналіз некоректний.\n\n"
+                    "Рекомендації: трансформуйте дані або оберіть CRD/RCBD."),
+                    fg="#c62828",justify="left").pack(anchor="w")
+                options=[]
+            else:
+                tk.Label(frm,text=(
+                    "Дані НЕ відповідають нормальному розподілу (Shapiro–Wilk).\n"
+                    "Оберіть метод аналізу:"),fg="#c62828",justify="left").pack(anchor="w",pady=(0,8))
+                if design=="crd":
+                    options=[("Краскела–Уолліса","kw"),("Манна-Уітні","mw"),
+                             ("🔁 Логарифмування даних + параметричний","log_param")]
+                else:
+                    if n_var==2: options=[("Wilcoxon (парний)","wilcoxon"),
+                                          ("🔁 Логарифмування + параметричний","log_param")]
+                    else:        options=[("Friedman","friedman"),
+                                          ("🔁 Логарифмування + параметричний","log_param")]
+
+        out={"ok":False,"method":None}
+        if not options:
+            tk.Button(frm,text="OK",width=10,command=dlg.destroy).pack(pady=(10,0))
+            dlg.update_idletasks(); center_win(dlg); dlg.bind("<Return>",lambda e:dlg.destroy())
+            dlg.grab_set(); self.root.wait_window(dlg); return out
+
+        var=tk.StringVar(value=options[0][1])
+        for txt,val in options: tk.Radiobutton(frm,text=txt,variable=var,value=val,font=rb_f).pack(anchor="w",pady=2)
+        def ok():
+            out["ok"]=True; out["method"]=var.get(); dlg.destroy()
+        bf=tk.Frame(frm); bf.pack(pady=(12,0))
+        tk.Button(bf,text="OK",width=10,command=ok).pack(side=tk.LEFT,padx=4)
+        tk.Button(bf,text="Скасувати",width=12,command=dlg.destroy).pack(side=tk.LEFT,padx=4)
+        dlg.update_idletasks(); center_win(dlg); dlg.bind("<Return>",lambda e:ok())
+        dlg.grab_set(); self.root.wait_window(dlg); return out
+
+    # ════════════════════════════════════════════════════════════
     # ANALYZE
-    # =========================================================
+    # ════════════════════════════════════════════════════════════
     def analyze(self):
-        created_at = datetime.now()
+        created=datetime.now()
+        params=self.ask_params()
+        if not params["ok"]: return
+        indicator=params["indicator"]; units=params["units"]
+        design=params["design"]; split_main=params["split_main"]
 
-        params = self.ask_indicator_units()
-        if not params["ok"]:
-            return
+        long,used_rep=self.collect_long(design)
+        if not long:
+            messagebox.showwarning("","Немає числових даних."); return
+        values=np.array([r["value"] for r in long],dtype=float)
+        if len(values)<3: messagebox.showinfo("","Надто мало даних."); return
 
-        indicator = params["indicator"]
-        units = params["units"]
-        design = params["design"]
-        split_main = params.get("split_main", "A")
+        lbf={f:first_seen([r.get(f) for r in long]) for f in self.factor_keys}
+        var_order=first_seen([tuple(r.get(f) for f in self.factor_keys) for r in long])
+        v_names=[" | ".join(map(str,k)) for k in var_order]
+        n_var=len(var_order)
 
-        long, used_rep_cols = self.collect_long(design)
-        if len(long) == 0:
-            messagebox.showwarning("Помилка", "Немає числових даних для аналізу.\nПеревірте повторності та значення.")
-            return
-
-        values = np.array([r["value"] for r in long], dtype=float)
-        if len(values) < 3:
-            messagebox.showinfo("Результат", "Надто мало даних для аналізу.")
-            return
-
-        levels_by_factor = {f: first_seen_order([r.get(f) for r in long]) for f in self.factor_keys}
-        variant_order = first_seen_order([tuple(r.get(f) for f in self.factor_keys) for r in long])
-        v_names = [" | ".join(map(str, k)) for k in variant_order]
-        num_variants = len(variant_order)
-
+        # --- run model ---
         try:
-            if design == "crd":
-                res = anova_n_way(long, self.factor_keys, levels_by_factor)
-                residuals = np.array(res.get("residuals", []), dtype=float)
-            elif design == "rcbd":
-                res = anova_rcbd_ols(long, self.factor_keys, levels_by_factor, block_key="BLOCK")
-                residuals = np.array(res.get("residuals", []), dtype=float)
+            if design=="crd":   res=anova_crd(long,self.factor_keys,lbf)
+            elif design=="rcbd": res=anova_rcbd(long,self.factor_keys,lbf)
             else:
-                if split_main not in self.factor_keys:
-                    split_main = self.factor_keys[0]
-                res = anova_splitplot_ols(long, self.factor_keys, main_factor=split_main, block_key="BLOCK")
-                residuals = np.array(res.get("residuals", []), dtype=float)
-        except Exception as ex:
-            messagebox.showerror("Помилка аналізу", str(ex))
-            return
+                if split_main not in self.factor_keys: split_main=self.factor_keys[0]
+                res=anova_split(long,self.factor_keys,split_main)
+        except Exception as ex: messagebox.showerror("Помилка моделі",str(ex)); return
 
-        try:
-            W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
-        except Exception:
-            W, p_norm = (np.nan, np.nan)
+        residuals=np.array(res.get("residuals",[]),dtype=float)
+        try: W,p_norm=shapiro(residuals) if len(residuals)>=3 else (np.nan,np.nan)
+        except Exception: W,p_norm=np.nan,np.nan
 
-        normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
-        if design == "split" and not normal:
-            messagebox.showwarning(
-                "Split-plot: аналіз неможливий",
-                "Обрано дизайн Split-plot, який у цій програмі реалізовано лише для параметричних методів.\n"
-                "Оскільки залишки моделі не відповідають нормальному розподілу (p ≤ 0.05),\n"
-                "параметричний split-plot аналіз є методично некоректним.\n\n"
-                "Рекомендації:\n"
-                "• застосувати трансформацію даних (log/√/Box-Cox) і повторити аналіз;\n"
-                "• або вибрати CRD/RCBD і виконати непараметричний аналіз."
-            )
-            return
+        normal=(not math.isnan(p_norm)) and (p_norm>0.05)
+        if design=="split" and not normal:
+            messagebox.showwarning("Split-plot",
+                "Залишки не відповідають нормальному розподілу.\n"
+                "Split-plot аналіз некоректний. Розгляньте трансформацію або інший дизайн."); return
 
-        choice = self.choose_method_window(p_norm, design, num_variants)
-        if not choice["ok"]:
-            return
-        method = choice["method"]
+        choice=self.choose_method(p_norm,design,n_var)
+        if not choice["ok"]: return
+        method=choice["method"]
 
-        MS_error = res.get("MS_error", np.nan)
-        df_error = res.get("df_error", np.nan)
-        MS_whole = res.get("MS_whole", np.nan)
-        df_whole = res.get("df_whole", np.nan)
-        split_main_factor = res.get("main_factor", split_main) if design == "split" else None
+        # --- log-transform option ---
+        log_applied=False
+        if method=="log_param":
+            if np.any(values<=0):
+                messagebox.showwarning("Логарифмування","Дані містять нулі або від'ємні значення.\n"
+                    "Логарифмування неможливе. Виберіть інший метод."); return
+            long_orig=long; long=[dict(r,value=math.log(r["value"])) for r in long]
+            values=np.array([r["value"] for r in long],dtype=float); log_applied=True
+            try:
+                if design=="crd":   res=anova_crd(long,self.factor_keys,lbf)
+                elif design=="rcbd": res=anova_rcbd(long,self.factor_keys,lbf)
+                else: res=anova_split(long,self.factor_keys,split_main)
+            except Exception as ex: messagebox.showerror("",str(ex)); return
+            residuals=np.array(res.get("residuals",[]),dtype=float)
+            try: W,p_norm=shapiro(residuals) if len(residuals)>=3 else (np.nan,np.nan)
+            except Exception: W,p_norm=np.nan,np.nan
+            method="lsd"
+            messagebox.showinfo("Логарифмування",
+                f"Дані прологарифмовані (натуральний логарифм).\n"
+                f"Shapiro–Wilk після трансформації: p={fmt(p_norm,4)}\n"
+                +("✓ Нормальний розподіл" if p_norm>0.05 else "✗ Розподіл все ще не нормальний"))
 
-        vstats = variant_mean_sd(long, self.factor_keys)
-        v_means = {k: vstats[k][0] for k in vstats.keys()}
-        v_sds   = {k: vstats[k][1] for k in vstats.keys()}
-        v_ns    = {k: vstats[k][2] for k in vstats.keys()}
+        MS_err=res.get("MS_error",np.nan); df_err=res.get("df_error",np.nan)
+        MS_wp=res.get("MS_whole",np.nan);  df_wp=res.get("df_whole",np.nan)
+        split_mf=res.get("main_factor",split_main) if design=="split" else None
 
-        means1 = {v_names[i]: v_means.get(variant_order[i], np.nan) for i in range(len(variant_order))}
-        ns1    = {v_names[i]: v_ns.get(variant_order[i], 0) for i in range(len(variant_order))}
-        groups1 = {}
-        g_variant = groups_by_keys(long, tuple(self.factor_keys))
-        for i, k in enumerate(variant_order):
-            groups1[v_names[i]] = g_variant.get(k, [])
+        # --- descriptive ---
+        vs=vstats(long,self.factor_keys)
+        v_means={k:vs[k][0] for k in vs}; v_sds={k:vs[k][1] for k in vs}; v_ns={k:vs[k][2] for k in vs}
+        means1={v_names[i]:v_means.get(var_order[i],np.nan) for i in range(n_var)}
+        ns1={v_names[i]:v_ns.get(var_order[i],0) for i in range(n_var)}
+        gv=groups_by(long,tuple(self.factor_keys))
+        groups1={v_names[i]:gv.get(var_order[i],[]) for i in range(n_var)}
 
-        factor_groups = {f: {k[0]: v for k, v in groups_by_keys(long, (f,)).items()} for f in self.factor_keys}
-        factor_means  = {f: {lvl: float(np.mean(arr)) if len(arr) else np.nan for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
-        factor_ns     = {f: {lvl: len(arr) for lvl, arr in factor_groups[f].items()} for f in self.factor_keys}
+        fg={f:{k[0]:v for k,v in groups_by(long,(f,)).items()} for f in self.factor_keys}
+        fm={f:{lv:float(np.mean(arr)) if arr else np.nan for lv,arr in fg[f].items()} for f in self.factor_keys}
+        fn={f:{lv:len(arr) for lv,arr in fg[f].items()} for f in self.factor_keys}
 
-        factor_medians = {}
-        factor_q = {}
-        for f in self.factor_keys:
-            factor_medians[f] = {}
-            factor_q[f] = {}
-            for lvl, arr in factor_groups[f].items():
-                med, q1, q3 = median_q1_q3(arr)
-                factor_medians[f][lvl] = med
-                factor_q[f][lvl] = (q1, q3)
+        fmed={f:{lv:median_q(arr)[0] for lv,arr in fg[f].items()} for f in self.factor_keys}
+        fq={f:{lv:median_q(arr)[1:] for lv,arr in fg[f].items()} for f in self.factor_keys}
 
-        ranks_by_variant = mean_ranks_by_key(long, key_func=lambda rec: " | ".join(str(rec.get(f)) for f in self.factor_keys))
-        ranks_by_factor  = {f: mean_ranks_by_key(long, key_func=lambda rec, ff=f: rec.get(ff)) for f in self.factor_keys}
+        vmed={var_order[i]:median_q(groups1[v_names[i]])[0] for i in range(n_var)}
+        vq={var_order[i]:median_q(groups1[v_names[i]])[1:] for i in range(n_var)}
 
-        v_medians = {}
-        v_q = {}
-        for i, k in enumerate(variant_order):
-            name = v_names[i]
-            arr = groups1.get(name, [])
-            med, q1, q3 = median_q1_q3(arr)
-            v_medians[k] = med
-            v_q[k] = (q1, q3)
+        rkv=mean_ranks(long,lambda r:" | ".join(str(r.get(f)) for f in self.factor_keys))
+        rkf={f:mean_ranks(long,lambda r,ff=f:r.get(ff)) for f in self.factor_keys}
 
-        bf_F, bf_p = (np.nan, np.nan)
-        if method in ("lsd", "tukey", "duncan", "bonferroni"):
-            bf_F, bf_p = brown_forsythe_from_groups(groups1)
+        # --- Levene ---
+        lev_F,lev_p=(np.nan,np.nan)
+        if method in ("lsd","tukey","duncan","bonferroni"):
+            lev_F,lev_p=levene_test(groups1)
 
-        kw_H, kw_p, kw_df, kw_eps2 = (np.nan, np.nan, np.nan, np.nan)
-        do_posthoc = True
-        fr_chi2, fr_p, fr_df, fr_W = (np.nan, np.nan, np.nan, np.nan)
-        wil_stat, wil_p = (np.nan, np.nan)
-        rcbd_pairwise_rows = []
-        rcbd_sig = {}
+        # --- posthoc ---
+        kw_H=kw_p=kw_df=kw_eps=np.nan; do_ph=True
+        fr_chi=fr_p=fr_df=fr_W=np.nan
+        wil_s=wil_p=np.nan
+        rcbd_ph_rows=[]; rcbd_sig={}
+        lf={f:{lv:"" for lv in lbf[f]} for f in self.factor_keys}
+        lnamed={nm:"" for nm in v_names}
+        ph_rows=[]; fpt={}
 
-        letters_factor = {f: {lvl: "" for lvl in levels_by_factor[f]} for f in self.factor_keys}
-        letters_named  = {name: "" for name in v_names}
-        pairwise_rows  = []
-        factor_pairwise_tables = {}
-
-        if method == "lsd":
+        if method=="lsd":
             for f in self.factor_keys:
-                lvls = levels_by_factor[f]
-                if design == "split" and f == split_main_factor:
-                    sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_whole, df_whole, alpha=ALPHA)
-                else:
-                    sig_f = lsd_sig_matrix(lvls, factor_means[f], factor_ns[f], MS_error, df_error, alpha=ALPHA)
-                letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig_f)
-            if design != "split":
-                sigv = lsd_sig_matrix(v_names, means1, ns1, MS_error, df_error, alpha=ALPHA)
-                letters_named = cld_multi_letters(v_names, means1, sigv)
+                lvls=lbf[f]; MS_=(MS_wp if (design=="split" and f==split_mf) else MS_err)
+                df_=(df_wp if (design=="split" and f==split_mf) else df_err)
+                lf[f]=cld(lvls,fm[f],lsd_sig(lvls,fm[f],fn[f],MS_,df_))
+            if design!="split":
+                lnamed=cld(v_names,means1,lsd_sig(v_names,means1,ns1,MS_err,df_err))
 
-        elif method in ("tukey", "duncan", "bonferroni"):
-            if design != "split":
-                pairwise_rows, sig = pairwise_param_short_variants_pm(v_names, means1, ns1, MS_error, df_error, method, alpha=ALPHA)
-                letters_named = cld_multi_letters(v_names, means1, sig)
+        elif method in ("tukey","duncan","bonferroni"):
+            if design!="split":
+                ph_rows,sig=pairwise_param(v_names,means1,ns1,MS_err,df_err,method)
+                lnamed=cld(v_names,means1,sig)
                 for f in self.factor_keys:
-                    lvls = levels_by_factor[f]
-                    rows_f, sig_f = pairwise_param_short_variants_pm(lvls, factor_means[f], factor_ns[f], MS_error, df_error, method, alpha=ALPHA)
-                    factor_pairwise_tables[f] = rows_f
-                    letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig_f)
-            if design == "split":
+                    r_,s_=pairwise_param(lbf[f],fm[f],fn[f],MS_err,df_err,method)
+                    fpt[f]=r_; lf[f]=cld(lbf[f],fm[f],s_)
+            else:
                 for f in self.factor_keys:
-                    lvls = levels_by_factor[f]
-                    if f == split_main_factor:
-                        rows_f, sig_f = pairwise_param_short_variants_pm(lvls, factor_means[f], factor_ns[f], MS_whole, df_whole, method, alpha=ALPHA)
-                    else:
-                        rows_f, sig_f = pairwise_param_short_variants_pm(lvls, factor_means[f], factor_ns[f], MS_error, df_error, method, alpha=ALPHA)
-                    factor_pairwise_tables[f] = rows_f
-                    letters_factor[f] = cld_multi_letters(lvls, factor_means[f], sig_f)
+                    MS_=MS_wp if f==split_mf else MS_err; df_=df_wp if f==split_mf else df_err
+                    r_,s_=pairwise_param(lbf[f],fm[f],fn[f],MS_,df_,method)
+                    fpt[f]=r_; lf[f]=cld(lbf[f],fm[f],s_)
 
-        elif method == "kw":
+        elif method=="kw":
             try:
-                kw_samples = [groups1[name] for name in v_names if len(groups1[name]) > 0]
-                if len(kw_samples) >= 2:
-                    kw_res = kruskal(*kw_samples)
-                    kw_H   = float(kw_res.statistic)
-                    kw_p   = float(kw_res.pvalue)
-                    kw_df  = int(len(kw_samples) - 1)
-                    kw_eps2 = epsilon_squared_kw(kw_H, n=len(long), k=len(kw_samples))
-            except Exception:
-                pass
+                smp=[groups1[n] for n in v_names if len(groups1[n])>0]
+                if len(smp)>=2:
+                    kwr=kruskal(*smp); kw_H=float(kwr.statistic); kw_p=float(kwr.pvalue)
+                    kw_df=len(smp)-1; kw_eps=eps2_kw(kw_H,len(long),len(smp))
+            except Exception: pass
+            if not math.isnan(kw_p) and kw_p>=ALPHA: do_ph=False
+            if do_ph:
+                ph_rows,sig=pairwise_mw(v_names,groups1)
+                lnamed=cld(v_names,{n:float(np.median(groups1[n])) if groups1[n] else np.nan for n in v_names},sig)
 
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)) and kw_p >= ALPHA:
-                do_posthoc = False
+        elif method=="mw":
+            ph_rows,sig=pairwise_mw(v_names,groups1)
+            lnamed=cld(v_names,{n:float(np.median(groups1[n])) if groups1[n] else np.nan for n in v_names},sig)
 
-            if do_posthoc:
-                pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
-                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-                letters_named = cld_multi_letters(v_names, med_tmp, sig)
-
-        elif method == "mw":
-            pairwise_rows, sig = pairwise_mw_bonf_with_effect(v_names, groups1, alpha=ALPHA)
-            med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-            letters_named = cld_multi_letters(v_names, med_tmp, sig)
-
-        elif method == "friedman":
-            block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
-            long2 = []
-            for r in long:
-                rr = dict(r)
-                rr["VARIANT"] = " | ".join(str(rr.get(f)) for f in self.factor_keys)
-                long2.append(rr)
-            mat_rows, kept_blocks = rcbd_matrix_from_long(long2, v_names, block_names, variant_key="VARIANT", block_key="BLOCK")
-            if len(mat_rows) < 2:
-                messagebox.showwarning("Помилка", "Для Friedman потрібні щонайменше 2 повних блоки (без пропусків по варіантах).")
-                return
+        elif method=="friedman":
+            bnames=first_seen([f"Блок {i+1}" for i in range(len(used_rep))])
+            long2=[dict(r,VARIANT=" | ".join(str(r.get(f)) for f in self.factor_keys)) for r in long]
+            mat,_=rcbd_matrix(long2,v_names,bnames)
+            if len(mat)<2: messagebox.showwarning("","Для Friedman потрібні ≥ 2 повних блоки."); return
             try:
-                cols = list(zip(*mat_rows))
-                fr = friedmanchisquare(*[np.array(c, dtype=float) for c in cols])
-                fr_chi2 = float(fr.statistic)
-                fr_p    = float(fr.pvalue)
-                fr_df   = int(len(v_names) - 1)
-                fr_W    = kendalls_w_from_friedman(fr_chi2, n_blocks=len(mat_rows), k_treat=len(v_names))
-            except Exception:
-                pass
+                cols=list(zip(*mat)); fr=friedmanchisquare(*[np.array(c,dtype=float) for c in cols])
+                fr_chi=float(fr.statistic); fr_p=float(fr.pvalue)
+                fr_df=n_var-1; fr_W=kendalls_w(fr_chi,len(mat),n_var)
+            except Exception: pass
+            if not math.isnan(fr_p) and fr_p<ALPHA:
+                rcbd_ph_rows,rcbd_sig=pairwise_wilcox(v_names,mat)
+                lnamed=cld(v_names,{n:float(np.median(groups1[n])) if groups1[n] else np.nan for n in v_names},rcbd_sig)
 
-            if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p < ALPHA:
-                rcbd_pairwise_rows, rcbd_sig = pairwise_wilcoxon_bonf(v_names, mat_rows, alpha=ALPHA)
-                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-                letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
-
-        elif method == "wilcoxon":
-            if len(v_names) != 2:
-                messagebox.showwarning("Помилка", "Wilcoxon (парний) застосовується лише для 2 варіантів.")
-                return
-            block_names = first_seen_order([f"Блок {i+1}" for i in range(len(used_rep_cols))])
-            long2 = []
-            for r in long:
-                rr = dict(r)
-                rr["VARIANT"] = " | ".join(str(rr.get(f)) for f in self.factor_keys)
-                long2.append(rr)
-            mat_rows, kept_blocks = rcbd_matrix_from_long(long2, v_names, block_names, variant_key="VARIANT", block_key="BLOCK")
-            if len(mat_rows) < 2:
-                messagebox.showwarning("Помилка", "Для Wilcoxon потрібні щонайменше 2 повні блоки (пари значень).")
-                return
-            arr = np.array(mat_rows, dtype=float)
-            x = arr[:, 0]
-            y = arr[:, 1]
+        elif method=="wilcoxon":
+            if n_var!=2: messagebox.showwarning("","Wilcoxon лише для 2 варіантів."); return
+            bnames=first_seen([f"Блок {i+1}" for i in range(len(used_rep))])
+            long2=[dict(r,VARIANT=" | ".join(str(r.get(f)) for f in self.factor_keys)) for r in long]
+            mat,_=rcbd_matrix(long2,v_names,bnames)
+            if len(mat)<2: messagebox.showwarning("","Потрібні ≥ 2 повних блоки."); return
+            arr=np.array(mat,dtype=float)
             try:
-                stat, p = wilcoxon(x, y, zero_method="wilcox", correction=False, alternative="two-sided", mode="auto")
-                wil_stat = float(stat)
-                wil_p    = float(p)
-            except Exception:
-                pass
+                st,p=wilcoxon(arr[:,0],arr[:,1],zero_method="wilcox",alternative="two-sided",mode="auto")
+                wil_s=float(st); wil_p=float(p)
+            except Exception: pass
+            if not math.isnan(wil_p) and wil_p<ALPHA:
+                lnamed=cld(v_names,{n:float(np.median(groups1[n])) if groups1[n] else np.nan for n in v_names},
+                           {(v_names[0],v_names[1]):True})
 
-            if not (isinstance(wil_p, float) and math.isnan(wil_p)) and wil_p < ALPHA:
-                rcbd_sig = {(v_names[0], v_names[1]): True}
-                med_tmp = {name: float(np.median(groups1[name])) if len(groups1[name]) else np.nan for name in v_names}
-                letters_named = cld_multi_letters(v_names, med_tmp, rcbd_sig)
+        lv_var={var_order[i]:lnamed.get(v_names[i],"") for i in range(n_var)}
+        SS_tot=res.get("SS_total",np.nan); SS_err=res.get("SS_error",np.nan)
+        R2=(1-(SS_err/SS_tot)) if not any(math.isnan(x) for x in [SS_tot,SS_err]) and SS_tot>0 else np.nan
 
-        letters_variants = {variant_order[i]: letters_named.get(v_names[i], "") for i in range(len(variant_order))}
+        cv_r=[[self.ftitle(f),fmt(cv_means([fm[f].get(lv,np.nan) for lv in lbf[f]]),2)]
+              for f in self.factor_keys]
+        cv_r.append(["Загальний",fmt(cv_vals(values),2)])
 
-        SS_total = res.get("SS_total", np.nan)
-        SS_error = res.get("SS_error", np.nan)
-        R2 = (1.0 - (SS_error / SS_total)) if (not any(math.isnan(x) for x in [SS_total, SS_error]) and SS_total > 0) else np.nan
+        nonparam=method in ("mw","kw","friedman","wilcoxon")
 
-        cv_rows = []
-        for f in self.factor_keys:
-            lvl_means = [factor_means[f].get(lvl, np.nan) for lvl in levels_by_factor[f]]
-            cv_f = cv_percent_from_level_means(lvl_means)
-            cv_rows.append([self.factor_title(f), fmt_num(cv_f, 2)])
-        cv_total = cv_percent_from_values(values)
-        cv_rows.append(["Загальний", fmt_num(cv_total, 2)])
+        # ─ rename Фактор X → custom title in table ─
+        def _rename_row(row):
+            nm=row[0]
+            if isinstance(nm,str) and nm.startswith("Фактор "):
+                rest=nm.replace("Фактор ","")
+                parts=rest.split("×")
+                row=list(row); row[0]="×".join(self.ftitle(p) if p in self.factor_keys else p for p in parts)
+            return row
 
-        # ---- BUILD REPORT SEGMENTS ----
-        seg = []
-        seg.append(("text", "З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У   Д А Н И Х\n\n"))
-        seg.append(("text", f"Показник:\t{indicator}\nОдиниці виміру:\t{units}\n\n"))
-        seg.append(("text",
-                    f"Кількість варіантів:\t{num_variants}\n"
-                    f"Кількість повторностей:\t{len(used_rep_cols)}\n"
-                    f"Загальна кількість облікових значень:\t{len(long)}\n\n"))
-
-        design_label = {"crd": "CRD (повна рандомізація)", "rcbd": "RCBD (блочна рандомізація)", "split": "Split-plot (спліт-плот)"}[design]
-        seg.append(("text", f"Дизайн експерименту:\t{design_label}\n"))
-        if design == "split":
-            seg.append(("text", f"Головний фактор (Whole-plot factor):\t{split_main_factor}\n\n"))
-        else:
-            seg.append(("text", "\n"))
-
-        method_label = {
-            "lsd": "Параметричний аналіз: Brown–Forsythe + ANOVA + НІР₀₅ (LSD).",
-            "tukey": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Тьюкі (Tukey HSD).",
-            "duncan": "Параметричний аналіз: Brown–Forsythe + ANOVA + тест Дункана.",
-            "bonferroni": "Параметричний аналіз: Brown–Forsythe + ANOVA + корекція Бонферроні.",
-            "kw": "Непараметричний аналіз: Kruskal–Wallis.",
-            "mw": "Непараметричний аналіз: Mann–Whitney.",
-            "friedman": "Непараметричний аналіз (RCBD): Friedman.",
-            "wilcoxon": "Непараметричний аналіз (RCBD): Wilcoxon signed-rank (парний).",
-        }.get(method, "")
-        if method_label:
-            seg.append(("text", f"Виконуваний статистичний аналіз:\t{method_label}\n\n"))
-
-        seg.append(("text", "Пояснення позначень істотності: ** — p<0.01; * — p<0.05.\n"))
-        seg.append(("text", "У таблицях знак \"-\" свідчить що p ≥ 0.05.\n"))
-        seg.append(("text", "Істотна різниця (літери): різні літери свідчать про наявність істотної різниці.\n\n"))
-
-        if not math.isnan(W):
-            seg.append(("text",
-                        f"Перевірка нормальності залишків (Shapiro–Wilk):\t{normality_text(p_norm)}\t"
-                        f"(W={fmt_num(float(W),4)}; p={fmt_num(float(p_norm),4)})\n\n"))
-        else:
-            seg.append(("text", "Перевірка нормальності залишків (Shapiro–Wilk):\tн/д\n\n"))
-
-        nonparam = method in ("mw", "kw", "friedman", "wilcoxon")
-
-        if method == "kw":
-            if not (isinstance(kw_p, float) and math.isnan(kw_p)):
-                concl = "істотна різниця " + significance_mark(kw_p) if kw_p < ALPHA else "-"
-                seg.append(("text",
-                            f"Глобальний тест між варіантами (Kruskal–Wallis):\t"
-                            f"H={fmt_num(kw_H,4)}; df={int(kw_df)}; p={fmt_num(kw_p,4)}\t{concl}\n"))
-                seg.append(("text", f"Розмір ефекту (ε²):\t{fmt_num(kw_eps2,4)}\n\n"))
+        # ─────────────────────────────────────────────────────
+        # BUILD ANOVA TABLE rows
+        anova_rows=[]
+        for raw_row in res["table"]:
+            nm,SSv,dfv,MSv,Fv,pv=raw_row
+            df_s=str(int(dfv)) if dfv is not None and not (isinstance(dfv,float) and math.isnan(dfv)) else ""
+            nm2=_rename_row([nm])[0]
+            if nm2.startswith("Залишок") or nm2=="Загальна" or "WP-error" in nm2 or nm2=="Блоки":
+                anova_rows.append([nm2,fmt(SSv,3),df_s,fmt(MSv,3),"","",""])
             else:
-                seg.append(("text", "Глобальний тест між варіантами (Kruskal–Wallis):\tн/д\n\n"))
+                mk=sig_mark(pv); concl=f"різниця {mk}" if mk else "–"
+                anova_rows.append([nm2,fmt(SSv,3),df_s,fmt(MSv,3),fmt(Fv,3),fmt(pv,4),concl])
 
-        if method == "friedman":
-            if not (isinstance(fr_p, float) and math.isnan(fr_p)):
-                concl = "істотна різниця " + significance_mark(fr_p) if fr_p < ALPHA else "-"
-                seg.append(("text",
-                            f"Глобальний тест між варіантами (Friedman):\t"
-                            f"χ²={fmt_num(fr_chi2,4)}; df={int(fr_df)}; p={fmt_num(fr_p,4)}\t{concl}\n"))
-                seg.append(("text", f"Розмір ефекту (Kendall's W):\t{fmt_num(fr_W,4)}\n\n"))
-            else:
-                seg.append(("text", "Глобальний тест між варіантами (Friedman):\tн/д\n\n"))
+        eff_rows=[[_rename_row([r[0]])[0],r[1]] for r in build_eff_rows(res["table"])]
+        pe2_rows=[[_rename_row([r[0]])[0],r[1],r[2]] for r in build_pe2_rows(res["table"])]
 
-        if method == "wilcoxon":
-            if not (isinstance(wil_p, float) and math.isnan(wil_p)):
-                concl = "істотна різниця " + significance_mark(wil_p) if wil_p < ALPHA else "-"
-                seg.append(("text",
-                            f"Парний тест (Wilcoxon signed-rank):\t"
-                            f"W={fmt_num(wil_stat,4)}; p={fmt_num(wil_p,4)}\t{concl}\n\n"))
-            else:
-                seg.append(("text", "Парний тест (Wilcoxon signed-rank):\tн/д\n\n"))
+        # ─────────────────────────────────────────────────────
+        # SHOW REPORT
+        self.show_report(
+            created=created, indicator=indicator, units=units, design=design,
+            method=method, log_applied=log_applied, n_var=n_var, n_rep=len(used_rep), n_obs=len(long),
+            split_mf=split_mf, W=W, p_norm=p_norm,
+            lev_F=lev_F, lev_p=lev_p,
+            kw_H=kw_H, kw_p=kw_p, kw_df=kw_df, kw_eps=kw_eps, do_ph=do_ph,
+            fr_chi=fr_chi, fr_p=fr_p, fr_df=fr_df, fr_W=fr_W,
+            wil_s=wil_s, wil_p=wil_p,
+            anova_rows=anova_rows, eff_rows=eff_rows, pe2_rows=pe2_rows,
+            cv_r=cv_r, R2=R2,
+            lf=lf, lv_var=lv_var, lbf=lbf, fm=fm, fmed=fmed, fq=fq, fn=fn,
+            var_order=var_order, v_names=v_names, v_means=v_means, v_sds=v_sds, v_ns=v_ns,
+            vmed=vmed, vq=vq, rkv=rkv, rkf=rkf,
+            groups1=groups1,
+            ph_rows=ph_rows, fpt=fpt,
+            rcbd_ph_rows=rcbd_ph_rows,
+            nonparam=nonparam, res=res, split_main=split_main,
+        )
+        self.show_graphs(long, lf, indicator, units, eff_rows)
 
-        if not nonparam:
-            if not any(math.isnan(x) for x in [bf_F, bf_p]):
-                bf_concl = "умова виконується" if bf_p >= ALPHA else f"умова порушена {significance_mark(bf_p)}"
-                seg.append(("text",
-                            f"Перевірка однорідності дисперсій (Brown–Forsythe):\t"
-                            f"F={fmt_num(bf_F,4)}; p={fmt_num(bf_p,4)}\t{bf_concl}\n\n"))
-            else:
-                seg.append(("text", "Перевірка однорідності дисперсій (Brown–Forsythe):\tн/д\n\n"))
-
-            if design == "split":
-                seg.append(("text",
-                            "Примітка (Split-plot):\n"
-                            f"• {self.factor_title(split_main_factor)} перевірено на MS(Блоки×{split_main_factor}) (whole-plot error).\n"
-                            "• Інші ефекти перевірено на MS(Залишок) (sub-plot error).\n\n"))
-
-            anova_rows = []
-            for name, SSv, dfv, MSv, Fv, pv in res["table"]:
-                df_txt = str(int(dfv)) if dfv is not None and not (isinstance(dfv, float) and math.isnan(dfv)) else ""
-                name2 = name
-                if isinstance(name2, str) and name2.startswith("Фактор "):
-                    try:
-                        rest = name2.replace("Фактор ", "")
-                        parts = rest.split("×")
-                        parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
-                        name2 = "×".join(parts2)
-                    except Exception:
-                        pass
-                if name2.startswith("Залишок") or name2 == "Загальна" or "Whole-plot error" in name2 or name2 == "Блоки":
-                    anova_rows.append([name2, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), "", "", ""])
-                else:
-                    mark = significance_mark(pv)
-                    concl = f"істотна різниця {mark}" if mark else "-"
-                    anova_rows.append([name2, fmt_num(SSv, 2), df_txt, fmt_num(MSv, 3), fmt_num(Fv, 3), fmt_num(pv, 4), concl])
-
-            seg.append(("text", "ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)\n"))
-            seg.append(("table", {"headers": ["Джерело", "        SS", "df", "MS", "F", "p", "Висновок"], "rows": anova_rows, "padding_px": 32, "extra_gap_after_col": 0, "extra_gap_px": 60}))
-            seg.append(("text", "\n"))
-
-            eff_rows = build_effect_strength_rows(res["table"])
-            for r in eff_rows:
-                if r and isinstance(r[0], str) and r[0].startswith("Фактор "):
-                    rest = r[0].replace("Фактор ", "")
-                    parts = rest.split("×")
-                    parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
-                    r[0] = "×".join(parts2)
-            seg.append(("text", "ТАБЛИЦЯ 2. Сила впливу факторів та їх комбінацій (% від SS)\n"))
-            seg.append(("table", {"headers": ["Джерело", "%"], "rows": eff_rows}))
-            seg.append(("text", "\n"))
-
-            pe2_rows = build_partial_eta2_rows_with_label(res["table"])
-            for r in pe2_rows:
-                if r and isinstance(r[0], str) and r[0].startswith("Фактор "):
-                    rest = r[0].replace("Фактор ", "")
-                    parts = rest.split("×")
-                    parts2 = [self.factor_title(p) if p in self.factor_keys else p for p in parts]
-                    r[0] = "×".join(parts2)
-            seg.append(("text", "ТАБЛИЦЯ 3. Розмір ефекту (partial η²)\n"))
-            seg.append(("table", {"headers": ["Джерело", "partial η²", "Висновок"], "rows": pe2_rows}))
-            seg.append(("text", "\n"))
-
-            seg.append(("text", "ТАБЛИЦЯ 4. Коефіцієнт варіації (CV, %)\n"))
-            seg.append(("table", {"headers": ["Елемент", "CV, %"], "rows": cv_rows}))
-            seg.append(("text", "\n"))
-
-            seg.append(("text", f"Коефіцієнт детермінації:\tR²={fmt_num(R2, 4)}\n\n"))
-
-            tno = 5
-            if method == "lsd":
-                nir_rows = []
-                for key, val in res.get("NIR05", {}).items():
-                    nir_rows.append([key.replace("Фактор ", self.factor_title_map.get(key.replace("Фактор ", ""), "Фактор ")), fmt_num(val, 4)])
-                if nir_rows:
-                    seg.append(("text", "ТАБЛИЦЯ 5. Значення НІР₀₅\n"))
-                    seg.append(("table", {"headers": ["Елемент", "НІР₀₅"], "rows": nir_rows}))
-                    seg.append(("text", "\n"))
-                    tno = 6
-
-            for f in self.factor_keys:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Середнє по фактору: {self.factor_title(f)}\n"))
-                rows_f = []
-                for lvl in levels_by_factor[f]:
-                    m = factor_means[f].get(lvl, np.nan)
-                    letter = letters_factor[f].get(lvl, "")
-                    rows_f.append([str(lvl), fmt_num(m, 3), (letter if letter else "-")])
-                seg.append(("table", {"headers": [self.factor_title(f), "Середнє", "Істотна різниця"], "rows": rows_f}))
-                seg.append(("text", "\n"))
-                tno += 1
-
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Таблиця середніх значень варіантів\n"))
-            rows_v = []
-            for k in variant_order:
-                name = " | ".join(map(str, k))
-                m  = v_means.get(k, np.nan)
-                sd = v_sds.get(k, np.nan)
-                if design == "split":
-                    rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), "-"])
-                else:
-                    letter = letters_variants.get(k, "")
-                    rows_v.append([name, fmt_num(m, 3), fmt_num(sd, 3), (letter if letter else "-")])
-            seg.append(("table", {"headers": ["Варіант", "Середнє", "± SD", "Істотна різниця"], "rows": rows_v, "padding_px": 32, "extra_gap_after_col": 0, "extra_gap_px": 80}))
-            seg.append(("text", "\n"))
-            tno += 1
-
-            if design != "split":
-                if method in ("tukey", "duncan", "bonferroni") and pairwise_rows:
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів\n"))
-                    seg.append(("table", {"headers": ["Комбінація варіантів", "p", "Істотна різниця"], "rows": pairwise_rows}))
-                    seg.append(("text", "\n"))
-            else:
-                seg.append(("text",
-                            "Примітка (Split-plot): парні порівняння для повних варіантів (комбінацій факторів)\n"
-                            "не подаються, оскільки для таких порівнянь потрібні спеціальні контрасти та коректний\n"
-                            "облік двох різних помилок (whole-plot і sub-plot). Натомість подано парні порівняння\n"
-                            "на рівні факторів з правильними error-term.\n\n"))
-                if method in ("tukey", "duncan", "bonferroni"):
-                    for f in self.factor_keys:
-                        rows_pf = factor_pairwise_tables.get(f, [])
-                        if rows_pf:
-                            seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння для: {self.factor_title(f)} (Split-plot)\n"))
-                            seg.append(("table", {"headers": ["Комбінація", "p", "Істотна різниця"], "rows": rows_pf}))
-                            seg.append(("text", "\n"))
-                            tno += 1
-
-        else:
-            tno = 1
-            for f in self.factor_keys:
-                seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика (непараметрична): {self.factor_title(f)}\n"))
-                rows = []
-                for lvl in levels_by_factor[f]:
-                    med = factor_medians[f].get(lvl, np.nan)
-                    q1, q3 = factor_q[f].get(lvl, (np.nan, np.nan))
-                    rank_m = ranks_by_factor[f].get(lvl, np.nan)
-                    rows.append([str(lvl), str(int(factor_ns[f].get(lvl, 0))), fmt_num(med, 3),
-                                 f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
-                                 fmt_num(rank_m, 2), "-"])
-                seg.append(("table", {"headers": [self.factor_title(f), "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"], "rows": rows}))
-                seg.append(("text", "\n"))
-                tno += 1
-
-            seg.append(("text", f"ТАБЛИЦЯ {tno}. Описова статистика варіантів (непараметрична)\n"))
-            rows = []
-            for k in variant_order:
-                name = " | ".join(map(str, k))
-                med = v_medians.get(k, np.nan)
-                q1, q3 = v_q.get(k, (np.nan, np.nan))
-                rank_m = ranks_by_variant.get(name, np.nan)
-                rows.append([name, str(int(v_ns.get(k, 0))), fmt_num(med, 3),
-                             f"{fmt_num(q1,3)}–{fmt_num(q3,3)}" if not any(math.isnan(x) for x in [q1, q3]) else "",
-                             fmt_num(rank_m, 2), "-"])
-            seg.append(("table", {"headers": ["Варіант", "n", "Медіана", "Q1–Q3", "Середній ранг", "Істотна різниця"], "rows": rows, "padding_px": 32, "extra_gap_after_col": 0, "extra_gap_px": 80}))
-            seg.append(("text", "\n"))
-            tno += 1
-
-            if method == "kw":
-                if not do_posthoc:
-                    seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Kruskal–Wallis не виявив істотної різниці (p ≥ 0.05).\n\n"))
-                elif pairwise_rows:
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння + ефект (Cliff's δ)\n"))
-                    seg.append(("table", {"headers": ["Комбінація варіантів", "U", "p (Bonf.)", "Істотна різниця", "δ", "Висновок"], "rows": pairwise_rows}))
-                    seg.append(("text", "\n"))
-
-            if method == "friedman":
-                if not (isinstance(fr_p, float) and math.isnan(fr_p)) and fr_p >= ALPHA:
-                    seg.append(("text", "Пост-хок порівняння не виконувалися, оскільки глобальний тест Friedman не виявив істотної різниці (p ≥ 0.05).\n\n"))
-                elif rcbd_pairwise_rows:
-                    seg.append(("text", f"ТАБЛИЦЯ {tno}. Парні порівняння (Wilcoxon, Bonferroni) + ефект (r)\n"))
-                    seg.append(("table", {"headers": ["Комбінація варіантів", "W", "p (Bonf.)", "Істотна різниця", "r"], "rows": rcbd_pairwise_rows}))
-                    seg.append(("text", "\n"))
-
-        seg.append(("text", f"Звіт сформовано:\t{created_at.strftime('%d.%m.%Y, %H:%M')}\n"))
-        self.show_report_segments(seg)
-        self.show_graphical_report(long, self.factor_keys, levels_by_factor, letters_factor, indicator, units)
-
-    # =========================================================
-    # SHOW REPORT
-    # =========================================================
-    def show_report_segments(self, segments):
+    # ════════════════════════════════════════════════════════════
+    # REPORT WINDOW  (Treeview tables)
+    # ════════════════════════════════════════════════════════════
+    def show_report(self, **kw):
         if self.report_win and tk.Toplevel.winfo_exists(self.report_win):
             self.report_win.destroy()
+        self.report_win=rw=tk.Toplevel(self.root)
+        rw.title("Звіт"); rw.geometry("1200x800"); set_icon(rw)
 
-        self.report_win = tk.Toplevel(self.root)
-        self.report_win.title("Звіт")
-        self.report_win.geometry("1180x760")
-        set_window_icon(self.report_win)
+        top=tk.Frame(rw,padx=8,pady=6); top.pack(fill=tk.X)
+        def copy_all():
+            # collect text from text widget
+            rw.clipboard_clear(); rw.clipboard_append(self._report_text_buf)
+            messagebox.showinfo("","Текстовий звіт скопійовано.")
+        tk.Button(top,text="Копіювати текст звіту",command=copy_all).pack(side=tk.LEFT,padx=4)
 
-        top = tk.Frame(self.report_win, padx=8, pady=8)
-        top.pack(fill=tk.X)
+        main=tk.Frame(rw); main.pack(fill=tk.BOTH,expand=True)
+        vsb=ttk.Scrollbar(main,orient="vertical"); vsb.pack(side=tk.RIGHT,fill=tk.Y)
+        cv=tk.Canvas(main,yscrollcommand=vsb.set); cv.pack(side=tk.LEFT,fill=tk.BOTH,expand=True)
+        vsb.config(command=cv.yview)
+        body=tk.Frame(cv); cv.create_window((0,0),window=body,anchor="nw")
+        def _on_cfg(e): cv.configure(scrollregion=cv.bbox("all"))
+        body.bind("<Configure>",_on_cfg)
 
-        xsb = ttk.Scrollbar(self.report_win, orient="horizontal")
-        xsb.pack(side=tk.BOTTOM, fill=tk.X)
+        txt_buf=[]
+        def _txt(s):
+            tk.Label(body,text=s,font=("Times New Roman",12),fg="#000000",
+                     justify="left",anchor="w",wraplength=1100).pack(fill=tk.X,padx=12,pady=(1,0))
+            txt_buf.append(s)
 
-        txt = ScrolledText(self.report_win, width=120, height=40, wrap="none", xscrollcommand=xsb.set)
-        txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        xsb.config(command=txt.xview)
+        def _head(s):
+            tk.Label(body,text=s,font=("Times New Roman",13,"bold"),fg="#000000",
+                     justify="left",anchor="w").pack(fill=tk.X,padx=12,pady=(8,2))
+            txt_buf.append("\n"+s)
 
-        txt.configure(font=("Times New Roman", 14), fg="#000000")
-        font_obj = tkfont.Font(font=("Times New Roman", 14))
+        def _table(headers,rows,cw=None):
+            f,_=make_tv_table(body,headers,rows,min_col_px=90 if cw is None else cw)
+            f.pack(fill=tk.X,padx=12,pady=(2,6))
+            # also append to text buffer
+            txt_buf.append("\t".join(headers))
+            for row in rows: txt_buf.append("\t".join("" if v is None else str(v) for v in row))
 
-        table_idx = 0
-        for kind, payload in segments:
-            if kind == "text":
-                txt.insert("end", payload)
-                continue
+        def _sep():
+            ttk.Separator(body,orient="horizontal").pack(fill=tk.X,padx=12,pady=4)
 
-            if isinstance(payload, dict):
-                headers    = payload.get("headers", [])
-                rows       = payload.get("rows", [])
-                padding_px = int(payload.get("padding_px", 32))
-                extra_after = payload.get("extra_gap_after_col", None)
-                extra_px   = int(payload.get("extra_gap_px", 0))
+        d=kw
+        _txt(f"З В І Т   С Т А Т И С Т И Ч Н О Г О   А Н А Л І З У")
+        _txt(f"Показник: {d['indicator']}   |   Одиниці: {d['units']}")
+        _txt(f"Дата: {d['created'].strftime('%d.%m.%Y %H:%M')}")
+        _sep()
+
+        design_lbl={"crd":"CRD (повна рандомізація)","rcbd":"RCBD (блочна рандомізація)","split":"Split-plot"}[d['design']]
+        _txt(f"Дизайн: {design_lbl}   |   Варіантів: {d['n_var']}   |   Повт.: {d['n_rep']}   |   Спостережень: {d['n_obs']}")
+        if d['design']=="split": _txt(f"Головний фактор (WP): {d['split_mf']}")
+        if d['log_applied']: _txt("⚠ Застосовано логарифмування даних (натуральний логарифм).")
+
+        method_lbl={
+            "lsd":"НІР₀₅ (LSD)","tukey":"Тест Тьюкі","duncan":"Тест Дункана","bonferroni":"Бонферроні",
+            "kw":"Kruskal–Wallis","mw":"Mann–Whitney","friedman":"Friedman","wilcoxon":"Wilcoxon",
+        }.get(d['method'],"")
+        _txt(f"Метод: {method_lbl}")
+        _txt("Позначення: ** — p<0.01; * — p<0.05; різні літери → істотна різниця.")
+        _sep()
+
+        _txt(f"Shapiro–Wilk (залишки): {norm_txt(d['p_norm'])}   W={fmt(d['W'],4)}   p={fmt(d['p_norm'],4)}")
+
+        # global tests
+        if d['method']=="kw" and not math.isnan(d['kw_p']):
+            c=("різниця "+sig_mark(d['kw_p'])) if d['kw_p']<ALPHA else "–"
+            _txt(f"Kruskal–Wallis:  H={fmt(d['kw_H'],4)}  df={d['kw_df']}  p={fmt(d['kw_p'],4)}  {c}   ε²={fmt(d['kw_eps'],4)}")
+        if d['method']=="friedman" and not math.isnan(d['fr_p']):
+            c=("різниця "+sig_mark(d['fr_p'])) if d['fr_p']<ALPHA else "–"
+            _txt(f"Friedman:  χ²={fmt(d['fr_chi'],4)}  df={d['fr_df']}  p={fmt(d['fr_p'],4)}  {c}   Kendall's W={fmt(d['fr_W'],4)}")
+        if d['method']=="wilcoxon" and not math.isnan(d['wil_p']):
+            c=("різниця "+sig_mark(d['wil_p'])) if d['wil_p']<ALPHA else "–"
+            _txt(f"Wilcoxon signed-rank:  W={fmt(d['wil_s'],4)}  p={fmt(d['wil_p'],4)}  {c}")
+
+        if not d['nonparam']:
+            if not math.isnan(d['lev_p']):
+                lc="умова виконується" if d['lev_p']>=ALPHA else f"умова порушена {sig_mark(d['lev_p'])}"
+                _txt(f"Тест Левена (однорідність дисперсій):  F={fmt(d['lev_F'],4)}  p={fmt(d['lev_p'],4)}  {lc}")
+            _sep()
+            _head("ТАБЛИЦЯ 1. Дисперсійний аналіз (ANOVA)")
+            _table(["Джерело","SS","df","MS","F","p","Висновок"],d['anova_rows'])
+            _head("ТАБЛИЦЯ 2. Сила впливу факторів (% від SS)")
+            _table(["Джерело","%"],d['eff_rows'])
+            _head("ТАБЛИЦЯ 3. Розмір ефекту (partial η²)")
+            _table(["Джерело","partial η²","Сила ефекту"],d['pe2_rows'])
+            _head("ТАБЛИЦЯ 4. Коефіцієнт варіації (CV, %)")
+            _table(["Елемент","CV, %"],d['cv_r'])
+            _txt(f"R² = {fmt(d['R2'],4)}")
+
+            tno=5
+            if d['method']=="lsd":
+                nir_r=[[k,fmt(v,4)] for k,v in d['res'].get("NIR05",{}).items()]
+                if nir_r:
+                    _head(f"ТАБЛИЦЯ {tno}. НІР₀₅")
+                    _table(["Елемент","НІР₀₅"],nir_r); tno+=1
+
+            for f in self.factor_keys:
+                _head(f"ТАБЛИЦЯ {tno}. Середні по фактору: {self.ftitle(f)}")
+                rows_f=[[str(lv),fmt(d['fm'][f].get(lv,np.nan),3),d['lf'][f].get(lv,"") or "–"]
+                        for lv in d['lbf'][f]]
+                _table([self.ftitle(f),"Середнє","Літери CLD"],rows_f); tno+=1
+
+            _head(f"ТАБЛИЦЯ {tno}. Середні по варіантах")
+            rows_v=[[nm,fmt(d['v_means'].get(d['var_order'][i],np.nan),3),
+                     fmt(d['v_sds'].get(d['var_order'][i],np.nan),3),
+                     d['lv_var'].get(d['var_order'][i],"") or "–"]
+                    for i,nm in enumerate(d['v_names'])]
+            _table(["Варіант","Середнє","± SD","Літери CLD"],rows_v); tno+=1
+
+            if d['design']!="split":
+                if d['method'] in ("tukey","duncan","bonferroni") and d['ph_rows']:
+                    _head(f"ТАБЛИЦЯ {tno}. Парні порівняння варіантів")
+                    _table(["Пара","p","Висновок"],d['ph_rows']); tno+=1
             else:
-                headers, rows = payload
-                padding_px = 32
-                extra_after = None
-                extra_px = 0
+                for f in self.factor_keys:
+                    rr=d['fpt'].get(f,[])
+                    if rr:
+                        _head(f"ТАБЛИЦЯ {tno}. Парні порівняння: {self.ftitle(f)}")
+                        _table(["Пара","p","Висновок"],rr); tno+=1
 
-            tabs = tabs_from_table_px(font_obj, headers, rows, padding_px=padding_px,
-                                       extra_gap_after_col=extra_after, extra_gap_px=extra_px)
-            tag = f"tbl_{table_idx}"
-            table_idx += 1
-            txt.tag_configure(tag, tabs=tabs)
-            start = txt.index("end")
-            txt.insert("end", build_table_block(headers, rows))
-            end = txt.index("end")
-            txt.tag_add(tag, start, end)
+        else:  # nonparam
+            tno=1
+            for f in self.factor_keys:
+                _head(f"ТАБЛИЦЯ {tno}. Описова (непараметрична): {self.ftitle(f)}")
+                rows=[]
+                for lv in d['lbf'][f]:
+                    med=d['fmed'][f].get(lv,np.nan); q1q3=d['fq'][f].get(lv,(np.nan,np.nan))
+                    rk=d['rkf'][f].get(lv,np.nan)
+                    rows.append([str(lv),str(d['fn'][f].get(lv,0)),fmt(med,3),
+                                 f"{fmt(q1q3[0],3)}–{fmt(q1q3[1],3)}" if not any(math.isnan(x) for x in q1q3) else "",
+                                 fmt(rk,2)])
+                _table([self.ftitle(f),"n","Медіана","Q1–Q3","Сер. ранг"],rows); tno+=1
 
-        def copy_report():
-            self.report_win.clipboard_clear()
-            self.report_win.clipboard_append(txt.get("1.0", "end-1c"))
-            messagebox.showinfo("Готово", "Звіт скопійовано в буфер обміну.")
+            _head(f"ТАБЛИЦЯ {tno}. Описова (непараметрична): варіанти")
+            rows=[]
+            for i,k in enumerate(d['var_order']):
+                nm=d['v_names'][i]; med=d['vmed'].get(k,np.nan); q1q3=d['vq'].get(k,(np.nan,np.nan))
+                rk=d['rkv'].get(nm,np.nan)
+                rows.append([nm,str(d['v_ns'].get(k,0)),fmt(med,3),
+                             f"{fmt(q1q3[0],3)}–{fmt(q1q3[1],3)}" if not any(math.isnan(x) for x in q1q3) else "",
+                             fmt(rk,2)])
+            _table(["Варіант","n","Медіана","Q1–Q3","Сер. ранг"],rows); tno+=1
 
-        tk.Button(top, text="Копіювати звіт", command=copy_report).pack(side=tk.LEFT, padx=4)
+            if d['method']=="kw":
+                if not d['do_ph']: _txt("Пост-хок: Kruskal–Wallis p ≥ 0.05 → порівняння не виконувалися.")
+                elif d['ph_rows']:
+                    _head(f"ТАБЛИЦЯ {tno}. Парні порівняння (Mann–Whitney + Bonferroni, Cliff's δ)")
+                    _table(["Пара","U","p (Bonf.)","Висновок","δ","Ефект"],d['ph_rows']); tno+=1
+            if d['method']=="mw" and d['ph_rows']:
+                _head(f"ТАБЛИЦЯ {tno}. Парні порівняння (Mann–Whitney + Bonferroni, Cliff's δ)")
+                _table(["Пара","U","p (Bonf.)","Висновок","δ","Ефект"],d['ph_rows']); tno+=1
+            if d['method']=="friedman":
+                if not math.isnan(d['fr_p']) and d['fr_p']>=ALPHA: _txt("Friedman p ≥ 0.05 → пост-хок не виконувався.")
+                elif d['rcbd_ph_rows']:
+                    _head(f"ТАБЛИЦЯ {tno}. Парні порівняння (Wilcoxon + Bonferroni)")
+                    _table(["Пара","W","p (Bonf.)","Висновок","r"],d['rcbd_ph_rows']); tno+=1
 
-        def on_ctrl_c(event=None):
-            try:
-                sel = txt.get("sel.first", "sel.last")
-            except Exception:
-                sel = txt.get("1.0", "end-1c")
-            self.report_win.clipboard_clear()
-            self.report_win.clipboard_append(sel)
-            return "break"
+        _sep()
+        _txt(f"Звіт сформовано: {d['created'].strftime('%d.%m.%Y, %H:%M')}")
+        self._report_text_buf="\n".join(txt_buf)
 
-        txt.bind("<Control-c>", on_ctrl_c)
-        txt.bind("<Control-C>", on_ctrl_c)
-
-    # =========================================================
-    # GRAPHICAL REPORT
-    # =========================================================
-    def show_graphical_report(self, long, factor_keys, levels_by_factor, letters_factor, indicator, units):
-        if Figure is None or FigureCanvasTkAgg is None:
-            messagebox.showwarning("Графічний звіт недоступний", "Не вдалося завантажити matplotlib.")
-            return
-
-        if getattr(self, "graph_win", None) and tk.Toplevel.winfo_exists(self.graph_win):
+    # ════════════════════════════════════════════════════════════
+    # GRAPHICAL REPORT  (Boxplot + Venn)
+    # ════════════════════════════════════════════════════════════
+    def show_graphs(self, long, letters_factor, indicator, units, eff_rows):
+        if not HAS_MPL:
+            messagebox.showwarning("","matplotlib недоступний."); return
+        if self.graph_win and tk.Toplevel.winfo_exists(self.graph_win):
             self.graph_win.destroy()
+        self.graph_win=gw=tk.Toplevel(self.root)
+        gw.title("Графічний звіт"); gw.geometry("1300x820"); set_icon(gw)
 
-        self.graph_win = tk.Toplevel(self.root)
-        self.graph_win.title("Графічний звіт (Boxplot за факторами)")
-        self.graph_win.geometry("1200x760")
-        set_window_icon(self.graph_win)
+        top=tk.Frame(gw,padx=8,pady=6); top.pack(fill=tk.X)
+        tk.Button(top,text="⚙ Налаштування",command=lambda:self._open_graph_settings(gw,long,letters_factor,indicator,units,eff_rows)).pack(side=tk.LEFT,padx=4)
+        tk.Button(top,text="📋 Копіювати Boxplot",command=lambda:self._copy_fig(self._graph_fig_bp)).pack(side=tk.LEFT,padx=4)
+        tk.Button(top,text="📋 Копіювати Вень",command=lambda:self._copy_fig(self._graph_fig_vn)).pack(side=tk.LEFT,padx=4)
+        tk.Label(top,text="Вставте у Word через Ctrl+V",anchor="w").pack(side=tk.LEFT,padx=8)
 
-        top = tk.Frame(self.graph_win, padx=8, pady=8)
-        top.pack(fill=tk.X)
+        self._graph_frame=tk.Frame(gw); self._graph_frame.pack(fill=tk.BOTH,expand=True)
+        self._draw_graphs(self._graph_frame,long,letters_factor,indicator,units,eff_rows)
 
-        ttk.Button(top, text="Копіювати графік (PNG)", command=lambda: self._copy_graph_png()).pack(side=tk.LEFT)
-        tk.Label(top, text="Порада: після копіювання вставляйте у Word через Ctrl+V.", anchor="w").pack(side=tk.LEFT, padx=12)
+    def _open_graph_settings(self,gw,long,lf,indicator,units,eff_rows):
+        dlg=GraphSettingsDlg(gw,self.graph_settings)
+        gw.wait_window(dlg)
+        if dlg.result:
+            self.graph_settings=dlg.result
+            # redraw
+            for w in self._graph_frame.winfo_children(): w.destroy()
+            self._draw_graphs(self._graph_frame,long,lf,indicator,units,eff_rows)
 
-        fig = Figure(figsize=(11, 6), dpi=100)
-        ax = fig.add_subplot(111)
+    def _draw_graphs(self,frame,long,letters_factor,indicator,units,eff_rows):
+        gs=self.graph_settings
+        fp={"fontfamily":gs["font_family"],"fontsize":gs["font_size"]}
+        fs=gs["font_style"]; fw="bold" if "bold" in fs else "normal"; fst="italic" if "italic" in fs else "normal"
+        fp["fontweight"]=fw; fp["fontstyle"]=fst
 
-        positions = []
-        data = []
-        xticklabels = []
-        letters = []
-        factor_centers = []
-        x = 1.0
-        gap = 1.0
+        nb=ttk.Notebook(frame); nb.pack(fill=tk.BOTH,expand=True)
 
-        for f in factor_keys:
-            lvls = levels_by_factor.get(f, [])
-            if not lvls:
-                continue
-            start_x = x
-            for lvl in lvls:
-                arr = [float(r["value"]) for r in long if r.get(f) == lvl and r.get("value") is not None]
-                arr = [v for v in arr if not math.isnan(v)]
-                data.append(arr)
-                positions.append(x)
-                xticklabels.append(str(lvl))
-                letters.append((f, lvl))
-                x += 1.0
-            end_x = x - 1.0
-            factor_centers.append(((start_x + end_x) / 2.0, self.factor_title(f)))
-            x += gap
+        # ── BOXPLOT ──
+        bp_frame=tk.Frame(nb); nb.add(bp_frame,text="Boxplot")
+        fig_bp=Figure(figsize=(11,5.5),dpi=100); ax=fig_bp.add_subplot(111)
+
+        positions=[]; data=[]; xlbls=[]; let_list=[]; fcentres=[]
+        x=1.; gap=1.
+        for f in self.factor_keys:
+            lvls=self.lbf_cache.get(f,[]) if hasattr(self,"lbf_cache") else \
+                 first_seen([r.get(f) for r in long if r.get(f) is not None])
+            if not lvls: continue
+            sx=x
+            for lv in lvls:
+                arr=[float(r["value"]) for r in long if r.get(f)==lv and r.get("value") is not None]
+                arr=[v for v in arr if not math.isnan(v)]
+                data.append(arr); positions.append(x); xlbls.append(str(lv))
+                let_list.append((f,lv)); x+=1.
+            fcentres.append(((sx+x-1)/2.,self.ftitle(f))); x+=gap
 
         if not data:
-            messagebox.showinfo("Графічний звіт", "Недостатньо даних для побудови графіка.")
-            self.graph_win.destroy()
-            return
-
-        ax.boxplot(data, positions=positions, widths=0.6, showfliers=True)
-        ax.set_title(f"{indicator}, {units}")
-        ax.set_ylabel(units)
-        ax.set_xticks(positions)
-        ax.set_xticklabels(xticklabels, rotation=90)
-        ax.yaxis.grid(True, linestyle='-', linewidth=0.5, alpha=0.35)
-
-        all_vals = [v for arr in data for v in arr]
-        if all_vals:
-            y_min = float(min(all_vals))
-            y_max = float(max(all_vals))
-            dy = (y_max - y_min) if y_max > y_min else (abs(y_max) if y_max != 0 else 1.0)
-            offset = 0.03 * dy
+            tk.Label(bp_frame,text="Недостатньо даних").pack(pady=20)
         else:
-            offset = 1.0
+            bp=ax.boxplot(data,positions=positions,widths=0.6,showfliers=True,patch_artist=True)
+            for patch in bp["boxes"]:   patch.set(facecolor=gs["box_color"])
+            for line in bp["medians"]:  line.set(color=gs["median_color"],linewidth=2)
+            for line in bp["whiskers"]+bp["caps"]: line.set(color=gs["whisker_color"])
+            for fl in bp["fliers"]: fl.set(markerfacecolor=gs["flier_color"],marker="o",markersize=4)
 
-        for i, (f, lvl) in enumerate(letters):
-            arr = data[i]
-            if not arr:
-                continue
-            letter = (letters_factor.get(f, {}) or {}).get(lvl, "")
-            if not letter:
-                continue
-            ax.text(positions[i], max(arr) + offset, letter, ha="center", va="bottom", fontsize=12)
+            ax.set_title(f"{indicator}, {units}",**fp)
+            ax.set_ylabel(units,**fp)
+            ax.set_xticks(positions); ax.set_xticklabels(xlbls,rotation=90,
+                fontfamily=gs["font_family"],fontsize=max(8,gs["font_size"]-1))
+            ax.yaxis.grid(True,linestyle="-",lw=0.5,alpha=0.35)
+            ax.tick_params(axis="both",labelsize=max(8,gs["font_size"]-1))
 
-        fig.subplots_adjust(bottom=0.34, top=0.90, left=0.08, right=0.98)
-        for cx, fname in factor_centers:
-            ax.text(cx, -0.22, fname, ha="center", va="top",
-                    transform=ax.get_xaxis_transform(), fontsize=12)
+            allv=[v for a in data for v in a]
+            dy=max(allv)-min(allv) if len(allv)>1 else 1.
+            off=0.04*dy if dy>0 else 0.5
+            for i,(f,lv) in enumerate(let_list):
+                lt=(letters_factor.get(f,{}) or {}).get(lv,"")
+                if lt and data[i]:
+                    ax.text(positions[i],max(data[i])+off,lt,ha="center",va="bottom",**fp)
 
-        self._graph_fig = fig
-        self._graph_canvas = FigureCanvasTkAgg(fig, master=self.graph_win)
-        self._graph_canvas.draw()
-        self._graph_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+            fig_bp.subplots_adjust(bottom=0.32,top=0.91,left=0.08,right=0.98)
+            for cx,fnm in fcentres:
+                ax.text(cx,-0.22,fnm,ha="center",va="top",transform=ax.get_xaxis_transform(),**fp)
 
-    def _copy_graph_png(self):
-        fig = getattr(self, "_graph_fig", None)
-        if fig is None:
-            messagebox.showwarning("Копіювання", "Немає графіка для копіювання.")
-            return
-        ok, msg = copy_figure_png_to_clipboard(fig)
-        if ok:
-            messagebox.showinfo("Копіювання", "Графік скопійовано у буфер обміну як зображення (PNG).")
+        self._graph_fig_bp=fig_bp
+        cv_bp=FigureCanvasTkAgg(fig_bp,master=bp_frame); cv_bp.draw()
+        cv_bp.get_tk_widget().pack(fill=tk.BOTH,expand=True)
+
+        # ── VENN ──
+        vn_frame=tk.Frame(nb); nb.add(vn_frame,text="Діаграма Венна")
+        fig_vn=Figure(figsize=(6,5),dpi=100); ax2=fig_vn.add_subplot(111)
+
+        venn_vals=[(nm,float(pct)) for nm,pct in eff_rows
+                   if pct is not None and pct!="" and not (isinstance(pct,float) and math.isnan(float(pct) if pct else np.nan))]
+        venn_vals=[(nm,float(pct)) for nm,pct in venn_vals]
+
+        if venn_vals:
+            draw_venn(ax2,
+                      labels=[v[0] for v in venn_vals],
+                      values=venn_vals,
+                      colors=gs["venn_colors"],
+                      alpha=gs["venn_alpha"],
+                      font_size=gs["venn_font_size"],
+                      font_color=gs["venn_font_color"],
+                      font_family=gs["font_family"])
         else:
-            messagebox.showwarning("Копіювання", f"Не вдалося скопіювати графік. {msg}")
+            ax2.text(0.5,0.5,"Недостатньо даних",ha="center",va="center",transform=ax2.transAxes)
+            ax2.axis("off")
+
+        self._graph_fig_vn=fig_vn
+        cv_vn=FigureCanvasTkAgg(fig_vn,master=vn_frame); cv_vn.draw()
+        cv_vn.get_tk_widget().pack(fill=tk.BOTH,expand=True)
+
+        # cache lbf for redraw
+        self.lbf_cache={}
+        for f in self.factor_keys:
+            self.lbf_cache[f]=first_seen([r.get(f) for r in long if r.get(f) is not None])
+
+    def _copy_fig(self,fig):
+        if fig is None: messagebox.showwarning("","Графік відсутній."); return
+        ok,msg=_copy_fig_to_clipboard(fig)
+        if ok: messagebox.showinfo("","Графік скопійовано (PNG).")
+        else:  messagebox.showwarning("",f"Помилка: {msg}")
 
 
-# =========================================================
-# Run
-# =========================================================
-if __name__ == "__main__":
-    root = tk.Tk()
-    set_window_icon(root)
-    app = SADTk(root)
+# ═══════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ═══════════════════════════════════════════════════════════════
+if __name__=="__main__":
+    root=tk.Tk()
+    set_icon(root)
+    app=SADTk(root)
     root.mainloop()
