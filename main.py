@@ -594,18 +594,30 @@ def _nir05(long, fkeys, mse, dfe, lbf):
     return nir
 
 def build_eff_rows(table):
-    """Build effect-strength table (% of SS) including Residual and Total rows."""
+    """
+    Effect-strength table (% of SS_total).
+    Includes: factors, interactions, Residual.
+    Excludes: Total row (it IS 100% by definition — redundant).
+    Factors + Interactions + Residual = 100%.
+    """
     ss_tot = 0.
     for row in table:
-        if row[0] == "Загальна" and row[1] is not None and not (isinstance(row[1], float) and math.isnan(row[1])):
+        if row[0] == "Загальна" and row[1] is not None \
+                and not (isinstance(row[1], float) and math.isnan(row[1])):
             ss_tot = float(row[1]); break
     if ss_tot <= 0:
-        ss_tot = sum(float(r[1]) for r in table if r[1] is not None
-                     and not (isinstance(r[1], float) and math.isnan(r[1])))
+        # fallback: sum all non-nan SS values except Total
+        ss_tot = sum(float(r[1]) for r in table
+                     if r[1] is not None
+                     and not (isinstance(r[1], float) and math.isnan(r[1]))
+                     and r[0] != "Загальна")
     out = []
     for row in table:
         nm, SSv = row[0], row[1]
+        if nm == "Загальна": continue          # skip Total — always 100%, not informative
         if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)): continue
+        # skip WP-error row — internal split-plot term, not a "real" source
+        if "WP-error" in str(nm): continue
         pct = (float(SSv) / ss_tot * 100) if ss_tot > 0 else np.nan
         out.append([nm, fmt(pct, 2)])
     return out
@@ -1399,34 +1411,19 @@ class SADTk:
 
     # ── selection ─────────────────────────────────────────────
     def _clear_sel(self):
-        for (r, c) in list(self._sel_cells): self._restore_bg(r, c)
+        # No visual highlighting — just clear tracking state
         self._sel_cells.clear(); self._sel_anchor = None; self._sel_orig.clear()
 
     def _restore_bg(self, r, c):
-        try: self.entries[r][c].configure(bg=self._sel_orig.get((r, c), "white"))
-        except Exception: pass
+        pass   # no-op: no coloring was applied
 
     def _apply_sel(self, cells):
-        for (r, c) in cells:
-            try:
-                e = self.entries[r][c]
-                if (r, c) not in self._sel_orig: self._sel_orig[(r, c)] = e.cget("bg")
-                if (r, c) == self._sel_anchor:
-                    e.configure(bg=self.SEL_ANC)
-                elif e.get().strip():          # highlight only cells with data
-                    e.configure(bg=self.SEL_BG)
-            except Exception: pass
+        pass   # no-op: selection tracking only, no visual highlight
 
     def _sel_range(self, r1, c1, r2, c2):
-        prev = set(self._sel_cells)
         new = {(r, c) for r in range(min(r1, r2), max(r1, r2) + 1)
                for c in range(min(c1, c2), max(c1, c2) + 1)
                if r < len(self.entries) and c < len(self.entries[r])}
-        for rc in prev - new: self._restore_bg(*rc)
-        self._apply_sel(new - prev)
-        if self._sel_anchor in new:
-            try: self.entries[self._sel_anchor[0]][self._sel_anchor[1]].configure(bg=self.SEL_ANC)
-            except Exception: pass
         self._sel_cells = new
 
     def _sel_bounds(self):
@@ -1983,22 +1980,46 @@ class SADTk:
         log_applied = False
         if method == "log_param":
             if np.any(values <= 0):
-                messagebox.showwarning("", "Є нулі/від'ємні → логарифмування неможливе."); return
+                messagebox.showwarning("Логарифмування",
+                    "Дані містять нулі або від'ємні значення.\n"
+                    "Логарифмування неможливе. Оберіть непараметричний метод."); return
+            # Apply natural log
             long = [dict(r, value=math.log(r["value"])) for r in long]
             values = np.array([r["value"] for r in long], dtype=float)
             log_applied = True
+            # Re-run model on log-transformed data
             try:
                 if design == "crd":    res = anova_crd(long, self.factor_keys, lbf, ss_type)
                 elif design == "rcbd": res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
-                else: res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
-            except Exception as ex: messagebox.showerror("", str(ex)); return
+                else:                  res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
+            except Exception as ex: messagebox.showerror("Помилка моделі", str(ex)); return
             residuals = np.array(res.get("residuals", []), dtype=float)
             try: W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
             except Exception: W, p_norm = np.nan, np.nan
-            method = "lsd"
-            messagebox.showinfo("Логарифмування",
-                f"Дані прологарифмовано.\nShapiro–Wilk після: p={fmt(p_norm,4)}\n"
-                + ("✓ Нормальний" if p_norm > 0.05 else "✗ Все ще ненормальний"))
+
+            if math.isnan(p_norm) or p_norm <= 0.05:
+                # Still non-normal — cannot proceed with parametric
+                messagebox.showwarning("Логарифмування",
+                    f"Дані прологарифмовано (ln), але залишки все одно\n"
+                    f"не відповідають нормальному розподілу\n"
+                    f"(Shapiro–Wilk: W={fmt(W,4)}, p={fmt(p_norm,4)}).\n\n"
+                    "Параметричний аналіз неможливий.\n"
+                    "Будь ласка, оберіть непараметричний метод (Kruskal–Wallis, Mann–Whitney тощо).")
+                return
+            else:
+                # Normal after log — offer parametric methods
+                messagebox.showinfo("Логарифмування",
+                    f"Дані прологарифмовано (ln).\n"
+                    f"Shapiro–Wilk після трансформації:\n"
+                    f"W={fmt(W,4)},  p={fmt(p_norm,4)}  ✓ нормальний розподіл.\n\n"
+                    "Буде виконано параметричний аналіз.\n"
+                    "Оберіть метод парних порівнянь:")
+                # Ask user to choose among parametric methods
+                choice2 = self.choose_method(p_norm, design, n_var)
+                if not choice2["ok"]: return
+                method = choice2["method"]
+                # If user somehow picks log again — fallback to lsd
+                if method == "log_param": method = "lsd"
 
         MS_err = res.get("MS_error", np.nan); df_err = res.get("df_error", np.nan)
         MS_wp  = res.get("MS_whole", np.nan); df_wp  = res.get("df_whole", np.nan)
