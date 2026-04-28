@@ -856,7 +856,7 @@ class SADTk:
         self.root=root
         root.title("S.A.D. — Статистичний аналіз даних")
         root.geometry("1000x560"); set_icon(root)
-        root.option_add("*Font","Times New Roman 15")
+        root.option_add("*Font",("Times New Roman",14))
         root.option_add("*Foreground","#000000")
         try: ttk.Style().theme_use("clam")
         except Exception: pass
