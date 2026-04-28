@@ -525,9 +525,44 @@ def _ss_type2(y, Xf, ts, fkeys):
     return out, sse_full, dfe, mse, res
 
 def _ss_dispatch(ss_type, y, Xf, ts, fkeys):
-    if ss_type == "I":   return _ss_type1(y, Xf, ts, fkeys)
+    if ss_type == "I":    return _ss_type1(y, Xf, ts, fkeys)
     elif ss_type == "II": return _ss_type2(y, Xf, ts, fkeys)
-    else:                 return _ss_type3(y, Xf, ts)
+    elif ss_type == "IV": return _ss_type4(y, Xf, ts, fkeys)
+    else:                 return _ss_type3(y, Xf, ts)   # III default
+
+def _ss_type4(y, Xf, ts, fkeys):
+    """
+    Type IV SS — for unbalanced designs with empty cells.
+    Uses estimable contrasts: for each term, we compare the full model
+    against the model where that term's columns are zeroed-out (projection approach).
+    For balanced data this equals Type III. For missing cells it avoids
+    non-estimable functions by operating only on estimable contrasts.
+    """
+    _, _, res, sse_full, dfe, mse = _ols(y, Xf); out = {}
+    n = Xf.shape[0]
+    hat = Xf @ np.linalg.pinv(Xf)   # hat matrix H = X(X'X)⁻X'
+    for term, idx in ts.items():
+        if term == "Intercept": continue
+        if not idx: out[term] = (np.nan, 0, np.nan, np.nan, np.nan); continue
+        # Build contrast: columns in `idx` projected onto estimable space
+        C = Xf[:, idx]
+        # Estimable part: C_est = H @ C  (project onto column space of X)
+        C_est = hat @ C
+        # SS via general linear hypothesis: SS = y'C(C'C)⁻C'y  projected
+        try:
+            CTC = C_est.T @ C_est
+            CTC_inv = np.linalg.pinv(CTC)
+            _, _, res_full, sse_f, dfe_f, mse_f = _ols(y, Xf)
+            beta, *_ = np.linalg.lstsq(Xf, y, rcond=None)
+            Cb = C_est.T @ (Xf @ beta)
+            ss = float(Cb.T @ CTC_inv @ Cb)
+            df = len(idx); ms = ss / df if df > 0 else np.nan
+            F = (ms / mse) if (df > 0 and not math.isnan(mse) and mse > 0) else np.nan
+            p = float(1 - f_dist.cdf(F, df, dfe)) if (not math.isnan(F) and dfe > 0) else np.nan
+            out[term] = (ss, df, ms, F, p)
+        except Exception:
+            out[term] = (np.nan, 0, np.nan, np.nan, np.nan)
+    return out, sse_full, dfe, mse, res
 
 def _block_dum(long, bk="BLOCK"):
     blocks = first_seen([r.get(bk) for r in long if r.get(bk) is not None])
@@ -559,19 +594,20 @@ def _nir05(long, fkeys, mse, dfe, lbf):
     return nir
 
 def build_eff_rows(table):
+    """Build effect-strength table (% of SS) including Residual and Total rows."""
     ss_tot = 0.
     for row in table:
         if row[0] == "Загальна" and row[1] is not None and not (isinstance(row[1], float) and math.isnan(row[1])):
             ss_tot = float(row[1]); break
     if ss_tot <= 0:
         ss_tot = sum(float(r[1]) for r in table if r[1] is not None
-                     and not (isinstance(r[1], float) and math.isnan(r[1])) and not r[0].startswith("Залишок"))
+                     and not (isinstance(r[1], float) and math.isnan(r[1])))
     out = []
     for row in table:
         nm, SSv = row[0], row[1]
-        if nm.startswith("Залишок") or nm == "Загальна": continue
         if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)): continue
-        out.append([nm, fmt((float(SSv) / ss_tot * 100) if ss_tot > 0 else np.nan, 2)])
+        pct = (float(SSv) / ss_tot * 100) if ss_tot > 0 else np.nan
+        out.append([nm, fmt(pct, 2)])
     return out
 
 def build_pe2_rows(table):
@@ -1135,49 +1171,64 @@ class CorrelationWindow:
         self._compute_and_show(out["names_loc"], out["method"], out["alpha"])
 
     def _compute_and_show(self, names_loc, method, alpha):
-        # Extract data
+        # Extract raw grid as strings
         raw = [[e.get().strip() for e in row] for row in self.entries]
         # Remove completely empty rows
         raw = [r for r in raw if any(v for v in r)]
         if not raw: messagebox.showwarning("", "Немає даних."); return
 
         if names_loc == "col":
-            # First column = label, rest = values per row
-            labels = [row[0] for row in raw if row[0]]
-            data_rows = []
-            for row in raw:
-                try: data_rows.append([float(v.replace(",", ".")) for v in row[1:] if v])
-                except Exception: continue
-            # transpose: each label is a variable
-            n_vars = len(labels)
-            # each row is one observation across variables — need equal length
-            min_len = min(len(r) for r in data_rows) if data_rows else 0
-            data_cols = [[data_rows[i][j] for i in range(min_len)] for j in range(n_vars)] if min_len > 0 else []
-        else:
-            # First row of each column = label, rest = values
-            if not raw: return
-            labels = [self.header_labels[j].cget("text") if j < len(self.header_labels) else f"P{j+1}"
-                      for j in range(self.cols)]
+            # First column = label of each row-variable; each row = observations of that variable
+            labels = []
             data_cols = []
-            for j in range(self.cols):
+            for row in raw:
+                lbl = row[0] if row else ""
+                if not lbl: continue
+                vals = []
+                for v in row[1:]:
+                    if not v: continue
+                    try: vals.append(float(v.replace(",", ".")))
+                    except Exception: continue
+                if len(vals) >= 2:
+                    labels.append(lbl)
+                    data_cols.append(vals)
+
+        else:
+            # names_loc == "row": first non-empty cell of each column is the label
+            # Determine number of columns
+            n_cols = max(len(r) for r in raw) if raw else 0
+            labels = []
+            data_cols = []
+            for j in range(n_cols):
+                col_name = ""
                 col_vals = []
                 for i, row in enumerate(raw):
                     v = row[j] if j < len(row) else ""
                     if not v: continue
-                    try: col_vals.append(float(v.replace(",", "."))); 
-                    except Exception: continue
-                data_cols.append(col_vals)
+                    # First non-empty cell in column = label if it can't be a number
+                    if not col_name:
+                        try:
+                            float(v.replace(",", "."))
+                            # It's numeric — use header label or auto name
+                            col_name = (self.header_labels[j].cget("text")
+                                        if j < len(self.header_labels) else f"П{j+1}")
+                            col_vals.append(float(v.replace(",", ".")))
+                        except ValueError:
+                            col_name = v   # This IS the label
+                    else:
+                        try: col_vals.append(float(v.replace(",", ".")))
+                        except Exception: continue
+                if col_name and len(col_vals) >= 2:
+                    labels.append(col_name)
+                    data_cols.append(col_vals)
 
-        # Keep only non-empty columns
-        pairs = [(labels[j], data_cols[j]) for j in range(len(data_cols)) if len(data_cols[j]) >= 3]
-        if len(pairs) < 2: messagebox.showwarning("", "Потрібно ≥ 2 показники з ≥ 3 значеннями."); return
+        if len(data_cols) < 2:
+            messagebox.showwarning("", "Потрібно ≥ 2 показники з ≥ 2 значеннями."); return
 
-        labels_clean = [p[0] for p in pairs]
-        n = len(labels_clean)
-
-        # Equalise lengths (pairwise → use minimum)
-        min_n = min(len(p[1]) for p in pairs)
-        arrays = [np.array(p[1][:min_n], dtype=float) for p in pairs]
+        # Equalise lengths (use minimum pairwise length)
+        min_n = min(len(d) for d in data_cols)
+        arrays = [np.array(d[:min_n], dtype=float) for d in data_cols]
+        n = len(labels)
 
         # Build correlation matrix
         r_mat = np.ones((n, n)); p_mat = np.ones((n, n))
@@ -1194,7 +1245,7 @@ class CorrelationWindow:
                     r_mat[i, j] = r_mat[j, i] = np.nan
                     p_mat[i, j] = p_mat[j, i] = np.nan
 
-        self._show_heatmap(labels_clean, r_mat, p_mat, alpha, method)
+        self._show_heatmap(labels, r_mat, p_mat, alpha, method)
 
     def _show_heatmap(self, labels, r_mat, p_mat, alpha, method):
         if not HAS_MPL: messagebox.showwarning("", "matplotlib недоступний."); return
@@ -1819,9 +1870,19 @@ class SADTk:
         # SS Type
         ss_lbl = tk.Frame(frm); ss_lbl.grid(row=4, column=0, sticky="w", pady=(10, 4))
         tk.Label(ss_lbl, text="Тип SS:").pack(side=tk.LEFT)
+        tk.Button(ss_lbl, text=" ? ", width=3,
+                  command=lambda: messagebox.showinfo("Типи SS",
+                      "Тип I — Послідовний: кожен фактор після попередніх.\n"
+                      "         Порядок важливий. Для збалансованих дизайнів.\n\n"
+                      "Тип II — Ієрархічний: кожен фактор після решти головних\n"
+                      "          ефектів (без взаємодій). Незбаланс. без взаємодій.\n\n"
+                      "Тип III — Частковий (за замовч.): кожен ефект при всіх\n"
+                      "           інших. Стандарт SPSS/SAS. Взаємодії враховані.\n\n"
+                      "Тип IV — Функції, що оцінюються: для незбалансованих\n"
+                      "          дизайнів з пропущеними клітинками (SAS).")).pack(side=tk.LEFT, padx=4)
         ssv = tk.StringVar(value="III")
         ssf = tk.Frame(frm); ssf.grid(row=4, column=1, sticky="w", pady=(10, 4), padx=(140, 0))
-        for ss in ["I", "II", "III"]:
+        for ss in ["I", "II", "III", "IV"]:
             tk.Radiobutton(ssf, text=f"Тип {ss}", variable=ssv, value=ss, font=rb_f).pack(side=tk.LEFT, padx=6)
 
         out = {"ok": False}
