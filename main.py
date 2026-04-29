@@ -345,6 +345,13 @@ def lsd_sig(levels, means, ns, MS, df, alpha=ALPHA):
     return sig
 
 def pairwise_param(levels, means, ns, MS, df, method, alpha=ALPHA):
+    """
+    Parametric pairwise comparisons.
+    Duncan: true step-down procedure — critical q depends on number of
+    means spanned (p-range), not total m. This is methodologically correct.
+    Tukey: simultaneous, uses studentized range with m groups.
+    Bonferroni: Bonferroni-adjusted t-test.
+    """
     rows = []; sig = {}
     if MS is None or df is None or math.isnan(MS) or math.isnan(df): return rows, sig
     df = int(df)
@@ -352,14 +359,49 @@ def pairwise_param(levels, means, ns, MS, df, method, alpha=ALPHA):
     lvls = [x for x in levels if not math.isnan(means.get(x, np.nan)) and ns.get(x, 0) > 0]
     m = len(lvls)
     if m < 2: return rows, sig
+
+    # For Duncan: sort means descending and compute step ranges
+    if method == "duncan":
+        sorted_lvls = sorted(lvls, key=lambda x: means[x], reverse=True)
+        # Build significance matrix using step-down procedure
+        for i in range(m):
+            for j in range(i + 1, m):
+                a, b = sorted_lvls[i], sorted_lvls[j]
+                ma, mb = means[a], means[b]; na, nb = ns[a], ns[b]
+                se = math.sqrt(MS * (1 / na + 1 / nb))
+                if se <= 0: continue
+                p_range = j - i + 1      # number of means spanned (≥ 2)
+                # Duncan critical value: use studentized range with p_range groups
+                # Duncan alpha per step: alpha_p = 1 - (1 - alpha)^(p-1)
+                alpha_p = 1.0 - (1.0 - alpha) ** (p_range - 1)
+                alpha_p = min(alpha_p, 0.5)  # cap for stability
+                try:
+                    q_crit = float(studentized_range.ppf(1 - alpha_p, p_range, df))
+                    lsd_p = q_crit * se / math.sqrt(2)
+                    is_s = (abs(ma - mb) > lsd_p)
+                    # compute approximate p via q
+                    q_obs = abs(ma - mb) * math.sqrt(2) / se
+                    pa = float(1 - studentized_range.cdf(q_obs, p_range, df))
+                except Exception:
+                    is_s = False; pa = np.nan
+                sig[(a, b)] = is_s
+                rows.append([f"{a} vs {b}", fmt(pa, 4),
+                             ("істотна різниця " + sig_mark(pa)) if is_s else "–"])
+        return rows, sig
+
+    # Tukey and Bonferroni
     for a, b in combinations(lvls, 2):
         ma, mb = means[a], means[b]; na, nb = ns[a], ns[b]
         se = math.sqrt(MS * (1 / na + 1 / nb))
         if se <= 0: continue
         tv = abs(ma - mb) / se; pr = 2 * (1 - float(t_dist.cdf(tv, df)))
-        if method == "bonferroni":          pa = min(1., pr * (m * (m - 1) / 2))
-        elif method in ("tukey", "duncan"): pa = float(1 - studentized_range.cdf(math.sqrt(2) * tv, m, df))
-        else: pa = pr
+        if method == "bonferroni":
+            pa = min(1., pr * (m * (m - 1) / 2))
+        elif method == "tukey":
+            # Tukey–Kramer (handles unequal n via harmonic se)
+            pa = float(1 - studentized_range.cdf(math.sqrt(2) * tv, m, df))
+        else:
+            pa = pr
         is_s = (pa < alpha); sig[(a, b)] = is_s
         rows.append([f"{a} vs {b}", fmt(pa, 4),
                      ("істотна різниця " + sig_mark(pa)) if is_s else "–"])
@@ -1151,48 +1193,57 @@ class CorrelationWindow:
         frm = tk.Frame(dlg, padx=14, pady=12); frm.pack()
 
         tk.Label(frm, text="Назви показників:", font=("Times New Roman", 12)).grid(row=0, column=0, sticky="w", pady=4)
-        names_var = tk.StringVar(value="перший рядок кожного стовпця")
+        names_var = tk.StringVar(value="row")
         rb_f = ("Times New Roman", 12)
         tk.Radiobutton(frm, text="Перший рядок кожного стовпця", variable=names_var,
                        value="row", font=rb_f).grid(row=1, column=0, sticky="w")
         tk.Radiobutton(frm, text="Перша колонка (рядки = показники)", variable=names_var,
                        value="col", font=rb_f).grid(row=2, column=0, sticky="w")
 
-        tk.Label(frm, text="Метод:", font=("Times New Roman", 12)).grid(row=3, column=0, sticky="w", pady=(10, 4))
-        meth_var = tk.StringVar(value="pearson")
-        tk.Radiobutton(frm, text="Пірсона (параметричний)", variable=meth_var,
-                       value="pearson", font=rb_f).grid(row=4, column=0, sticky="w")
-        tk.Radiobutton(frm, text="Спірмена (непараметричний)", variable=meth_var,
-                       value="spearman", font=rb_f).grid(row=5, column=0, sticky="w")
+        tk.Label(frm, text="Метод кореляції:", font=("Times New Roman", 12)).grid(row=3, column=0, sticky="w", pady=(10, 4))
+        meth_var = tk.StringVar(value="auto")
+        tk.Radiobutton(frm, text="Авто (перевірка нормальності → Pearson або Spearman)",
+                       variable=meth_var, value="auto", font=rb_f).grid(row=4, column=0, sticky="w")
+        tk.Radiobutton(frm, text="Пірсона (лише якщо дані нормально розподілені)",
+                       variable=meth_var, value="pearson", font=rb_f).grid(row=5, column=0, sticky="w")
+        tk.Radiobutton(frm, text="Спірмена (непараметричний, завжди коректний)",
+                       variable=meth_var, value="spearman", font=rb_f).grid(row=6, column=0, sticky="w")
 
-        tk.Label(frm, text="Рівень значущості α:", font=("Times New Roman", 12)).grid(row=6, column=0, sticky="w", pady=(10, 4))
+        tk.Label(frm, text="Поправка на множинні порівняння:", font=("Times New Roman", 12)).grid(row=7, column=0, sticky="w", pady=(10, 4))
+        corr_var = tk.StringVar(value="bonferroni")
+        for txt, val in [("Бонферроні (суворіша)", "bonferroni"),
+                          ("BH / FDR (Benjamini–Hochberg, ліберальніша)", "bh"),
+                          ("Без поправки (не рекомендується)", "none")]:
+            tk.Radiobutton(frm, text=txt, variable=corr_var, value=val, font=rb_f).grid(
+                row=8 + [("bonferroni","bh","none").index(val)], column=0, sticky="w")
+
+        tk.Label(frm, text="Рівень значущості α:", font=("Times New Roman", 12)).grid(row=11, column=0, sticky="w", pady=(10, 4))
         alpha_var = tk.StringVar(value="0.05")
-        ttk.Combobox(frm, textvariable=alpha_var, values=["0.01", "0.05", "0.10"], state="readonly", width=8).grid(row=6, column=1, sticky="w", padx=6)
+        ttk.Combobox(frm, textvariable=alpha_var, values=["0.01", "0.05", "0.10"],
+                     state="readonly", width=8).grid(row=11, column=1, sticky="w", padx=6)
 
         out = {"ok": False}
         def ok():
             out.update({"ok": True, "names_loc": names_var.get(),
-                        "method": meth_var.get(), "alpha": float(alpha_var.get())})
+                        "method": meth_var.get(), "correction": corr_var.get(),
+                        "alpha": float(alpha_var.get())})
             dlg.destroy()
-        bf = tk.Frame(frm); bf.grid(row=7, column=0, columnspan=2, pady=(12, 0))
+        bf = tk.Frame(frm); bf.grid(row=12, column=0, columnspan=2, pady=(12, 0))
         tk.Button(bf, text="OK", width=10, command=ok).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", width=12, command=dlg.destroy).pack(side=tk.LEFT)
         dlg.update_idletasks(); center_win(dlg); dlg.bind("<Return>", lambda e: ok())
         dlg.grab_set(); self.win.wait_window(dlg)
         if not out["ok"]: return
-        self._compute_and_show(out["names_loc"], out["method"], out["alpha"])
+        self._compute_and_show(out["names_loc"], out["method"], out["alpha"], out["correction"])
 
-    def _compute_and_show(self, names_loc, method, alpha):
-        # Extract raw grid as strings
+    def _compute_and_show(self, names_loc, method, alpha, correction="bonferroni"):
+        # ── Extract raw grid ──────────────────────────────────
         raw = [[e.get().strip() for e in row] for row in self.entries]
-        # Remove completely empty rows
         raw = [r for r in raw if any(v for v in r)]
         if not raw: messagebox.showwarning("", "Немає даних."); return
 
         if names_loc == "col":
-            # First column = label of each row-variable; each row = observations of that variable
-            labels = []
-            data_cols = []
+            labels = []; data_cols = []
             for row in raw:
                 lbl = row[0] if row else ""
                 if not lbl: continue
@@ -1201,130 +1252,222 @@ class CorrelationWindow:
                     if not v: continue
                     try: vals.append(float(v.replace(",", ".")))
                     except Exception: continue
-                if len(vals) >= 2:
-                    labels.append(lbl)
-                    data_cols.append(vals)
-
+                if len(vals) >= 3:
+                    labels.append(lbl); data_cols.append(vals)
         else:
-            # names_loc == "row": first non-empty cell of each column is the label
-            # Determine number of columns
             n_cols = max(len(r) for r in raw) if raw else 0
-            labels = []
-            data_cols = []
+            labels = []; data_cols = []
             for j in range(n_cols):
-                col_name = ""
-                col_vals = []
-                for i, row in enumerate(raw):
+                col_name = ""; col_vals = []
+                for row in raw:
                     v = row[j] if j < len(row) else ""
                     if not v: continue
-                    # First non-empty cell in column = label if it can't be a number
                     if not col_name:
                         try:
                             float(v.replace(",", "."))
-                            # It's numeric — use header label or auto name
                             col_name = (self.header_labels[j].cget("text")
                                         if j < len(self.header_labels) else f"П{j+1}")
                             col_vals.append(float(v.replace(",", ".")))
                         except ValueError:
-                            col_name = v   # This IS the label
+                            col_name = v
                     else:
                         try: col_vals.append(float(v.replace(",", ".")))
                         except Exception: continue
-                if col_name and len(col_vals) >= 2:
-                    labels.append(col_name)
-                    data_cols.append(col_vals)
+                if col_name and len(col_vals) >= 3:
+                    labels.append(col_name); data_cols.append(col_vals)
 
         if len(data_cols) < 2:
-            messagebox.showwarning("", "Потрібно ≥ 2 показники з ≥ 2 значеннями."); return
+            messagebox.showwarning("Замало даних",
+                "Потрібно ≥ 2 показники з ≥ 3 значеннями кожен."); return
 
-        # Equalise lengths (use minimum pairwise length)
-        min_n = min(len(d) for d in data_cols)
-        arrays = [np.array(d[:min_n], dtype=float) for d in data_cols]
         n = len(labels)
+        # ── Per-pair arrays (не вирівнюємо — використовуємо pairwise) ──
+        arrays = [np.array(d, dtype=float) for d in data_cols]
+        # matrix for pair lengths
+        n_mat = np.zeros((n, n), dtype=int)
 
-        # Build correlation matrix
-        r_mat = np.ones((n, n)); p_mat = np.ones((n, n))
+        # ── Авто-вибір методу: Shapiro-Wilk на кожному показнику ──
+        actual_method = method
+        if method == "auto":
+            non_normal = []
+            for i, arr in enumerate(arrays):
+                if len(arr) < 3: continue
+                try:
+                    _, p_sw = shapiro(arr)
+                    if p_sw <= 0.05: non_normal.append(labels[i])
+                except Exception: pass
+            if non_normal:
+                detail = ", ".join(non_normal[:5])
+                messagebox.showinfo("Авто-вибір методу",
+                    f"Показники, що не відповідають нормальному розподілу:\n{detail}\n\n"
+                    "Автоматично обрано метод Спірмена (непараметричний).")
+                actual_method = "spearman"
+            else:
+                messagebox.showinfo("Авто-вибір методу",
+                    "Усі показники відповідають нормальному розподілу.\n"
+                    "Автоматично обрано метод Пірсона.")
+                actual_method = "pearson"
+
+        # ── Попередження якщо Pearson обраний вручну ──
+        elif method == "pearson":
+            non_normal = []
+            for i, arr in enumerate(arrays):
+                if len(arr) < 3: continue
+                try:
+                    _, p_sw = shapiro(arr)
+                    if p_sw <= 0.05: non_normal.append(labels[i])
+                except Exception: pass
+            if non_normal:
+                detail = ", ".join(non_normal[:5])
+                ans = messagebox.askyesno("Увага: нормальність порушена",
+                    f"Показники, що не відповідають нормальному розподілу:\n{detail}\n\n"
+                    "Кореляція Пірсона передбачає нормальний розподіл обох змінних.\n"
+                    "При порушенні цієї умови результат може бути ненадійним.\n\n"
+                    "Рекомендація: використовуйте кореляцію Спірмена.\n\n"
+                    "Продовжити з Пірсоном попри порушення умови?")
+                if not ans: return
+
+        # ── Побудова попарних матриць r та p ──────────────────
+        r_mat = np.full((n, n), np.nan); p_mat = np.full((n, n), np.nan)
+        np.fill_diagonal(r_mat, 1.0); np.fill_diagonal(p_mat, 1.0)
+        np.fill_diagonal(n_mat, [len(a) for a in arrays])
+
+        raw_p_pairs = []   # [(i, j, p_raw)] for correction
         for i in range(n):
             for j in range(i + 1, n):
+                # pairwise complete observations
+                a = arrays[i]; b = arrays[j]
+                min_len = min(len(a), len(b))
+                a2 = a[:min_len]; b2 = b[:min_len]
+                # remove pairs where either is NaN
+                mask = ~(np.isnan(a2) | np.isnan(b2))
+                a2 = a2[mask]; b2 = b2[mask]
+                pair_n = len(a2)
+                n_mat[i, j] = n_mat[j, i] = pair_n
+                if pair_n < 3:
+                    continue
                 try:
-                    if method == "pearson":
-                        r_, p_ = pearsonr(arrays[i], arrays[j])
+                    if actual_method == "pearson":
+                        r_, p_ = pearsonr(a2, b2)
                     else:
-                        r_, p_ = spearmanr(arrays[i], arrays[j])
+                        r_, p_ = spearmanr(a2, b2)
                     r_mat[i, j] = r_mat[j, i] = float(r_)
-                    p_mat[i, j] = p_mat[j, i] = float(p_)
+                    raw_p_pairs.append((i, j, float(p_)))
                 except Exception:
-                    r_mat[i, j] = r_mat[j, i] = np.nan
-                    p_mat[i, j] = p_mat[j, i] = np.nan
+                    pass
 
-        self._show_heatmap(labels, r_mat, p_mat, alpha, method)
+        # ── Поправка на множинні порівняння ───────────────────
+        m_tests = len(raw_p_pairs)
+        if m_tests == 0:
+            messagebox.showwarning("", "Жодної пари з достатньою кількістю даних."); return
 
-    def _show_heatmap(self, labels, r_mat, p_mat, alpha, method):
+        if correction == "bonferroni":
+            for i, j, p_raw in raw_p_pairs:
+                p_adj = min(1.0, p_raw * m_tests)
+                p_mat[i, j] = p_mat[j, i] = p_adj
+        elif correction == "bh":
+            # Benjamini–Hochberg FDR
+            sorted_pairs = sorted(raw_p_pairs, key=lambda x: x[2])
+            p_adj_arr = np.array([p for _, _, p in sorted_pairs])
+            m = len(p_adj_arr)
+            # BH adjustment
+            bh_adj = np.zeros(m)
+            for k in range(m - 1, -1, -1):
+                bh_adj[k] = min(1.0, p_adj_arr[k] * m / (k + 1))
+                if k < m - 1: bh_adj[k] = min(bh_adj[k], bh_adj[k + 1])
+            for idx, (i, j, _) in enumerate(sorted_pairs):
+                p_mat[i, j] = p_mat[j, i] = float(bh_adj[idx])
+        else:  # none
+            for i, j, p_raw in raw_p_pairs:
+                p_mat[i, j] = p_mat[j, i] = p_raw
+
+        corr_label = {"bonferroni": "Бонферроні", "bh": "BH/FDR", "none": "без поправки"
+                      }.get(correction, correction)
+        self._show_heatmap(labels, r_mat, p_mat, n_mat, alpha, actual_method, corr_label)
+
+    def _show_heatmap(self, labels, r_mat, p_mat, n_mat, alpha, method, corr_label=""):
         if not HAS_MPL: messagebox.showwarning("", "matplotlib недоступний."); return
         gs = self.gs
-        win = tk.Toplevel(self.win); win.title("Теплова карта кореляцій"); win.geometry("820x720"); set_icon(win)
+        win = tk.Toplevel(self.win); win.title("Теплова карта кореляцій")
+        win.geometry("860x740"); set_icon(win)
         tb = tk.Frame(win, padx=6, pady=4); tb.pack(fill=tk.X)
-        tk.Button(tb, text="⚙ Налаштування", command=lambda: self._restyle(win, labels, r_mat, p_mat, alpha, method)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування",
+                  command=lambda: self._restyle(win, labels, r_mat, p_mat, n_mat, alpha, method, corr_label)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb, text=f"Метод: {method.capitalize()}   |   Поправка: {corr_label}   |   α={alpha}",
+                 font=("Times New Roman", 11), fg="#555").pack(side=tk.LEFT, padx=10)
 
         fig_frame = tk.Frame(win); fig_frame.pack(fill=tk.BOTH, expand=True)
-        self._draw_heatmap(fig_frame, labels, r_mat, p_mat, alpha, method, gs)
-        # also store ref for settings re-draw
-        self._hm_data = (labels, r_mat, p_mat, alpha, method)
+        self._draw_heatmap(fig_frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, gs)
+        self._hm_data = (labels, r_mat, p_mat, n_mat, alpha, method, corr_label)
         self._hm_frame = fig_frame
 
-    def _restyle(self, win, labels, r_mat, p_mat, alpha, method):
+    def _restyle(self, win, labels, r_mat, p_mat, n_mat, alpha, method, corr_label):
         dlg = GraphSettingsDlg(win, self.gs, show_heatmap=True)
         win.wait_window(dlg)
         if dlg.result:
             self.gs = dlg.result
             for w in self._hm_frame.winfo_children(): w.destroy()
-            self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, alpha, method, self.gs)
+            self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, self.gs)
 
-    def _draw_heatmap(self, frame, labels, r_mat, p_mat, alpha, method, gs):
+    def _draw_heatmap(self, frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, gs):
         n = len(labels)
-        fig_h = max(5, n * 0.55 + 1.5); fig_w = max(5, n * 0.55 + 1.5)
-        fig = Figure(figsize=(min(fig_w, 10), min(fig_h, 10)), dpi=100)
+        cell_size = max(1.0, min(1.4, 9.0 / n))
+        fig_sz = max(5, n * cell_size + 1.8)
+        fig = Figure(figsize=(min(fig_sz, 12), min(fig_sz, 12)), dpi=100)
         ax = fig.add_subplot(111)
 
         cmap_name = gs.get("heatmap_cmap", "RdYlGn")
-        fsize = gs.get("heatmap_font_size", 10)
-        acol  = gs.get("heatmap_annot_color", "#000000")
-        ff    = gs.get("font_family", "Times New Roman")
+        fsize  = gs.get("heatmap_font_size", 9)
+        acol   = gs.get("heatmap_annot_color", "#000000")
+        ff     = gs.get("font_family", "Times New Roman")
 
         try: cmap = matplotlib.cm.get_cmap(cmap_name)
         except Exception: cmap = matplotlib.cm.get_cmap("RdYlGn")
 
-        # mask NaN
         masked = np.ma.array(r_mat, mask=np.isnan(r_mat))
         im = ax.imshow(masked, cmap=cmap, vmin=-1, vmax=1, aspect="auto")
 
-        ax.set_xticks(range(n)); ax.set_xticklabels(labels, rotation=45, ha="right",
-                                                      fontsize=fsize, fontfamily=ff)
-        ax.set_yticks(range(n)); ax.set_yticklabels(labels, fontsize=fsize, fontfamily=ff)
-        ax.set_title(f"Кореляційна матриця ({method.capitalize()}), α={alpha}",
+        ax.set_xticks(range(n))
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=fsize, fontfamily=ff)
+        ax.set_yticks(range(n))
+        ax.set_yticklabels(labels, fontsize=fsize, fontfamily=ff)
+        meth_full = "Пірсон" if method == "pearson" else "Спірмен"
+        ax.set_title(f"Кореляційна матриця ({meth_full}, {corr_label}, α={alpha})\n"
+                     f"У клітинках: r / p / n",
                      fontsize=fsize + 1, fontfamily=ff)
 
         for i in range(n):
             for j in range(n):
                 r_ = r_mat[i, j]; p_ = p_mat[i, j]
+                if i == j:
+                    ax.text(j, i, "—", ha="center", va="center",
+                            fontsize=fsize, color=acol, fontfamily=ff)
+                    continue
                 if math.isnan(r_): continue
-                mark = sig_mark(p_) if not math.isnan(p_) else ""
-                txt = f"{r_:.2f}{mark}"
-                ax.text(j, i, txt, ha="center", va="center",
-                        fontsize=fsize, color=acol, fontfamily=ff)
+                # significance mark on corrected p
+                p_disp = p_ if not math.isnan(p_) else np.nan
+                mark = sig_mark(p_disp) if not math.isnan(p_disp) else ""
+                n_ij = int(n_mat[i, j]) if n_mat is not None else 0
+                # format: r / p / n (3 lines)
+                p_str = fmt(p_disp, 3) if not math.isnan(p_disp) else "н/д"
+                cell_txt = f"{r_:.2f}{mark}\np={p_str}\nn={n_ij}"
+                ax.text(j, i, cell_txt, ha="center", va="center",
+                        fontsize=max(6, fsize - 1), color=acol, fontfamily=ff,
+                        linespacing=1.3)
 
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("r", fontsize=fsize, fontfamily=ff)
         fig.tight_layout()
 
         self._hm_fig = fig
         cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        # Copy button
         def copy_hm():
             ok, msg = _copy_fig_to_clipboard(self._hm_fig)
             if ok: messagebox.showinfo("", "Скопійовано.")
-            else: messagebox.showwarning("", f"Помилка: {msg}")
+            else:  messagebox.showwarning("", f"Помилка: {msg}")
         tk.Button(frame, text="📋 Копіювати PNG", command=copy_hm).pack(pady=4)
 
 
@@ -1915,12 +2058,22 @@ class SADTk:
                 tk.Label(frm, text="Дані НЕ відповідають нормальному розподілу.\nОберіть метод:",
                          fg="#c62828", justify="left").pack(anchor="w", pady=(0, 8))
                 if design == "crd":
-                    options = [("Краскела–Уолліса", "kw"), ("Манна-Уітні", "mw"),
-                               ("🔁 Логарифмування + параметричний", "log_param")]
+                    options = [("Краскела–Уолліса", "kw"),
+                               ("Манна-Уітні", "mw"),
+                               ("🔁 ln(x) + параметричний", "log_param"),
+                               ("🔁 √x + параметричний",    "sqrt_param"),
+                               ("🔁 log₁₀(x) + параметричний", "log10_param")]
                 else:
-                    options = ([("Wilcoxon (парний)", "wilcoxon"), ("🔁 Логарифмування + параметричний", "log_param")]
-                               if n_var == 2 else
-                               [("Friedman", "friedman"), ("🔁 Логарифмування + параметричний", "log_param")])
+                    if n_var == 2:
+                        options = [("Wilcoxon (парний)", "wilcoxon"),
+                                   ("🔁 ln(x) + параметричний",    "log_param"),
+                                   ("🔁 √x + параметричний",       "sqrt_param"),
+                                   ("🔁 log₁₀(x) + параметричний","log10_param")]
+                    else:
+                        options = [("Friedman", "friedman"),
+                                   ("🔁 ln(x) + параметричний",    "log_param"),
+                                   ("🔁 √x + параметричний",       "sqrt_param"),
+                                   ("🔁 log₁₀(x) + параметричний","log10_param")]
         out = {"ok": False, "method": None}
         if not options:
             tk.Button(frm, text="OK", width=10, command=dlg.destroy).pack(pady=(10, 0))
@@ -1948,14 +2101,47 @@ class SADTk:
         ss_type = params.get("ss_type", "III")
 
         long, used_rep = self.collect_long(design)
-        if not long: messagebox.showwarning("", "Немає числових даних."); return
+        if not long: messagebox.showwarning("Помилка даних", "Немає числових даних."); return
         values = np.array([r["value"] for r in long], dtype=float)
-        if len(values) < 3: messagebox.showinfo("", "Надто мало даних."); return
+
+        # ── Мінімальна кількість спостережень ──────────────────
+        if len(values) < 6:
+            messagebox.showwarning("Замало даних",
+                f"Для дисперсійного аналізу потрібно щонайменше 6 спостережень.\n"
+                f"Наразі: {len(values)}."); return
 
         lbf = {f: first_seen([r.get(f) for r in long]) for f in self.factor_keys}
+
+        # ── Перевірка мінімальної кількості рівнів кожного фактора ──
+        for f in self.factor_keys:
+            if len(lbf[f]) < 2:
+                messagebox.showwarning("Помилка даних",
+                    f"Фактор «{self.ftitle(f)}» має лише 1 рівень.\n"
+                    "Для аналізу потрібно щонайменше 2 рівні."); return
+
+        # ── Перевірка мінімальної кількості повторностей для RCBD/Split ──
+        if design in ("rcbd", "split") and len(used_rep) < 2:
+            messagebox.showwarning("Помилка дизайну",
+                f"Для дизайну {design.upper()} потрібно щонайменше 2 повторності (блоки).\n"
+                f"Наразі: {len(used_rep)}."); return
+
         var_order = first_seen([tuple(r.get(f) for f in self.factor_keys) for r in long])
         v_names = [" | ".join(map(str, k)) for k in var_order]
         n_var = len(var_order)
+
+        # ── Перевірка збалансованості при Тип I SS ─────────────
+        if ss_type == "I":
+            from collections import Counter
+            cell_counts = Counter(tuple(r.get(f) for f in self.factor_keys) for r in long)
+            counts = list(cell_counts.values())
+            if len(set(counts)) > 1:
+                ans = messagebox.askyesno("Увага: незбалансовані дані + Тип I SS",
+                    "Дані незбалансовані (різна кількість спостережень у клітинках).\n\n"
+                    "При Тип I SS (послідовний) результат залежить від ПОРЯДКУ введення факторів.\n"
+                    "Зміна порядку дає інші значення SS та p.\n\n"
+                    "Рекомендація: використовуйте Тип III для незбалансованих даних.\n\n"
+                    "Продовжити з Тип I SS?")
+                if not ans: return
 
         try:
             if design == "crd":    res = anova_crd(long, self.factor_keys, lbf, ss_type)
@@ -1966,60 +2152,89 @@ class SADTk:
         except Exception as ex: messagebox.showerror("Помилка моделі", str(ex)); return
 
         residuals = np.array(res.get("residuals", []), dtype=float)
-        try: W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
+        n_res = len(residuals)
+        try: W, p_norm = shapiro(residuals) if n_res >= 3 else (np.nan, np.nan)
         except Exception: W, p_norm = np.nan, np.nan
+
+        # ── Попередження про обмеження Shapiro-Wilk ────────────
+        sw_warning = ""
+        if n_res < 8:
+            sw_warning = f"\n⚠ Увага: n={n_res} — надто мало для надійного тесту нормальності."
+        elif n_res > 100:
+            sw_warning = (f"\n⚠ Увага: n={n_res} — при великих вибірках Shapiro–Wilk виявляє\n"
+                          "  навіть мінімальні відхилення як значущі. Оцінюйте разом з Q-Q графіком.")
 
         normal = (not math.isnan(p_norm)) and (p_norm > 0.05)
         if design == "split" and not normal:
-            messagebox.showwarning("Split-plot", "Залишки не нормальні → некоректний аналіз."); return
+            messagebox.showwarning("Split-plot: аналіз неможливий",
+                f"Залишки моделі не відповідають нормальному розподілу\n"
+                f"(Shapiro–Wilk: W={fmt(W,4)}, p={fmt(p_norm,4)}).\n\n"
+                "Split-plot реалізований лише для параметричних методів.\n"
+                "Рекомендації:\n"
+                "• трансформуйте дані (логарифмування) і повторіть;\n"
+                "• або оберіть CRD/RCBD для непараметричного аналізу."
+                + sw_warning); return
 
         choice = self.choose_method(p_norm, design, n_var)
         if not choice["ok"]: return
         method = choice["method"]
 
         log_applied = False
-        if method == "log_param":
-            if np.any(values <= 0):
-                messagebox.showwarning("Логарифмування",
+        transform_label = ""
+        if method in ("log_param", "sqrt_param", "log10_param"):
+            # ── Validate data for chosen transformation ──────────
+            if method in ("log_param", "log10_param") and np.any(values <= 0):
+                messagebox.showwarning("Трансформація неможлива",
                     "Дані містять нулі або від'ємні значення.\n"
-                    "Логарифмування неможливе. Оберіть непараметричний метод."); return
-            # Apply natural log
-            long = [dict(r, value=math.log(r["value"])) for r in long]
+                    "Логарифмування неможливе.\n"
+                    "Оберіть √x або непараметричний метод."); return
+            if method == "sqrt_param" and np.any(values < 0):
+                messagebox.showwarning("Трансформація неможлива",
+                    "Дані містять від'ємні значення.\n"
+                    "Трансформація √x неможлива."); return
+
+            # ── Apply transformation ─────────────────────────────
+            if method == "log_param":
+                long = [dict(r, value=math.log(r["value"])) for r in long]
+                transform_label = "ln(x)"
+            elif method == "sqrt_param":
+                long = [dict(r, value=math.sqrt(r["value"])) for r in long]
+                transform_label = "√x"
+            elif method == "log10_param":
+                long = [dict(r, value=math.log10(r["value"])) for r in long]
+                transform_label = "log₁₀(x)"
+
             values = np.array([r["value"] for r in long], dtype=float)
             log_applied = True
-            # Re-run model on log-transformed data
+
+            # ── Re-run model on transformed data ─────────────────
             try:
                 if design == "crd":    res = anova_crd(long, self.factor_keys, lbf, ss_type)
                 elif design == "rcbd": res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
                 else:                  res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
             except Exception as ex: messagebox.showerror("Помилка моделі", str(ex)); return
+
             residuals = np.array(res.get("residuals", []), dtype=float)
             try: W, p_norm = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
             except Exception: W, p_norm = np.nan, np.nan
 
             if math.isnan(p_norm) or p_norm <= 0.05:
-                # Still non-normal — cannot proceed with parametric
-                messagebox.showwarning("Логарифмування",
-                    f"Дані прологарифмовано (ln), але залишки все одно\n"
-                    f"не відповідають нормальному розподілу\n"
+                messagebox.showwarning("Трансформація не допомогла",
+                    f"Застосовано трансформацію {transform_label}, але залишки\n"
+                    f"все одно не відповідають нормальному розподілу\n"
                     f"(Shapiro–Wilk: W={fmt(W,4)}, p={fmt(p_norm,4)}).\n\n"
                     "Параметричний аналіз неможливий.\n"
-                    "Будь ласка, оберіть непараметричний метод (Kruskal–Wallis, Mann–Whitney тощо).")
-                return
-            else:
-                # Normal after log — offer parametric methods
-                messagebox.showinfo("Логарифмування",
-                    f"Дані прологарифмовано (ln).\n"
-                    f"Shapiro–Wilk після трансформації:\n"
-                    f"W={fmt(W,4)},  p={fmt(p_norm,4)}  ✓ нормальний розподіл.\n\n"
-                    "Буде виконано параметричний аналіз.\n"
-                    "Оберіть метод парних порівнянь:")
-                # Ask user to choose among parametric methods
-                choice2 = self.choose_method(p_norm, design, n_var)
-                if not choice2["ok"]: return
-                method = choice2["method"]
-                # If user somehow picks log again — fallback to lsd
-                if method == "log_param": method = "lsd"
+                    "Оберіть непараметричний метод (Kruskal–Wallis, Mann–Whitney тощо)."); return
+
+            messagebox.showinfo("Трансформація успішна",
+                f"Застосовано трансформацію {transform_label}.\n"
+                f"Shapiro–Wilk після трансформації:\n"
+                f"W={fmt(W,4)},  p={fmt(p_norm,4)}  ✓ нормальний розподіл.\n\n"
+                "Оберіть метод парних порівнянь:")
+            choice2 = self.choose_method(p_norm, design, n_var)
+            if not choice2["ok"]: return
+            method = choice2["method"]
+            if method in ("log_param", "sqrt_param", "log10_param"): method = "lsd"
 
         MS_err = res.get("MS_error", np.nan); df_err = res.get("df_error", np.nan)
         MS_wp  = res.get("MS_whole", np.nan); df_wp  = res.get("df_whole", np.nan)
@@ -2048,6 +2263,19 @@ class SADTk:
         lev_F, lev_p = (np.nan, np.nan)
         if method in ("lsd", "tukey", "duncan", "bonferroni"):
             lev_F, lev_p = levene_test(groups1)
+            # ── Блокування при неоднорідних дисперсіях ─────────
+            if not math.isnan(lev_p) and lev_p < ALPHA:
+                ans = messagebox.askyesno(
+                    "Неоднорідність дисперсій (тест Левена)",
+                    f"Тест Левена виявив неоднорідність дисперсій\n"
+                    f"(F={fmt(lev_F,4)}, p={fmt(lev_p,4)}) — умова ANOVA порушена.\n\n"
+                    "Параметричний аналіз при неоднорідних дисперсіях дає\n"
+                    "недостовірні F-значення та p-значення.\n\n"
+                    "Рекомендації:\n"
+                    "• застосуйте трансформацію даних (логарифмування);\n"
+                    "• або оберіть непараметричний метод (Kruskal–Wallis).\n\n"
+                    "Продовжити параметричний аналіз попри порушення умови?")
+                if not ans: return
 
         kw_H = kw_p = kw_df = kw_eps = np.nan; do_ph = True
         fr_chi = fr_p = fr_df = fr_W = np.nan; wil_s = wil_p = np.nan
@@ -2057,25 +2285,65 @@ class SADTk:
         ph_rows = []; fpt = {}
 
         if method == "lsd":
-            for f in self.factor_keys:
-                MS_ = MS_wp if (design == "split" and f == split_mf) else MS_err
-                df_ = df_wp if (design == "split" and f == split_mf) else df_err
-                lf[f] = cld(lbf[f], fm[f], lsd_sig(lbf[f], fm[f], fn[f], MS_, df_))
-            if design != "split":
-                lnamed = cld(v_names, means1, lsd_sig(v_names, means1, ns1, MS_err, df_err))
+            # ── Protected LSD (Fisher): перевірити значущість глобального F ──
+            # Знаходимо найменше p-значення серед головних ефектів та взаємодій
+            global_p_values = []
+            for raw_row in res["table"]:
+                nm_, _ss, _df, _ms, _F, pv_ = raw_row
+                if any(x in str(nm_) for x in ["Залишок", "Загальна", "Блоки", "WP-error"]):
+                    continue
+                if pv_ is not None and not (isinstance(pv_, float) and math.isnan(pv_)):
+                    global_p_values.append(float(pv_))
 
-        elif method in ("tukey", "duncan", "bonferroni"):
-            if design != "split":
-                ph_rows, sig_ = pairwise_param(v_names, means1, ns1, MS_err, df_err, method)
-                lnamed = cld(v_names, means1, sig_)
-                for f in self.factor_keys:
-                    r_, s_ = pairwise_param(lbf[f], fm[f], fn[f], MS_err, df_err, method)
-                    fpt[f] = r_; lf[f] = cld(lbf[f], fm[f], s_)
+            global_F_sig = any(p < ALPHA for p in global_p_values) if global_p_values else False
+
+            if not global_F_sig:
+                messagebox.showwarning("Protected LSD: пост-хок заблоковано",
+                    "Жоден з ефектів у дисперсійному аналізі не є статистично значущим\n"
+                    "(p ≥ 0.05 для всіх факторів та їх взаємодій).\n\n"
+                    "Відповідно до принципу Protected LSD (Fisher, 1935),\n"
+                    "попарні порівняння можна виконувати ЛИШЕ після значущого F-тесту.\n\n"
+                    "Висновок: між варіантами немає статистично значущої різниці.\n"
+                    "Звіт сформовано з таблицями описової статистики без пост-хок аналізу.")
+                # Продовжуємо — формуємо звіт без літер CLD
             else:
                 for f in self.factor_keys:
-                    MS_ = MS_wp if f == split_mf else MS_err; df_ = df_wp if f == split_mf else df_err
-                    r_, s_ = pairwise_param(lbf[f], fm[f], fn[f], MS_, df_, method)
-                    fpt[f] = r_; lf[f] = cld(lbf[f], fm[f], s_)
+                    MS_ = MS_wp if (design == "split" and f == split_mf) else MS_err
+                    df_ = df_wp if (design == "split" and f == split_mf) else df_err
+                    lf[f] = cld(lbf[f], fm[f], lsd_sig(lbf[f], fm[f], fn[f], MS_, df_))
+                if design != "split":
+                    lnamed = cld(v_names, means1, lsd_sig(v_names, means1, ns1, MS_err, df_err))
+
+        elif method in ("tukey", "duncan", "bonferroni"):
+            # ── Перевірка значущості глобального F перед пост-хок ──
+            global_p_values_2 = []
+            for raw_row in res["table"]:
+                nm_, _ss, _df, _ms, _F, pv_ = raw_row
+                if any(x in str(nm_) for x in ["Залишок", "Загальна", "Блоки", "WP-error"]):
+                    continue
+                if pv_ is not None and not (isinstance(pv_, float) and math.isnan(pv_)):
+                    global_p_values_2.append(float(pv_))
+            global_F_sig_2 = any(p < ALPHA for p in global_p_values_2) if global_p_values_2 else False
+
+            if not global_F_sig_2:
+                messagebox.showwarning("Пост-хок заблоковано",
+                    "Жоден ефект не є статистично значущим (p ≥ 0.05).\n\n"
+                    "Виконання пост-хок порівнянь без значущого F-тесту\n"
+                    "призводить до надмірного числа хибнопозитивних результатів.\n\n"
+                    "Висновок: між варіантами немає статистично значущої різниці.")
+            else:
+                if design != "split":
+                    ph_rows, sig_ = pairwise_param(v_names, means1, ns1, MS_err, df_err, method)
+                    lnamed = cld(v_names, means1, sig_)
+                    for f in self.factor_keys:
+                        r_, s_ = pairwise_param(lbf[f], fm[f], fn[f], MS_err, df_err, method)
+                        fpt[f] = r_; lf[f] = cld(lbf[f], fm[f], s_)
+                else:
+                    for f in self.factor_keys:
+                        MS_ = MS_wp if f == split_mf else MS_err
+                        df_ = df_wp if f == split_mf else df_err
+                        r_, s_ = pairwise_param(lbf[f], fm[f], fn[f], MS_, df_, method)
+                        fpt[f] = r_; lf[f] = cld(lbf[f], fm[f], s_)
 
         elif method == "kw":
             try:
@@ -2158,6 +2426,7 @@ class SADTk:
         self.show_report(
             created=created, indicator=indicator, units=units, design=design,
             ss_type=ss_type, method=method, log_applied=log_applied,
+            transform_label=transform_label,
             n_var=n_var, n_rep=len(used_rep), n_obs=len(long),
             split_mf=split_mf, W=W, p_norm=p_norm,
             lev_F=lev_F, lev_p=lev_p,
@@ -2248,7 +2517,9 @@ class SADTk:
         design_lbl = {"crd": "CRD (повна рандомізація)", "rcbd": "RCBD (блочна рандомізація)", "split": "Split-plot"}[d['design']]
         _txt(f"Дизайн: {design_lbl}   |   Тип SS: {d['ss_type']}   |   Варіантів: {d['n_var']}   |   Повт.: {d['n_rep']}   |   Спостережень: {d['n_obs']}")
         if d['design'] == "split": _txt(f"Головний фактор (WP): {d['split_mf']}")
-        if d['log_applied']: _txt("⚠ Застосовано логарифмування даних (натуральний логарифм).")
+        if d['log_applied']:
+            tl = d.get('transform_label', 'ln(x)')
+            _txt(f"⚠ Застосовано трансформацію {tl}. Середні у звіті — у трансформованій шкалі.")
         method_lbl = {"lsd": "НІР₀₅ (LSD)", "tukey": "Тест Тьюкі", "duncan": "Тест Дункана",
                       "bonferroni": "Бонферроні", "kw": "Kruskal–Wallis", "mw": "Mann–Whitney",
                       "friedman": "Friedman", "wilcoxon": "Wilcoxon"}.get(d['method'], "")
@@ -2486,9 +2757,2126 @@ class SADTk:
         else:  messagebox.showwarning("", f"Помилка: {msg}")
 
 
+
 # ═══════════════════════════════════════════════════════════════
-# ENTRY POINT
+# EXPORT  — Word (.docx) and PDF via reportlab
 # ═══════════════════════════════════════════════════════════════
+def export_report_docx(text_lines, tables, filepath):
+    """Export plain-text + table data to .docx using python-docx."""
+    try:
+        from docx import Document
+        from docx.shared import Pt, Cm
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except ImportError:
+        raise RuntimeError("Встановіть python-docx:\n  pip install python-docx")
+    doc = Document()
+    style = doc.styles['Normal']; style.font.name = 'Times New Roman'; style.font.size = Pt(12)
+    for section in doc.sections:
+        section.top_margin = Cm(2); section.bottom_margin = Cm(2)
+        section.left_margin = Cm(2.5); section.right_margin = Cm(2)
+    for item in text_lines:
+        kind = item.get("kind", "text")
+        if kind == "heading":
+            p = doc.add_heading(item["text"], level=item.get("level", 2))
+            p.runs[0].font.name = 'Times New Roman'
+        elif kind == "table":
+            headers = item["headers"]; rows = item["rows"]
+            tbl = doc.add_table(rows=1 + len(rows), cols=len(headers))
+            tbl.style = 'Table Grid'
+            hrow = tbl.rows[0]
+            for j, h in enumerate(headers):
+                hrow.cells[j].text = str(h)
+                run = hrow.cells[j].paragraphs[0].runs[0]
+                run.bold = True; run.font.name = 'Times New Roman'; run.font.size = Pt(11)
+            for i, row in enumerate(rows):
+                for j, val in enumerate(row):
+                    cell = tbl.rows[i+1].cells[j]
+                    cell.text = "" if val is None else str(val)
+                    cell.paragraphs[0].runs[0].font.name = 'Times New Roman' if cell.paragraphs[0].runs else None
+            doc.add_paragraph()
+        else:
+            p = doc.add_paragraph(item.get("text", ""))
+            p.runs[0].font.name = 'Times New Roman' if p.runs else None
+    doc.save(filepath)
+
+def export_report_pdf(text_lines, filepath):
+    """Export plain text to PDF using reportlab."""
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib import colors
+    except ImportError:
+        raise RuntimeError("Встановіть reportlab:\n  pip install reportlab")
+    doc = SimpleDocTemplate(filepath, pagesize=A4,
+                            rightMargin=2*cm, leftMargin=2.5*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle('h1', parent=styles['Heading2'], fontName='Times-Roman', fontSize=12, spaceAfter=4)
+    normal = ParagraphStyle('n', parent=styles['Normal'], fontName='Times-Roman', fontSize=11, spaceAfter=2)
+    story = []
+    for item in text_lines:
+        kind = item.get("kind","text")
+        if kind == "heading":
+            story.append(Paragraph(item["text"], h1))
+        elif kind == "table":
+            headers = item["headers"]; rows = item["rows"]
+            data = [headers] + [[("" if v is None else str(v)) for v in r] for r in rows]
+            t = Table(data, repeatRows=1)
+            t.setStyle(TableStyle([
+                ('FONTNAME',(0,0),(-1,0),'Times-Roman'), ('FONTSIZE',(0,0),(-1,0),10),
+                ('FONTNAME',(0,1),(-1,-1),'Times-Roman'), ('FONTSIZE',(0,1),(-1,-1),9),
+                ('GRID',(0,0),(-1,-1),0.5,colors.black),
+                ('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e8e8e8')),
+            ]))
+            story.append(t); story.append(Spacer(1,6))
+        else:
+            txt = item.get("text","").replace("\n","<br/>")
+            if txt.strip(): story.append(Paragraph(txt, normal))
+    doc.build(story)
+
+
+# ═══════════════════════════════════════════════════════════════
+# DESCRIPTIVE STATISTICS — standalone module
+# ═══════════════════════════════════════════════════════════════
+class DescriptiveWindow:
+    """Standalone descriptive statistics module."""
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent); self.win.title("Descriptive Statistics")
+        self.win.geometry("1100x680"); set_icon(self.win)
+        self.gs = gs; self._build()
+
+    def _build(self):
+        mb = tk.Menu(self.win); self.win.config(menu=mb)
+        fm = tk.Menu(mb, tearoff=0)
+        fm.add_command(label="Load Excel", command=self._load_excel)
+        fm.add_command(label="Paste from clipboard", command=self._paste)
+        mb.add_cascade(label="File", menu=fm)
+
+        top = tk.Frame(self.win, padx=6, pady=4); top.pack(fill=tk.X)
+        tk.Button(top, text="▶ Analyze", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=self._analyze).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="First row = variable names  |  Each column = one variable",
+                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=8)
+
+        # data table
+        tf = tk.Frame(self.win); tf.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        self.rows = 20; self.cols = 8
+        canvas = tk.Canvas(tf); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(tf, orient="vertical", command=canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+        self._canvas = canvas
+        self.entries = []
+        for j in range(self.cols):
+            lbl = tk.Label(self.inner, text=f"Var {j+1}", relief=tk.RIDGE, width=12,
+                           bg="#f0f0f0", font=("Times New Roman",11))
+            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+        for i in range(self.rows):
+            row_ = []
+            for j in range(self.cols):
+                e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
+                e.grid(row=i+1, column=j, padx=1, pady=1)
+                row_.append(e)
+            self.entries.append(row_)
+
+    def _paste(self):
+        w = self.win.focus_get()
+        if not isinstance(w, tk.Entry): return
+        try: data = self.win.clipboard_get()
+        except Exception: return
+        for i, line in enumerate(data.splitlines()):
+            if not line: continue
+            for j, val in enumerate(line.split("\t")):
+                if i < len(self.entries) and j < self.cols:
+                    self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,val)
+
+    def _load_excel(self):
+        if not HAS_OPENPYXL: messagebox.showerror("","pip install openpyxl"); return
+        path = filedialog.askopenfilename(filetypes=[("Excel","*.xlsx *.xlsm"),("All","*.*")])
+        if not path: return
+        try:
+            wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+            ws = wb.active
+            raw = [[cell for cell in row] for row in ws.iter_rows(values_only=True)]
+            wb.close()
+            while len(self.entries) < len(raw):
+                i = len(self.entries); row_ = []
+                for j in range(self.cols):
+                    e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
+                    e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+                self.entries.append(row_); self.rows += 1
+            for i, row in enumerate(raw):
+                for j, v in enumerate(row):
+                    if i < len(self.entries) and j < self.cols:
+                        self.entries[i][j].delete(0,tk.END)
+                        self.entries[i][j].insert(0,"" if v is None else str(v))
+        except Exception as ex: messagebox.showerror("",str(ex))
+
+    def _analyze(self):
+        # read data: first row = names
+        raw = [[e.get().strip() for e in row] for row in self.entries]
+        # find names row (first non-empty)
+        names = []; data_cols = []
+        for j in range(self.cols):
+            col_vals = []; col_name = ""
+            for i, row in enumerate(raw):
+                v = row[j] if j < len(row) else ""
+                if not v: continue
+                if not col_name:
+                    try: float(v.replace(",",".")); col_name = f"Var{j+1}"; col_vals.append(float(v.replace(",",".")))
+                    except ValueError: col_name = v
+                else:
+                    try: col_vals.append(float(v.replace(",",".")))
+                    except Exception: continue
+            if col_name and col_vals:
+                names.append(col_name); data_cols.append(np.array(col_vals, dtype=float))
+
+        if not data_cols: messagebox.showwarning("","No numeric data found."); return
+
+        # compute stats
+        from scipy.stats import skew, kurtosis
+        headers = ["Variable","n","Mean","SD","SE","Min","Max","Median",
+                   "Q1","Q3","CV%","Skewness","Kurtosis","95% CI low","95% CI high","SW p"]
+        rows = []
+        for nm, arr in zip(names, data_cols):
+            a = arr[~np.isnan(arr)]; n = len(a)
+            if n < 2: rows.append([nm, n] + ["–"]*14); continue
+            m = float(np.mean(a)); sd = float(np.std(a, ddof=1))
+            se = sd / math.sqrt(n)
+            ci_lo = m - float(t_dist.ppf(0.975, n-1)) * se
+            ci_hi = m + float(t_dist.ppf(0.975, n-1)) * se
+            sk = float(skew(a)); ku = float(kurtosis(a))
+            q1, q3 = float(np.percentile(a,25)), float(np.percentile(a,75))
+            cv = sd/m*100 if m != 0 else np.nan
+            try: _, sw_p = shapiro(a)
+            except Exception: sw_p = np.nan
+            rows.append([nm, n, fmt(m,3), fmt(sd,3), fmt(se,3),
+                         fmt(float(np.min(a)),3), fmt(float(np.max(a)),3),
+                         fmt(float(np.median(a)),3), fmt(q1,3), fmt(q3,3),
+                         fmt(cv,2), fmt(sk,3), fmt(ku,3),
+                         fmt(ci_lo,3), fmt(ci_hi,3), fmt(sw_p,4)])
+
+        self._show_result(headers, rows, data_cols, names)
+
+    def _show_result(self, headers, rows, arrays, names):
+        win = tk.Toplevel(self.win); win.title("Descriptive Statistics — Results")
+        win.geometry("1300x600"); set_icon(win)
+        top = tk.Frame(win, padx=6, pady=4); top.pack(fill=tk.X)
+        def export_docx():
+            p = filedialog.asksaveasfilename(defaultextension=".docx",filetypes=[("Word","*.docx")])
+            if not p: return
+            try:
+                export_report_docx([{"kind":"heading","text":"Descriptive Statistics","level":1},
+                                     {"kind":"table","headers":headers,"rows":rows}], [], p)
+                messagebox.showinfo("","Saved.")
+            except Exception as ex: messagebox.showerror("",str(ex))
+        tk.Button(top, text="Export Word", command=export_docx).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Plot Boxplots", command=lambda: self._plot_boxes(arrays, names)).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="QQ-plots", command=lambda: self._plot_qq(arrays, names)).pack(side=tk.LEFT, padx=4)
+
+        frm, _ = make_tv(win, headers, rows, min_col=80)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+    def _plot_boxes(self, arrays, names):
+        if not HAS_MPL: return
+        win = tk.Toplevel(self.win); win.title("Boxplots"); win.geometry("900x550")
+        fig = Figure(figsize=(max(6, len(arrays)*0.9+1), 5), dpi=100)
+        ax = fig.add_subplot(111)
+        ax.boxplot([a[~np.isnan(a)] for a in arrays], labels=names, patch_artist=True)
+        ax.set_ylabel("Value"); fig.tight_layout()
+        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _plot_qq(self, arrays, names):
+        if not HAS_MPL: return
+        from scipy.stats import probplot
+        n = len(arrays); cols = min(n, 4); rows_n = math.ceil(n/cols)
+        win = tk.Toplevel(self.win); win.title("QQ-plots"); win.geometry("1000x600")
+        fig = Figure(figsize=(cols*2.5+0.5, rows_n*2.5+0.5), dpi=100)
+        for i, (arr, nm) in enumerate(zip(arrays, names)):
+            a = arr[~np.isnan(arr)]
+            if len(a) < 3: continue
+            ax = fig.add_subplot(rows_n, cols, i+1)
+            res = probplot(a, dist="norm")
+            ax.plot(res[0][0], res[0][1], 'o', markersize=3, color='#4c72b0')
+            ax.plot(res[0][0], res[1][1] + res[1][0]*res[0][0], 'r-', lw=1)
+            ax.set_title(nm, fontsize=9); ax.set_xlabel("Theoretical"); ax.set_ylabel("Sample")
+        fig.tight_layout()
+        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+
+# ═══════════════════════════════════════════════════════════════
+# T-TEST MODULE
+# ═══════════════════════════════════════════════════════════════
+class TTestWindow:
+    def __init__(self, parent):
+        self.win = tk.Toplevel(parent); self.win.title("t-Test / Mann-Whitney")
+        self.win.geometry("700x560"); set_icon(self.win); self._build()
+
+    def _build(self):
+        frm = tk.Frame(self.win, padx=12, pady=10); frm.pack(fill=tk.BOTH, expand=True)
+        tk.Label(frm, text="Test type:", font=("Times New Roman",12,"bold")).grid(row=0,column=0,sticky="w")
+        self.test_var = tk.StringVar(value="ind")
+        rf = ("Times New Roman",12)
+        for txt, val, r in [("Independent samples (2 groups)","ind",1),
+                             ("Paired samples (before/after)","paired",2),
+                             ("One sample (vs. known mean)","one",3)]:
+            tk.Radiobutton(frm, text=txt, variable=self.test_var, value=val, font=rf,
+                           command=self._update_ui).grid(row=r, column=0, sticky="w")
+
+        tk.Label(frm, text="Group 1 / Sample:", font=("Times New Roman",12)).grid(row=4,column=0,sticky="w",pady=(10,2))
+        self.e1 = tk.Text(frm, width=50, height=4, font=("Times New Roman",11))
+        self.e1.grid(row=5, column=0, columnspan=2, sticky="ew")
+        tk.Label(frm, text="(comma or space or newline separated)", font=("Times New Roman",10), fg="#666").grid(row=6,column=0,sticky="w")
+
+        self.lbl2 = tk.Label(frm, text="Group 2:", font=("Times New Roman",12))
+        self.lbl2.grid(row=7,column=0,sticky="w",pady=(8,2))
+        self.e2 = tk.Text(frm, width=50, height=4, font=("Times New Roman",11))
+        self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
+
+        self.lbl_mu = tk.Label(frm, text="Known mean (μ₀):", font=("Times New Roman",12))
+        self.e_mu = tk.Entry(frm, width=12, font=("Times New Roman",12)); self.e_mu.insert(0,"0")
+
+        # alpha
+        tk.Label(frm, text="α:", font=("Times New Roman",12)).grid(row=11,column=0,sticky="w",pady=(8,2))
+        self.alpha_var = tk.StringVar(value="0.05")
+        ttk.Combobox(frm, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
+                     state="readonly", width=8).grid(row=11, column=1, sticky="w")
+
+        tk.Button(frm, text="▶ Run", bg="#c62828", fg="white", font=("Times New Roman",13),
+                  command=self._run).grid(row=12, column=0, pady=12, sticky="w")
+        self.result_var = tk.StringVar()
+        tk.Label(frm, textvariable=self.result_var, font=("Times New Roman",11),
+                 justify="left", wraplength=620).grid(row=13, column=0, columnspan=2, sticky="w")
+        self._update_ui()
+
+    def _update_ui(self):
+        t = self.test_var.get()
+        if t == "one":
+            self.lbl2.grid_remove(); self.e2.grid_remove()
+            self.lbl_mu.grid(row=7, column=0, sticky="w", pady=(8,2))
+            self.e_mu.grid(row=7, column=1, sticky="w", padx=6)
+        else:
+            self.lbl_mu.grid_remove(); self.e_mu.grid_remove()
+            self.lbl2.grid(row=7, column=0, sticky="w", pady=(8,2))
+            self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
+        txt = "Group 2 (paired — same order as Group 1):" if t == "paired" else "Group 2:"
+        self.lbl2.configure(text=txt)
+
+    def _parse(self, widget):
+        import re
+        txt = widget.get("1.0", tk.END).strip()
+        nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", txt.replace(",","."))
+        return np.array([float(x) for x in nums], dtype=float)
+
+    def _run(self):
+        from scipy.stats import ttest_ind, ttest_rel, ttest_1samp
+        alpha = float(self.alpha_var.get())
+        x1 = self._parse(self.e1)
+        t = self.test_var.get()
+        if len(x1) < 2: self.result_var.set("Group 1 needs ≥ 2 values."); return
+
+        lines = []
+        lines.append(f"n₁ = {len(x1)},  Mean₁ = {fmt(np.mean(x1),4)},  SD₁ = {fmt(np.std(x1,ddof=1),4)}")
+
+        # normality check
+        try: _, sw1 = shapiro(x1)
+        except Exception: sw1 = np.nan
+        normal1 = (not math.isnan(sw1)) and sw1 > 0.05
+        lines.append(f"Shapiro–Wilk (Group 1): W={fmt(sw1,4)} → {'normal' if normal1 else 'NOT normal'}")
+
+        if t == "one":
+            try: mu0 = float(self.e_mu.get())
+            except Exception: mu0 = 0.0
+            stat, p = ttest_1samp(x1, mu0)
+            lines.append(f"\nOne-sample t-test (μ₀={mu0}):")
+            lines.append(f"t = {fmt(stat,4)},  df = {len(x1)-1},  p = {fmt(p,4)}")
+            lines.append("→ Significant difference" if p < alpha else "→ No significant difference")
+        else:
+            x2 = self._parse(self.e2)
+            if len(x2) < 2: self.result_var.set("Group 2 needs ≥ 2 values."); return
+            try: _, sw2 = shapiro(x2)
+            except Exception: sw2 = np.nan
+            normal2 = (not math.isnan(sw2)) and sw2 > 0.05
+            lines.append(f"n₂ = {len(x2)},  Mean₂ = {fmt(np.mean(x2),4)},  SD₂ = {fmt(np.std(x2,ddof=1),4)}")
+            lines.append(f"Shapiro–Wilk (Group 2): W={fmt(sw2,4)} → {'normal' if normal2 else 'NOT normal'}")
+
+            if t == "paired":
+                if len(x1) != len(x2):
+                    self.result_var.set("Paired test requires equal sample sizes."); return
+                if normal1 and normal2:
+                    stat, p = ttest_rel(x1, x2)
+                    lines.append(f"\nPaired t-test:  t={fmt(stat,4)},  df={len(x1)-1},  p={fmt(p,4)}")
+                else:
+                    stat, p = wilcoxon(x1, x2, zero_method="wilcox", alternative="two-sided", mode="auto")
+                    lines.append(f"\nWilcoxon signed-rank (non-normal):  W={fmt(stat,4)},  p={fmt(p,4)}")
+            else:
+                # check variance homogeneity
+                try: lev_s, lev_p = levene(x1, x2, center='median')
+                except Exception: lev_p = np.nan
+                equal_var = (not math.isnan(lev_p)) and lev_p >= 0.05
+                lines.append(f"Levene test: p={fmt(lev_p,4)} → {'equal variances' if equal_var else 'unequal variances'}")
+                if normal1 and normal2:
+                    stat, p = ttest_ind(x1, x2, equal_var=equal_var)
+                    test_name = "Independent t-test" if equal_var else "Welch t-test (unequal var)"
+                    n1, n2 = len(x1), len(x2)
+                    df_w = (np.var(x1,ddof=1)/n1 + np.var(x2,ddof=1)/n2)**2 / \
+                           ((np.var(x1,ddof=1)/n1)**2/(n1-1) + (np.var(x2,ddof=1)/n2)**2/(n2-1)) if not equal_var else n1+n2-2
+                    lines.append(f"\n{test_name}:  t={fmt(stat,4)},  df≈{fmt(df_w,1)},  p={fmt(p,4)}")
+                else:
+                    U, p = mannwhitneyu(x1, x2, alternative="two-sided")
+                    d = cliffs_d(x1, x2)
+                    lines.append(f"\nMann–Whitney U (non-normal):  U={fmt(U,3)},  p={fmt(p,4)}")
+                    lines.append(f"Cliff's δ = {fmt(d,4)}  ({cliffs_lbl(abs(d))} effect)")
+
+            lines.append("→ Significant difference" if p < alpha else "→ No significant difference")
+
+        self.result_var.set("\n".join(lines))
+
+
+# ═══════════════════════════════════════════════════════════════
+# OUTLIER DETECTION
+# ═══════════════════════════════════════════════════════════════
+def detect_outliers_grubbs(arr, alpha=0.05):
+    """Grubbs test for single outlier. Returns (idx_of_outlier or None, G, p)."""
+    a = np.array(arr, dtype=float); n = len(a)
+    if n < 3: return None, np.nan, np.nan
+    m = np.mean(a); s = np.std(a, ddof=1)
+    if s == 0: return None, np.nan, np.nan
+    G = np.max(np.abs(a - m)) / s
+    idx = int(np.argmax(np.abs(a - m)))
+    # critical value via t-distribution
+    t_crit = float(t_dist.ppf(1 - alpha/(2*n), n-2))
+    G_crit = ((n-1)/math.sqrt(n)) * math.sqrt(t_crit**2 / (n-2+t_crit**2))
+    p_approx = 2 * n * (1 - float(t_dist.cdf(G * math.sqrt(n) * math.sqrt(n-2) /
+               math.sqrt(n-1+G**2*n/(n-1)), n-2))) if n > 2 else np.nan
+    return (idx if G > G_crit else None), float(G), float(p_approx)
+
+def detect_outliers_iqr(arr):
+    """IQR method. Returns list of indices."""
+    a = np.array(arr, dtype=float)
+    q1, q3 = np.percentile(a, 25), np.percentile(a, 75)
+    iqr = q3 - q1
+    lo, hi = q1 - 1.5*iqr, q3 + 1.5*iqr
+    return [i for i, v in enumerate(a) if v < lo or v > hi]
+
+
+# ═══════════════════════════════════════════════════════════════
+# REGRESSION MODULE
+# ═══════════════════════════════════════════════════════════════
+class RegressionWindow:
+    MODELS = ["Linear:  y = a + bx",
+              "Quadratic:  y = a + bx + cx²",
+              "Cubic:  y = a + bx + cx² + dx³",
+              "Power:  y = a·xᵇ",
+              "Exponential:  y = a·eᵇˣ",
+              "Logarithmic:  y = a + b·ln(x)",
+              "Logistic (4-param):  y = d + (a-d)/(1+(x/c)ᵇ)"]
+
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent); self.win.title("Regression Analysis")
+        self.win.geometry("1050x720"); set_icon(self.win); self.gs = gs; self._build()
+
+    def _build(self):
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Label(top, text="Model:", font=("Times New Roman",12)).pack(side=tk.LEFT)
+        self.model_var = tk.StringVar(value=self.MODELS[0])
+        ttk.Combobox(top, textvariable=self.model_var, values=self.MODELS,
+                     state="readonly", width=44, font=("Times New Roman",11)).pack(side=tk.LEFT, padx=6)
+        tk.Label(top, text="α:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+        self.alpha_var = tk.StringVar(value="0.05")
+        ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
+                     state="readonly", width=7).pack(side=tk.LEFT)
+        tk.Button(top, text="▶ Run", bg="#c62828", fg="white",
+                  font=("Times New Roman",13), command=self._run).pack(side=tk.LEFT, padx=10)
+        tk.Button(top, text="Paste data", command=self._paste).pack(side=tk.LEFT, padx=4)
+
+        # data entry
+        mid = tk.Frame(self.win); mid.pack(fill=tk.X, padx=8)
+        for j, nm in enumerate(["x (independent)","y (dependent)"]):
+            tk.Label(mid, text=nm, font=("Times New Roman",11,"bold")).grid(row=0, column=j, padx=4)
+        self.tx = tk.Text(mid, width=36, height=14, font=("Times New Roman",11)); self.tx.grid(row=1,column=0,padx=4,pady=2)
+        self.ty = tk.Text(mid, width=36, height=14, font=("Times New Roman",11)); self.ty.grid(row=1,column=1,padx=4,pady=2)
+        tk.Label(mid, text="Enter values one per line or comma-separated",
+                 font=("Times New Roman",10), fg="#666").grid(row=2,column=0,columnspan=2,sticky="w",padx=4)
+
+        # result area
+        self.res_frame = tk.Frame(self.win, padx=8, pady=4); self.res_frame.pack(fill=tk.BOTH, expand=True)
+
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception: return
+        lines = [l.strip() for l in data.splitlines() if l.strip()]
+        xs, ys = [], []
+        for line in lines:
+            parts = line.replace(",",".").split()
+            if len(parts) >= 2:
+                try: xs.append(parts[0]); ys.append(parts[1])
+                except Exception: pass
+        self.tx.delete("1.0",tk.END); self.tx.insert("1.0","\n".join(xs))
+        self.ty.delete("1.0",tk.END); self.ty.insert("1.0","\n".join(ys))
+
+    def _parse_col(self, widget):
+        import re
+        txt = widget.get("1.0",tk.END).replace(",",".")
+        return np.array([float(x) for x in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?",txt)], dtype=float)
+
+    def _run(self):
+        from scipy.optimize import curve_fit
+        from scipy.stats import f as f_dist_
+        alpha = float(self.alpha_var.get())
+        x = self._parse_col(self.tx); y = self._parse_col(self.ty)
+        n = min(len(x),len(y)); x = x[:n]; y = y[:n]
+        if n < 4: messagebox.showwarning("","Need ≥ 4 data points."); return
+
+        model_name = self.model_var.get().split(":")[0].strip()
+        result = self._fit_model(model_name, x, y, alpha)
+        if result is None: return
+        self._show_result(result, x, y, model_name, alpha)
+
+    def _fit_model(self, name, x, y, alpha):
+        from scipy.optimize import curve_fit
+        try:
+            if name == "Linear":
+                X = np.column_stack([np.ones(len(x)), x])
+                beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
+                yhat = X @ beta
+                params = {"a": beta[0], "b": beta[1]}
+                eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x"
+            elif name == "Quadratic":
+                X = np.column_stack([np.ones(len(x)), x, x**2])
+                beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
+                yhat = X @ beta
+                params = {"a": beta[0], "b": beta[1], "c": beta[2]}
+                eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x + {fmt(beta[2],4)}·x²"
+            elif name == "Cubic":
+                X = np.column_stack([np.ones(len(x)), x, x**2, x**3])
+                beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
+                yhat = X @ beta
+                params = {"a": beta[0], "b": beta[1], "c": beta[2], "d": beta[3]}
+                eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x + {fmt(beta[2],4)}·x² + {fmt(beta[3],4)}·x³"
+            elif name == "Power":
+                if np.any(x <= 0): messagebox.showwarning("","Power model requires x > 0."); return None
+                lx, ly = np.log(x), np.log(y)
+                X = np.column_stack([np.ones(len(lx)), lx])
+                beta, *_ = np.linalg.lstsq(X, ly, rcond=None)
+                a, b = math.exp(beta[0]), beta[1]
+                yhat = a * x**b
+                params = {"a": a, "b": b}
+                eq = f"y = {fmt(a,4)}·x^{fmt(b,4)}"
+            elif name == "Exponential":
+                X = np.column_stack([np.ones(len(x)), x])
+                beta, *_ = np.linalg.lstsq(X, np.log(np.abs(y)+1e-10), rcond=None)
+                a, b = math.exp(beta[0]), beta[1]
+                yhat = a * np.exp(b * x)
+                params = {"a": a, "b": b}
+                eq = f"y = {fmt(a,4)}·e^({fmt(b,4)}·x)"
+            elif name == "Logarithmic":
+                if np.any(x <= 0): messagebox.showwarning("","Logarithmic model requires x > 0."); return None
+                X = np.column_stack([np.ones(len(x)), np.log(x)])
+                beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+                yhat = X @ beta
+                params = {"a": beta[0], "b": beta[1]}
+                eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·ln(x)"
+            elif name == "Logistic (4-param)":
+                def logistic4(xx, a, b, c, d):
+                    return d + (a - d) / (1 + (xx/c)**b)
+                p0 = [max(y), 1, np.median(x), min(y)]
+                popt, _ = curve_fit(logistic4, x, y, p0=p0, maxfev=10000)
+                yhat = logistic4(x, *popt)
+                params = {"a":popt[0],"b":popt[1],"c":popt[2],"d":popt[3]}
+                eq = f"y = {fmt(popt[3],4)} + ({fmt(popt[0],4)}-{fmt(popt[3],4)})/(1+(x/{fmt(popt[2],4)})^{fmt(popt[1],4)})"
+            else:
+                return None
+
+            residuals = y - yhat; sse = float(np.sum(residuals**2))
+            sst = float(np.sum((y - np.mean(y))**2))
+            R2 = 1 - sse/sst if sst > 0 else np.nan
+            n = len(x); k = len(params)
+            R2_adj = 1 - (1-R2)*(n-1)/(n-k-1) if n > k+1 else np.nan
+            mse = sse/(n-k) if n > k else np.nan
+            rmse = math.sqrt(mse) if not math.isnan(mse) else np.nan
+            # F-test
+            msm = (sst - sse)/k if k > 0 else np.nan
+            F = msm/mse if (not math.isnan(mse) and mse > 0) else np.nan
+            p_F = float(1-f_dist.cdf(F,k,n-k-1)) if (not math.isnan(F) and n>k+1) else np.nan
+            # Normality of residuals
+            try: _, sw_p = shapiro(residuals)
+            except Exception: sw_p = np.nan
+            return {"equation":eq,"params":params,"R2":R2,"R2_adj":R2_adj,
+                    "RMSE":rmse,"F":F,"p_F":p_F,"sw_p":sw_p,
+                    "residuals":residuals,"yhat":yhat,"sse":sse,"sst":sst,"n":n,"k":k}
+        except Exception as ex:
+            messagebox.showerror("Fitting error", str(ex)); return None
+
+    def _show_result(self, r, x, y, model_name, alpha):
+        for w in self.res_frame.winfo_children(): w.destroy()
+
+        # text summary
+        info = (f"Model: {model_name}\n"
+                f"Equation: {r['equation']}\n"
+                f"R² = {fmt(r['R2'],4)}   R²adj = {fmt(r['R2_adj'],4)}   RMSE = {fmt(r['RMSE'],4)}\n"
+                f"F = {fmt(r['F'],4)},  p = {fmt(r['p_F'],4)} {'✓ significant' if r['p_F'] is not None and not math.isnan(r['p_F']) and r['p_F'] < alpha else '✗ not significant'}\n"
+                f"Shapiro–Wilk (residuals): p = {fmt(r['sw_p'],4)}  "
+                f"{'✓ residuals normal' if r['sw_p'] is not None and not math.isnan(r['sw_p']) and r['sw_p'] > 0.05 else '⚠ residuals NOT normal'}")
+
+        tk.Label(self.res_frame, text=info, font=("Times New Roman",11),
+                 justify="left", anchor="w").pack(anchor="w")
+
+        # plot
+        if HAS_MPL:
+            fig = Figure(figsize=(10, 3.8), dpi=100)
+            ax1 = fig.add_subplot(121); ax2 = fig.add_subplot(122)
+            x_sort = np.sort(x); idx_sort = np.argsort(x)
+            # scatter + fit
+            ax1.scatter(x, y, s=25, color="#4c72b0", zorder=3, label="Observed")
+            ax1.plot(x_sort, r["yhat"][idx_sort], "r-", lw=2, label="Fitted")
+            ax1.set_xlabel("x"); ax1.set_ylabel("y")
+            ax1.set_title(f"Fit:  R²={fmt(r['R2'],3)}"); ax1.legend(fontsize=9)
+            ax1.yaxis.grid(True, alpha=0.3)
+            # residuals
+            ax2.scatter(r["yhat"], r["residuals"], s=25, color="#dd8452")
+            ax2.axhline(0, color="k", lw=0.8)
+            ax2.set_xlabel("Fitted values"); ax2.set_ylabel("Residuals")
+            ax2.set_title("Residuals vs Fitted"); ax2.yaxis.grid(True, alpha=0.3)
+            fig.tight_layout()
+            cv = FigureCanvasTkAgg(fig, master=self.res_frame)
+            cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # outlier check
+        out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
+        if out_idx is not None:
+            tk.Label(self.res_frame,
+                     text=f"⚠ Grubbs outlier detected in residuals: observation #{out_idx+1}  (G={fmt(G,3)})",
+                     fg="#c62828", font=("Times New Roman",11)).pack(anchor="w")
+
+
+# ═══════════════════════════════════════════════════════════════
+# SAMPLE SIZE CALCULATOR
+# ═══════════════════════════════════════════════════════════════
+class SampleSizeWindow:
+    def __init__(self, parent):
+        self.win = tk.Toplevel(parent); self.win.title("Sample Size Calculator")
+        self.win.geometry("600x520"); self.win.resizable(False, False); set_icon(self.win)
+        self._build()
+
+    def _build(self):
+        frm = tk.Frame(self.win, padx=16, pady=14); frm.pack(fill=tk.BOTH, expand=True)
+        tk.Label(frm, text="Sample Size & Statistical Power Calculator",
+                 font=("Times New Roman",13,"bold")).grid(row=0,column=0,columnspan=3,pady=(0,12))
+        rf = ("Times New Roman",12)
+        params = [
+            ("Design:", None, "design"),
+            ("α (significance level):", "0.05", "alpha"),
+            ("Power (1-β):", "0.80", "power"),
+            ("Expected difference (δ):", "", "delta"),
+            ("Standard deviation (σ):", "", "sigma"),
+            ("Number of treatments (k):", "3", "k"),
+            ("Number of replications (r) — leave blank to calculate:", "", "r"),
+        ]
+        self.vars = {}
+        row_i = 1
+        for label, default, key in params:
+            tk.Label(frm, text=label, font=rf).grid(row=row_i, column=0, sticky="w", pady=4)
+            if key == "design":
+                var = tk.StringVar(value="CRD")
+                ttk.Combobox(frm, textvariable=var, values=["CRD","RCBD","Split-plot"],
+                             state="readonly", width=16).grid(row=row_i, column=1, sticky="w", padx=6)
+            else:
+                var = tk.StringVar(value=default or "")
+                tk.Entry(frm, textvariable=var, width=14, font=rf).grid(row=row_i,column=1,sticky="w",padx=6)
+            self.vars[key] = var; row_i += 1
+
+        tk.Button(frm, text="▶ Calculate", bg="#c62828", fg="white", font=rf,
+                  command=self._calc).grid(row=row_i, column=0, columnspan=2, pady=14)
+        self.res_var = tk.StringVar()
+        tk.Label(frm, textvariable=self.res_var, font=("Times New Roman",11),
+                 justify="left", wraplength=540).grid(row=row_i+1, column=0, columnspan=3, sticky="w")
+
+    def _calc(self):
+        try:
+            alpha = float(self.vars["alpha"].get())
+            power = float(self.vars["power"].get())
+            delta = float(self.vars["delta"].get())
+            sigma = float(self.vars["sigma"].get())
+            k = int(self.vars["k"].get())
+            design = self.vars["design"].get()
+            r_str = self.vars["r"].get().strip()
+        except ValueError:
+            self.res_var.set("Please fill in all numeric fields."); return
+
+        if delta <= 0 or sigma <= 0 or k < 2:
+            self.res_var.set("δ and σ must be positive; k ≥ 2."); return
+
+        z_alpha = float(norm.ppf(1 - alpha/2))
+        z_beta  = float(norm.ppf(power))
+
+        lines = []
+        if r_str:
+            # given r — compute power
+            r = int(r_str)
+            # approximate formula for ANOVA power
+            lambda_nc = k * r * (delta**2) / (2 * sigma**2)
+            from scipy.stats import ncf
+            F_crit = float(f_dist.ppf(1-alpha, k-1, k*(r-1)))
+            achieved_power = float(1 - ncf.cdf(F_crit, k-1, k*(r-1), lambda_nc))
+            lines.append(f"Design: {design},  k={k} treatments,  r={r} replications")
+            lines.append(f"Non-centrality λ = {fmt(lambda_nc,3)}")
+            lines.append(f"F_crit(α={alpha}) = {fmt(F_crit,3)}")
+            lines.append(f"Achieved power (1-β) = {fmt(achieved_power,4)}")
+            lines.append(f"\n{'✓ Sufficient power' if achieved_power >= power else '✗ Insufficient power — increase replications'}")
+        else:
+            # calculate r needed
+            # iterative: increase r until power achieved
+            from scipy.stats import ncf
+            lines.append(f"Design: {design},  k={k} treatments")
+            lines.append(f"Target: α={alpha}, power={power}, δ={delta}, σ={sigma}\n")
+            found = False
+            for r in range(2, 101):
+                lambda_nc = k * r * (delta**2) / (2 * sigma**2)
+                F_crit = float(f_dist.ppf(1-alpha, k-1, k*(r-1)))
+                pwr = float(1 - ncf.cdf(F_crit, k-1, k*(r-1), lambda_nc))
+                if pwr >= power:
+                    lines.append(f"Minimum replications required: r = {r}")
+                    lines.append(f"Achieved power = {fmt(pwr,4)}")
+                    lines.append(f"Total observations = {k*r}")
+                    if design == "RCBD":
+                        lines.append(f"→ RCBD: {r} complete blocks, {k} treatments each")
+                    elif design == "Split-plot":
+                        lines.append(f"→ Split-plot: ≥ {r} blocks for whole-plot factor")
+                    found = True; break
+            if not found:
+                lines.append("Could not achieve target power with r ≤ 100.\nConsider increasing δ or reducing σ.")
+
+        self.res_var.set("\n".join(lines))
+
+
+# ═══════════════════════════════════════════════════════════════
+# CLUSTER ANALYSIS
+# ═══════════════════════════════════════════════════════════════
+class ClusterWindow:
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent); self.win.title("Cluster Analysis")
+        self.win.geometry("1000x680"); set_icon(self.win); self.gs = gs; self._build()
+
+    def _build(self):
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Label(top, text="Method:", font=("Times New Roman",12)).pack(side=tk.LEFT)
+        self.meth_var = tk.StringVar(value="ward")
+        ttk.Combobox(top, textvariable=self.meth_var,
+                     values=["ward","complete","average","single"],
+                     state="readonly", width=14).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="k (clusters):", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+        self.k_var = tk.IntVar(value=3)
+        tk.Spinbox(top, from_=2, to=20, textvariable=self.k_var, width=5).pack(side=tk.LEFT)
+        tk.Button(top, text="▶ Cluster", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=self._run).pack(side=tk.LEFT, padx=8)
+        tk.Label(top, text="First row = variable names; first column = object names",
+                 font=("Times New Roman",10), fg="#666").pack(side=tk.LEFT)
+
+        # data entry
+        mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.rows_n = 18; self.cols_n = 8
+        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+        self.entries = []
+        for j in range(self.cols_n):
+            tk.Label(self.inner, text=f"{'Name' if j==0 else f'Var{j}'}",
+                     relief=tk.RIDGE, width=12, bg="#f0f0f0",
+                     font=("Times New Roman",11)).grid(row=0,column=j,padx=1,pady=1,sticky="nsew")
+        for i in range(self.rows_n):
+            row_ = []
+            for j in range(self.cols_n):
+                e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
+                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+            self.entries.append(row_)
+
+    def _run(self):
+        from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+        from scipy.spatial.distance import pdist
+        raw = [[e.get().strip() for e in row] for row in self.entries]
+        raw = [r for r in raw if any(v for v in r)]
+        if not raw: messagebox.showwarning("","No data."); return
+
+        obj_names = []; data_matrix = []
+        for row in raw:
+            nm = row[0] if row else ""; vals = []
+            for v in row[1:]:
+                if not v: continue
+                try: vals.append(float(v.replace(",",".")))
+                except Exception: continue
+            if nm and vals:
+                obj_names.append(nm); data_matrix.append(vals)
+
+        if len(data_matrix) < 2: messagebox.showwarning("","Need ≥ 2 objects."); return
+        min_cols = min(len(r) for r in data_matrix)
+        X = np.array([r[:min_cols] for r in data_matrix], dtype=float)
+
+        # standardize
+        from scipy.stats import zscore
+        X_std = zscore(X, axis=0, ddof=1)
+        X_std = np.nan_to_num(X_std)
+
+        method = self.meth_var.get()
+        Z = linkage(X_std, method=method)
+        k = self.k_var.get()
+        labels_cl = fcluster(Z, k, criterion='maxclust')
+
+        if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
+        win = tk.Toplevel(self.win); win.title("Cluster Analysis — Dendrogram"); win.geometry("1000x620")
+        fig = Figure(figsize=(10, 5.5), dpi=100)
+        ax = fig.add_subplot(111)
+        dendrogram(Z, labels=obj_names, ax=ax, leaf_rotation=90, leaf_font_size=9,
+                   color_threshold=Z[-(k-1), 2] if k > 1 else np.inf)
+        ax.set_title(f"Hierarchical clustering ({method} linkage, k={k})")
+        ax.set_ylabel("Distance")
+        fig.tight_layout()
+        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # show cluster membership
+        result_txt = "\n".join(f"{nm}: Cluster {cl}" for nm, cl in zip(obj_names, labels_cl))
+        tk.Label(win, text=result_txt, font=("Times New Roman",11), justify="left").pack(padx=8, pady=4)
+
+
+# ═══════════════════════════════════════════════════════════════
+# PCA MODULE
+# ═══════════════════════════════════════════════════════════════
+class PCAWindow:
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent); self.win.title("Principal Component Analysis (PCA)")
+        self.win.geometry("1050x700"); set_icon(self.win); self.gs = gs; self._build()
+
+    def _build(self):
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Button(top, text="▶ Run PCA", bg="#c62828", fg="white",
+                  font=("Times New Roman",13), command=self._run).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Paste data", command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="First row = variable names; first column = object labels (optional)",
+                 font=("Times New Roman",10), fg="#666").pack(side=tk.LEFT, padx=8)
+
+        mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.rows_n = 20; self.cols_n = 10
+        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+        self.entries = []
+        for j in range(self.cols_n):
+            tk.Label(self.inner, text=f"{'Label' if j==0 else f'Var{j}'}",
+                     relief=tk.RIDGE, width=11, bg="#f0f0f0",
+                     font=("Times New Roman",11)).grid(row=0,column=j,padx=1,pady=1,sticky="nsew")
+        for i in range(self.rows_n):
+            row_ = []
+            for j in range(self.cols_n):
+                e = tk.Entry(self.inner, width=11, font=("Times New Roman",11))
+                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+            self.entries.append(row_)
+
+    def _paste(self):
+        w = self.win.focus_get()
+        if not isinstance(w, tk.Entry): return
+        try: data = self.win.clipboard_get()
+        except Exception: return
+        for i, line in enumerate(data.splitlines()):
+            if i >= len(self.entries): break
+            for j, val in enumerate(line.split("\t")):
+                if j < self.cols_n:
+                    self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,val)
+
+    def _run(self):
+        raw = [[e.get().strip() for e in row] for row in self.entries]
+        raw = [r for r in raw if any(v for v in r)]
+        if not raw: messagebox.showwarning("","No data."); return
+
+        obj_names = []; var_names = []; data_rows = []
+        # detect if first col is labels (non-numeric)
+        has_labels = False
+        try: float(raw[0][0].replace(",",".")); has_labels = False
+        except ValueError: has_labels = True
+
+        start_col = 1 if has_labels else 0
+        for i, row in enumerate(raw):
+            obj_names.append(row[0] if has_labels else f"Obs{i+1}")
+            vals = []
+            for v in row[start_col:]:
+                if not v: continue
+                try: vals.append(float(v.replace(",",".")))
+                except Exception: continue
+            if vals: data_rows.append(vals)
+
+        if not data_rows: messagebox.showwarning("","No numeric data."); return
+        min_c = min(len(r) for r in data_rows)
+        X = np.array([r[:min_c] for r in data_rows], dtype=float)
+
+        # Standardize
+        from scipy.stats import zscore
+        X_std = zscore(X, axis=0, ddof=1); X_std = np.nan_to_num(X_std)
+
+        # SVD-based PCA
+        cov = np.cov(X_std.T)
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
+        idx = np.argsort(eigenvalues)[::-1]
+        eigenvalues = eigenvalues[idx]; eigenvectors = eigenvectors[:, idx]
+        explained = eigenvalues / np.sum(eigenvalues) * 100
+        scores = X_std @ eigenvectors
+        n_comp = min(len(eigenvalues), X.shape[1])
+
+        if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
+        win = tk.Toplevel(self.win); win.title("PCA Results"); win.geometry("1100x700")
+
+        fig = Figure(figsize=(11, 6), dpi=100)
+        # Scree plot
+        ax1 = fig.add_subplot(131)
+        ax1.bar(range(1, n_comp+1), explained[:n_comp], color="#4c72b0", alpha=0.8)
+        ax1.plot(range(1, n_comp+1), np.cumsum(explained[:n_comp]), "ro-", markersize=4)
+        ax1.set_xlabel("PC"); ax1.set_ylabel("Variance explained (%)")
+        ax1.set_title("Scree plot")
+        ax1.axhline(80, color="gray", lw=0.8, ls="--")
+
+        # Biplot (PC1 vs PC2)
+        ax2 = fig.add_subplot(132)
+        ax2.scatter(scores[:, 0], scores[:, 1], s=30, color="#dd8452", zorder=3)
+        for i, nm in enumerate(obj_names[:len(scores)]):
+            ax2.annotate(nm, (scores[i,0], scores[i,1]), fontsize=7, alpha=0.8)
+        # loadings arrows
+        scale = max(np.max(np.abs(scores[:,0])), np.max(np.abs(scores[:,1]))) * 0.9
+        for j in range(min_c):
+            lx, ly = eigenvectors[j,0]*scale*0.7, eigenvectors[j,1]*scale*0.7
+            ax2.annotate("", xy=(lx,ly), xytext=(0,0),
+                         arrowprops=dict(arrowstyle="->", color="#c62828", lw=1.2))
+            ax2.text(lx*1.05, ly*1.05, f"Var{j+1}" if not var_names else var_names[j],
+                     fontsize=7, color="#c62828")
+        ax2.set_xlabel(f"PC1 ({fmt(explained[0],1)}%)")
+        ax2.set_ylabel(f"PC2 ({fmt(explained[1],1)}%)" if n_comp > 1 else "PC2")
+        ax2.set_title("Biplot (PC1 × PC2)"); ax2.axhline(0,color="k",lw=0.5); ax2.axvline(0,color="k",lw=0.5)
+
+        # Loadings heatmap
+        ax3 = fig.add_subplot(133)
+        load_mat = eigenvectors[:, :min(4, n_comp)]
+        im = ax3.imshow(load_mat, cmap="RdYlGn", vmin=-1, vmax=1, aspect="auto")
+        ax3.set_xticks(range(load_mat.shape[1]))
+        ax3.set_xticklabels([f"PC{i+1}" for i in range(load_mat.shape[1])], fontsize=8)
+        ax3.set_yticks(range(min_c))
+        ax3.set_yticklabels([f"Var{j+1}" for j in range(min_c)], fontsize=8)
+        ax3.set_title("Loadings")
+        for i in range(min_c):
+            for j in range(load_mat.shape[1]):
+                ax3.text(j, i, fmt(load_mat[i,j],2), ha="center", va="center", fontsize=7)
+
+        fig.tight_layout()
+        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Summary table
+        summary_rows = [[f"PC{i+1}", fmt(eigenvalues[i],4), fmt(explained[i],2),
+                         fmt(float(np.sum(explained[:i+1])),2)] for i in range(n_comp)]
+        frm, _ = make_tv(win, ["Component","Eigenvalue","Variance %","Cumulative %"], summary_rows)
+        frm.pack(fill=tk.X, padx=8, pady=4)
+
+
+# ═══════════════════════════════════════════════════════════════
+# REPEATED MEASURES ANOVA
+# ═══════════════════════════════════════════════════════════════
+class RepeatedMeasuresWindow:
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent); self.win.title("Repeated Measures ANOVA")
+        self.win.geometry("950x700"); set_icon(self.win); self.gs = gs; self._build()
+
+    def _build(self):
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Label(top, text="Columns = time points / conditions  |  Rows = subjects",
+                 font=("Times New Roman",11)).pack(side=tk.LEFT)
+        tk.Button(top, text="▶ Analyze", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=self._run).pack(side=tk.RIGHT, padx=4)
+
+        mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.rows_n = 20; self.cols_n = 8
+        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+        self.col_entries = []  # header names
+        self.entries = []
+        tk.Label(self.inner, text="Subject", relief=tk.RIDGE, width=12,
+                 bg="#f0f0f0", font=("Times New Roman",11)).grid(row=0, column=0, padx=1, pady=1)
+        for j in range(1, self.cols_n):
+            e = tk.Entry(self.inner, width=12, bg="#e8f0ff", font=("Times New Roman",11))
+            e.insert(0, f"T{j}"); e.grid(row=0, column=j, padx=1, pady=1)
+            self.col_entries.append(e)
+        for i in range(self.rows_n):
+            row_ = []
+            for j in range(self.cols_n):
+                e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
+                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+            self.entries.append(row_)
+
+    def _run(self):
+        # Read data
+        time_names = [e.get().strip() or f"T{i+1}" for i, e in enumerate(self.col_entries)]
+        raw = [[e.get().strip() for e in row] for row in self.entries]
+        subjects = []; data_rows = []
+        for row in raw:
+            subj = row[0] if row[0] else f"Subj{len(subjects)+1}"
+            vals = []
+            for v in row[1:len(time_names)+1]:
+                if not v: vals.append(np.nan)
+                else:
+                    try: vals.append(float(v.replace(",",".")))
+                    except Exception: vals.append(np.nan)
+            if any(not math.isnan(v) for v in vals):
+                subjects.append(subj); data_rows.append(vals)
+
+        if len(data_rows) < 2: messagebox.showwarning("","Need ≥ 2 subjects."); return
+        k = len(time_names); n = len(data_rows)
+        data = np.array(data_rows, dtype=float)
+
+        # Remove subjects with any NaN (listwise deletion)
+        mask = ~np.any(np.isnan(data), axis=1)
+        data = data[mask]; subjects = [s for s, m in zip(subjects, mask) if m]; n = len(data)
+        if n < 2: messagebox.showwarning("","Not enough complete cases."); return
+
+        # Mauchly's test of sphericity (simplified — compare to Greenhouse-Geisser)
+        grand_mean = np.mean(data)
+        subj_means = np.mean(data, axis=1)
+        time_means = np.mean(data, axis=0)
+
+        SS_total = float(np.sum((data - grand_mean)**2))
+        SS_subj  = k * float(np.sum((subj_means - grand_mean)**2))
+        SS_time  = n * float(np.sum((time_means - grand_mean)**2))
+        SS_error = SS_total - SS_subj - SS_time
+
+        df_time = k - 1; df_subj = n - 1; df_err = (k-1)*(n-1)
+        MS_time = SS_time / df_time if df_time > 0 else np.nan
+        MS_err  = SS_error / df_err if df_err > 0 else np.nan
+        F = MS_time / MS_err if (not math.isnan(MS_err) and MS_err > 0) else np.nan
+        p = float(1 - f_dist.cdf(F, df_time, df_err)) if not math.isnan(F) else np.nan
+
+        R2 = (SS_time + SS_subj) / SS_total if SS_total > 0 else np.nan
+        eta2_time = SS_time / (SS_time + SS_error) if (SS_time + SS_error) > 0 else np.nan
+
+        # Normality of differences
+        sw_ps = []
+        for j in range(k):
+            for jj in range(j+1, k):
+                diff = data[:, j] - data[:, jj]
+                try: _, p_sw = shapiro(diff)
+                except Exception: p_sw = np.nan
+                sw_ps.append(p_sw)
+        min_sw = min((p for p in sw_ps if not math.isnan(p)), default=np.nan)
+
+        if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
+        win = tk.Toplevel(self.win); win.title("Repeated Measures — Results"); win.geometry("1000x680")
+
+        res_txt = (f"Repeated Measures ANOVA\n"
+                   f"Subjects: {n},  Time points: {k}\n\n"
+                   f"SS_time  = {fmt(SS_time,4)},  df = {df_time},  MS = {fmt(MS_time,4)}\n"
+                   f"SS_subj  = {fmt(SS_subj,4)},  df = {df_subj}\n"
+                   f"SS_error = {fmt(SS_error,4)},  df = {df_err},  MS = {fmt(MS_err,4)}\n\n"
+                   f"F({df_time},{df_err}) = {fmt(F,4)},  p = {fmt(p,4)}"
+                   f"  {'✓ significant' if not math.isnan(p) and p < ALPHA else '✗ not significant'}\n"
+                   f"Partial η² (time) = {fmt(eta2_time,4)}  ({eta2_label(eta2_time)})\n"
+                   f"Shapiro–Wilk (differences, min p) = {fmt(min_sw,4)}"
+                   f"  {'✓ normal' if not math.isnan(min_sw) and min_sw > 0.05 else '⚠ check normality'}")
+
+        tk.Label(win, text=res_txt, font=("Times New Roman",11), justify="left").pack(padx=8, pady=6, anchor="w")
+
+        # Plot means ± SE
+        fig = Figure(figsize=(9, 4), dpi=100)
+        ax = fig.add_subplot(111)
+        means_ = np.mean(data, axis=0); ses_ = np.std(data, axis=0, ddof=1) / math.sqrt(n)
+        ax.errorbar(range(k), means_, yerr=ses_, fmt="o-", capsize=5,
+                    color="#4c72b0", ecolor="#c62828", linewidth=2, markersize=7)
+        ax.set_xticks(range(k)); ax.set_xticklabels(time_names)
+        ax.set_xlabel("Time point / Condition"); ax.set_ylabel("Mean ± SE")
+        ax.set_title("Repeated Measures: Means over Time"); ax.yaxis.grid(True, alpha=0.3)
+        fig.tight_layout()
+        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Post-hoc (Bonferroni-corrected paired t-tests)
+        if not math.isnan(p) and p < ALPHA:
+            ph_rows = []
+            mt = k*(k-1)/2
+            for j in range(k):
+                for jj in range(j+1, k):
+                    from scipy.stats import ttest_rel
+                    st, p_t = ttest_rel(data[:,j], data[:,jj])
+                    p_adj = min(1., float(p_t)*mt)
+                    ph_rows.append([f"{time_names[j]} vs {time_names[jj]}",
+                                    fmt(float(st),4), fmt(p_adj,4),
+                                    "sig. " + sig_mark(p_adj) if p_adj < ALPHA else "–"])
+            frm, _ = make_tv(win, ["Pair","t","p (Bonf.)","Result"], ph_rows)
+            frm.pack(fill=tk.X, padx=8, pady=4)
+
+
+# ═══════════════════════════════════════════════════════════════
+# STABILITY ANALYSIS  (Eberhart–Russell + GGE biplot)
+# ═══════════════════════════════════════════════════════════════
+class StabilityWindow:
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent); self.win.title("Stability Analysis (GxE)")
+        self.win.geometry("1100x720"); set_icon(self.win); self.gs = gs; self._build()
+
+    def _build(self):
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Label(top, text="Rows = Genotypes/Varieties  |  Columns = Environments",
+                 font=("Times New Roman",11)).pack(side=tk.LEFT)
+        tk.Button(top, text="▶ Analyze", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=self._run).pack(side=tk.RIGHT, padx=4)
+
+        mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.rows_n = 16; self.cols_n = 10
+        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+
+        self.env_entries = []
+        tk.Label(self.inner, text="Genotype", relief=tk.RIDGE, width=14,
+                 bg="#f0f0f0", font=("Times New Roman",11)).grid(row=0, column=0, padx=1, pady=1)
+        for j in range(1, self.cols_n):
+            e = tk.Entry(self.inner, width=12, bg="#e8f0ff", font=("Times New Roman",11))
+            e.insert(0, f"E{j}"); e.grid(row=0, column=j, padx=1, pady=1)
+            self.env_entries.append(e)
+        self.entries = []
+        for i in range(self.rows_n):
+            row_ = []
+            for j in range(self.cols_n):
+                e = tk.Entry(self.inner, width=12 if j==0 else 10, font=("Times New Roman",11))
+                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+            self.entries.append(row_)
+
+    def _run(self):
+        env_names = [e.get().strip() or f"E{i+1}" for i, e in enumerate(self.env_entries)]
+        raw = [[e.get().strip() for e in row] for row in self.entries]
+        gen_names = []; matrix = []
+        for row in raw:
+            nm = row[0] if row[0] else f"G{len(gen_names)+1}"
+            vals = []
+            for v in row[1:len(env_names)+1]:
+                if not v: vals.append(np.nan)
+                else:
+                    try: vals.append(float(v.replace(",",".")))
+                    except Exception: vals.append(np.nan)
+            if any(not math.isnan(v) for v in vals):
+                gen_names.append(nm); matrix.append(vals)
+
+        if len(matrix) < 2: messagebox.showwarning("","Need ≥ 2 genotypes."); return
+        e_count = len(env_names); g_count = len(gen_names)
+        data = np.array(matrix, dtype=float)
+
+        # ── Eberhart–Russell regression stability ──────────────
+        env_means = np.nanmean(data, axis=0)
+        grand_mean = np.nanmean(data)
+        env_index = env_means - grand_mean  # environment index
+
+        er_rows = []
+        for i in range(g_count):
+            y = data[i]; mask = ~np.isnan(y) & ~np.isnan(env_index)
+            if np.sum(mask) < 2:
+                er_rows.append([gen_names[i], fmt(np.nanmean(y),3), "–", "–", "–"]); continue
+            xi = env_index[mask]; yi = y[mask]
+            # linear regression of genotype yield on env index
+            X_ = np.column_stack([np.ones(len(xi)), xi])
+            beta, *_ = np.linalg.lstsq(X_, yi, rcond=None)
+            b_i = float(beta[1])  # regression coefficient (stability)
+            yhat = X_ @ beta
+            ss_dev = float(np.sum((yi - yhat)**2))
+            s2d = ss_dev / max(len(yi)-2, 1)  # variance of deviations
+            gen_mean = float(np.nanmean(y))
+            er_rows.append([gen_names[i], fmt(gen_mean,3), fmt(b_i,4), fmt(s2d,4),
+                            "Stable (bi≈1, s²d≈0)" if abs(b_i-1)<0.2 and s2d<0.1 else
+                            "Responsive" if b_i > 1.2 else "Conservative" if b_i < 0.8 else "Average"])
+
+        # ── GGE Biplot via SVD ──────────────────────────────────
+        # center by environment means
+        data_c = data - env_means[np.newaxis, :]
+        # replace NaN with 0 for SVD
+        data_c = np.nan_to_num(data_c)
+        U, S, Vt = np.linalg.svd(data_c, full_matrices=False)
+        pc1_g = U[:,0] * S[0]; pc2_g = U[:,1] * S[1] if len(S)>1 else np.zeros(g_count)
+        pc1_e = Vt[0,:];       pc2_e = Vt[1,:] if len(S)>1 else np.zeros(e_count)
+        var_exp = S**2 / np.sum(S**2) * 100
+
+        if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
+        win = tk.Toplevel(self.win); win.title("Stability Analysis — Results"); win.geometry("1150x720")
+
+        fig = Figure(figsize=(11, 5.5), dpi=100)
+        # GGE biplot
+        ax1 = fig.add_subplot(121)
+        ax1.axhline(0, color="k", lw=0.5); ax1.axvline(0, color="k", lw=0.5)
+        ax1.scatter(pc1_g, pc2_g, s=80, color="#4c72b0", zorder=3)
+        for i, nm in enumerate(gen_names):
+            ax1.annotate(nm, (pc1_g[i], pc2_g[i]), fontsize=8, ha='center', va='bottom')
+        # environment vectors
+        sc = max(np.max(np.abs(pc1_g)), np.max(np.abs(pc2_g)))
+        sc_e = sc / max(np.max(np.abs(pc1_e)), max(np.max(np.abs(pc2_e)),1e-10))
+        for j, nm in enumerate(env_names):
+            ax1.annotate("", xy=(pc1_e[j]*sc_e*0.8, pc2_e[j]*sc_e*0.8), xytext=(0,0),
+                         arrowprops=dict(arrowstyle="->", color="#c62828", lw=1.2))
+            ax1.text(pc1_e[j]*sc_e*0.85, pc2_e[j]*sc_e*0.85, nm, fontsize=8, color="#c62828")
+        ax1.set_xlabel(f"PC1 ({fmt(var_exp[0],1)}%)"); ax1.set_ylabel(f"PC2 ({fmt(var_exp[1] if len(var_exp)>1 else 0,1)}%)")
+        ax1.set_title("GGE Biplot"); ax1.yaxis.grid(True, alpha=0.25)
+
+        # Stability table
+        ax2 = fig.add_subplot(122)
+        ax2.axis("off")
+        col_labels = ["Genotype","Mean","bi","s²d","Stability"]
+        tbl = ax2.table(cellText=er_rows, colLabels=col_labels, loc="center", cellLoc="center")
+        tbl.auto_set_font_size(False); tbl.set_fontsize(9); tbl.scale(1, 1.4)
+        ax2.set_title("Eberhart–Russell Stability", pad=14)
+
+        fig.tight_layout()
+        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        frm, _ = make_tv(win, ["Genotype","Mean","bi","s²d","Stability class"], er_rows)
+        frm.pack(fill=tk.X, padx=8, pady=4)
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# ANCOVA — Analysis of Covariance
+# ═══════════════════════════════════════════════════════════════
+class AncovaWindow:
+    """
+    ANCOVA: ANOVA with one or more continuous covariates.
+    Methodological pipeline:
+      1. Check covariate is continuous and numeric
+      2. Test homogeneity of regression slopes (factor × covariate interaction)
+         → if significant: slopes differ, ANCOVA assumption violated → block or warn
+      3. Test normality of residuals (Shapiro–Wilk)
+      4. Test homogeneity of variances (Levene)
+      5. Run ANCOVA (GLM with covariate)
+      6. Report: ANOVA table, adjusted means (LS means), SS Type III
+    """
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent)
+        self.win.title("ANCOVA — Analysis of Covariance")
+        self.win.geometry("1100x740"); set_icon(self.win)
+        self.gs = gs; self._build()
+
+    def _build(self):
+        # ── Menu ──
+        mb = tk.Menu(self.win); self.win.config(menu=mb)
+        hm = tk.Menu(mb, tearoff=0)
+        hm.add_command(label="What is ANCOVA?", command=self._help)
+        mb.add_cascade(label="Help", menu=hm)
+
+        # ── Toolbar ──
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Button(top, text="▶ Run ANCOVA", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13), command=self._run).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Paste from clipboard",
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(12, 2))
+        self.alpha_var = tk.StringVar(value="0.05")
+        ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
+                     state="readonly", width=7).pack(side=tk.LEFT)
+
+        # ── Instructions ──
+        info = tk.Frame(self.win, bg="#f0f4ff", padx=8, pady=4)
+        info.pack(fill=tk.X, padx=8, pady=(0, 4))
+        tk.Label(info, text=(
+            "Column layout:  [Group/Factor]  [Covariate 1]  [Covariate 2 ...]  [Dependent variable]\n"
+            "First row = column headers.  Group column must contain text labels.  "
+            "Covariate and DV columns must be numeric."),
+            font=("Times New Roman", 10), bg="#f0f4ff", justify="left").pack(anchor="w")
+
+        # ── Data table ──
+        mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.n_rows = 24; self.n_cols = 6
+        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(canvas)
+        canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+
+        col_hints = ["Group", "Covariate 1", "Covariate 2", "Covariate 3", "Covariate 4", "Dependent Y"]
+        self.header_entries = []
+        for j in range(self.n_cols):
+            e = tk.Entry(self.inner, width=14, bg="#dce8ff", font=("Times New Roman", 11))
+            e.insert(0, col_hints[j] if j < len(col_hints) else f"Col{j+1}")
+            e.grid(row=0, column=j, padx=1, pady=1)
+            self.header_entries.append(e)
+        self.entries = []
+        for i in range(self.n_rows):
+            row_ = []
+            for j in range(self.n_cols):
+                e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11))
+                e.grid(row=i+1, column=j, padx=1, pady=1)
+                row_.append(e)
+            self.entries.append(row_)
+
+    def _help(self):
+        messagebox.showinfo("What is ANCOVA?",
+            "Analysis of Covariance (ANCOVA) combines ANOVA and linear regression.\n\n"
+            "It tests group differences on a dependent variable while statistically\n"
+            "controlling for the effect of one or more continuous covariates.\n\n"
+            "KEY ASSUMPTION — Homogeneity of regression slopes:\n"
+            "The relationship between the covariate and DV must be the same\n"
+            "across all groups (parallel regression lines).\n"
+            "If slopes differ significantly → ANCOVA is not appropriate.\n\n"
+            "Typical uses in agronomy:\n"
+            "• Comparing yields while controlling for initial plant height/weight\n"
+            "• Adjusting for soil pH differences between plots\n"
+            "• Controlling for pre-treatment measurements")
+
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception: return
+        rows = [r for r in data.splitlines() if r.strip()]
+        for i, line in enumerate(rows[:self.n_rows]):
+            for j, val in enumerate(line.split("\t")[:self.n_cols]):
+                self.entries[i][j].delete(0, tk.END)
+                self.entries[i][j].insert(0, val.strip())
+
+    def _run(self):
+        alpha = float(self.alpha_var.get())
+
+        # ── Read headers ──
+        headers = [e.get().strip() or f"Col{j+1}" for j, e in enumerate(self.header_entries)]
+        group_col = headers[0]
+        dv_col    = headers[-1]
+        cov_cols  = headers[1:-1]  # everything between group and DV
+
+        # ── Read data ──
+        raw = [[e.get().strip() for e in row] for row in self.entries]
+        raw = [r for r in raw if any(v for v in r)]
+        if not raw:
+            messagebox.showwarning("No data", "Please enter data first."); return
+
+        groups = []; cov_data = [[] for _ in cov_cols]; y_data = []
+        skipped = 0
+        for row in raw:
+            if len(row) < self.n_cols: row += [""] * (self.n_cols - len(row))
+            grp = row[0]
+            if not grp: skipped += 1; continue
+            try:
+                covs = [float(row[j+1].replace(",",".")) for j in range(len(cov_cols))]
+                yval = float(row[-1].replace(",","."))
+            except (ValueError, IndexError):
+                skipped += 1; continue
+            groups.append(grp)
+            for j, cv in enumerate(covs): cov_data[j].append(cv)
+            y_data.append(yval)
+
+        if skipped > 0:
+            messagebox.showinfo("Note", f"{skipped} row(s) skipped (missing or non-numeric values).")
+
+        n = len(y_data)
+        # ── Guard 1: minimum observations ──
+        if n < 6:
+            messagebox.showwarning("Too few observations",
+                f"ANCOVA requires at least 6 complete observations.\nFound: {n}."); return
+
+        # ── Guard 2: at least 2 groups ──
+        group_levels = first_seen(groups)
+        k = len(group_levels)
+        if k < 2:
+            messagebox.showwarning("Only one group",
+                "ANCOVA requires at least 2 groups.\n"
+                "Check that the Group column contains different labels."); return
+
+        # ── Guard 3: minimum n per group ──
+        from collections import Counter
+        grp_counts = Counter(groups)
+        min_grp = min(grp_counts.values())
+        if min_grp < 2:
+            messagebox.showwarning("Group too small",
+                f"Each group needs ≥ 2 observations.\n"
+                f"Smallest group has {min_grp} observation(s)."); return
+
+        # ── Guard 4: check covariates are numeric (already done in parsing) ──
+        # ── Guard 5: check for perfect multicollinearity among covariates ──
+        if len(cov_cols) > 1:
+            cov_matrix = np.column_stack([np.array(cd) for cd in cov_data])
+            corr_matrix = np.corrcoef(cov_matrix.T)
+            for i in range(len(cov_cols)):
+                for j in range(i+1, len(cov_cols)):
+                    if abs(corr_matrix[i,j]) > 0.95:
+                        ans = messagebox.askyesno("High multicollinearity",
+                            f"Covariates '{cov_cols[i]}' and '{cov_cols[j]}' are highly correlated\n"
+                            f"(r = {corr_matrix[i,j]:.3f}).\n\n"
+                            "This may cause unstable estimates (multicollinearity problem).\n"
+                            "Consider removing one of the covariates.\n\n"
+                            "Continue anyway?")
+                        if not ans: return
+
+        y = np.array(y_data, dtype=float)
+        covs_arr = [np.array(cd, dtype=float) for cd in cov_data]
+
+        # ── Guard 6: Homogeneity of regression slopes ──
+        # Test: fit model with group × covariate interaction
+        # If interaction is significant → slopes differ → ANCOVA assumption violated
+        slopes_ok = True
+        slope_details = []
+        for ci, (cov_name, cov_arr) in enumerate(zip(cov_cols, covs_arr)):
+            # Build X with intercept + group dummies + covariate + group×covariate
+            X_parts = [np.ones(n)]
+            g_dummies = []
+            for lv in group_levels[1:]:
+                d = np.array([1. if g == lv else 0. for g in groups])
+                X_parts.append(d); g_dummies.append(d)
+            X_parts.append(cov_arr)
+            # interaction terms: group_dummy × covariate
+            for gd in g_dummies:
+                X_parts.append(gd * cov_arr)
+            X_int = np.column_stack(X_parts)
+            X_no_int = np.column_stack(X_parts[:len(X_parts)-len(g_dummies)])
+
+            _, _, _, sse_full, dfe_full, mse_full = _ols(y, X_int)
+            _, _, _, sse_red,  dfe_red,  _        = _ols(y, X_no_int)
+
+            df_int = len(g_dummies)
+            ss_int = sse_red - sse_full
+            ms_int = ss_int / df_int if df_int > 0 else np.nan
+            F_int  = ms_int / mse_full if (not math.isnan(mse_full) and mse_full > 0) else np.nan
+            p_int  = float(1 - f_dist.cdf(F_int, df_int, dfe_full)) if not math.isnan(F_int) else np.nan
+            slope_details.append((cov_name, F_int, p_int))
+            if not math.isnan(p_int) and p_int < alpha:
+                slopes_ok = False
+
+        if not slopes_ok:
+            failed = [f"'{n}' (F={fmt(F,3)}, p={fmt(p,4)})"
+                      for n, F, p in slope_details
+                      if not math.isnan(p) and p < alpha]
+            ans = messagebox.askyesno(
+                "ANCOVA ASSUMPTION VIOLATED — Heterogeneous regression slopes",
+                "The homogeneity of regression slopes assumption is VIOLATED for:\n"
+                + "\n".join(f"  • {f}" for f in failed) + "\n\n"
+                "This means the covariate affects the DV differently in different groups.\n"
+                "Standard ANCOVA is NOT appropriate in this situation.\n\n"
+                "Options:\n"
+                "• Use Johnson-Neyman technique (regions of significance)\n"
+                "• Run separate regressions per group\n"
+                "• Use interaction ANOVA instead\n\n"
+                "Do you want to continue with ANCOVA anyway? (NOT recommended)")
+            if not ans: return
+
+        # ── Build ANCOVA model (Type III SS) ──
+        # X: intercept + group dummies + covariate(s)
+        X_parts = [np.ones(n)]
+        ts = {"Intercept": [0]}
+        idx_cur = 1
+        # group factor
+        g_idx = []
+        for lv in group_levels[1:]:
+            d = np.array([1. if g == lv else 0. for g in groups])
+            X_parts.append(d); g_idx.append(idx_cur); idx_cur += 1
+        ts["Group"] = g_idx
+        # covariates
+        for cov_name, cov_arr in zip(cov_cols, covs_arr):
+            cov_norm = (cov_arr - np.mean(cov_arr)) / (np.std(cov_arr, ddof=1) + 1e-12)
+            X_parts.append(cov_norm)
+            ts[f"Covariate: {cov_name}"] = [idx_cur]; idx_cur += 1
+
+        X = np.column_stack(X_parts)
+        beta, yhat, residuals, sse, dfe, mse = _ols(y, X)
+        sst = float(np.sum((y - np.mean(y))**2))
+
+        # Type III SS for each term
+        anova_rows = []
+        for term, idx_list in ts.items():
+            if term == "Intercept": continue
+            keep = [i for i in range(X.shape[1]) if i not in idx_list]
+            _, _, _, sse_red, _, _ = _ols(y, X[:, keep])
+            ss = float(sse_red - sse)
+            df = len(idx_list)
+            ms = ss / df if df > 0 else np.nan
+            F  = ms / mse if (not math.isnan(mse) and mse > 0) else np.nan
+            p  = float(1 - f_dist.cdf(F, df, dfe)) if not math.isnan(F) else np.nan
+            mark = sig_mark(p) if not math.isnan(p) else ""
+            concl = f"significant {mark}" if mark else ("ns" if not math.isnan(p) else "–")
+            anova_rows.append([term, fmt(ss,4), str(df), fmt(ms,4), fmt(F,4), fmt(p,4), concl])
+
+        anova_rows.append(["Residual", fmt(sse,4), str(dfe), fmt(mse,4), "", "", ""])
+        anova_rows.append(["Total",    fmt(sst,4), str(n-1), "", "", "", ""])
+
+        # ── Guard 7: Normality of residuals ──
+        try: W_res, p_res = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
+        except Exception: W_res, p_res = np.nan, np.nan
+        if not math.isnan(p_res) and p_res <= alpha:
+            ans = messagebox.askyesno("Non-normal residuals",
+                f"Residuals do not follow a normal distribution\n"
+                f"(Shapiro–Wilk: W={fmt(W_res,4)}, p={fmt(p_res,4)}).\n\n"
+                "ANCOVA assumes normally distributed residuals.\n"
+                "Consider: data transformation (log/√) before running ANCOVA.\n\n"
+                "Continue anyway?")
+            if not ans: return
+
+        # ── Guard 8: Homogeneity of variances (Levene) ──
+        grp_residuals = defaultdict(list)
+        for g, r in zip(groups, residuals): grp_residuals[g].append(r)
+        lev_F, lev_p = levene_test(dict(grp_residuals))
+        if not math.isnan(lev_p) and lev_p < alpha:
+            ans = messagebox.askyesno("Heterogeneous variances (Levene test)",
+                f"Levene test: F={fmt(lev_F,4)}, p={fmt(lev_p,4)}\n\n"
+                "Variances differ significantly across groups.\n"
+                "ANCOVA is somewhat robust to this violation when group sizes are equal,\n"
+                "but results may be unreliable with unequal group sizes.\n\n"
+                "Continue anyway?")
+            if not ans: return
+
+        # ── Adjusted (LS) means ──
+        # Compute adjusted means: predict at grand mean of each covariate
+        cov_grand_means = [np.mean(ca) for ca in covs_arr]
+        adj_means = {}
+        for lv in group_levels:
+            x_pred = [1.0]  # intercept
+            for ref_lv in group_levels[1:]:
+                x_pred.append(1.0 if lv == ref_lv else 0.0)
+            for ca_mean, ca_arr in zip(cov_grand_means, covs_arr):
+                cov_norm_mean = (ca_mean - np.mean(ca_arr)) / (np.std(ca_arr, ddof=1) + 1e-12)
+                x_pred.append(cov_norm_mean)
+            adj_means[lv] = float(np.dot(beta, x_pred))
+
+        # unadjusted means
+        raw_means = {lv: float(np.mean([y_data[i] for i, g in enumerate(groups) if g == lv]))
+                     for lv in group_levels}
+
+        R2 = 1 - sse/sst if sst > 0 else np.nan
+
+        self._show_results(anova_rows, adj_means, raw_means, group_levels,
+                           residuals, W_res, p_res, lev_F, lev_p,
+                           slope_details, R2, mse, dfe, alpha, y, yhat, groups)
+
+    def _show_results(self, anova_rows, adj_means, raw_means, group_levels,
+                      residuals, W_res, p_res, lev_F, lev_p,
+                      slope_details, R2, mse, dfe, alpha, y, yhat, groups):
+        win = tk.Toplevel(self.win); win.title("ANCOVA — Results")
+        win.geometry("1150x760"); set_icon(win)
+
+        # scrollable body
+        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(main, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas = tk.Canvas(main, yscrollcommand=vsb.set); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=canvas.yview)
+        body = tk.Frame(canvas); canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        def _head(txt):
+            tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
+                     anchor="w").pack(fill=tk.X, padx=10, pady=(8,2))
+        def _txt(txt, color="#000000"):
+            tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
+                     anchor="w", justify="left").pack(fill=tk.X, padx=10, pady=1)
+        def _tbl(headers, rows):
+            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=(2,8))
+
+        _head("ANCOVA — Analysis of Covariance")
+        _txt(f"R² = {fmt(R2,4)}   |   MSE = {fmt(mse,4)}   |   df_error = {dfe}")
+
+        # Assumption checks
+        _head("Assumption Checks")
+        norm_color = "#000000" if math.isnan(p_res) or p_res > alpha else "#c62828"
+        _txt(f"Normality of residuals (Shapiro–Wilk):  W={fmt(W_res,4)},  p={fmt(p_res,4)}  "
+             f"{'✓ OK' if not math.isnan(p_res) and p_res > alpha else '⚠ VIOLATED'}",
+             norm_color)
+        lev_color = "#000000" if math.isnan(lev_p) or lev_p >= alpha else "#c62828"
+        _txt(f"Homogeneity of variances (Levene):  F={fmt(lev_F,4)},  p={fmt(lev_p,4)}  "
+             f"{'✓ OK' if not math.isnan(lev_p) and lev_p >= alpha else '⚠ VIOLATED'}",
+             lev_color)
+        for cov_name, F_sl, p_sl in slope_details:
+            sl_ok = math.isnan(p_sl) or p_sl >= alpha
+            sl_color = "#000000" if sl_ok else "#c62828"
+            _txt(f"Homogeneity of slopes ({cov_name}):  F={fmt(F_sl,4)},  p={fmt(p_sl,4)}  "
+                 f"{'✓ OK' if sl_ok else '⚠ VIOLATED — slopes differ'}",
+                 sl_color)
+
+        # ANOVA table
+        _head("ANCOVA Table (Type III SS)")
+        _tbl(["Source","SS","df","MS","F","p","Result"], anova_rows)
+
+        # Adjusted means
+        _head("Group Means")
+        means_rows = [[lv, fmt(raw_means[lv],4), fmt(adj_means[lv],4)]
+                      for lv in group_levels]
+        _tbl(["Group","Unadjusted Mean","Adjusted Mean (LS Mean)"], means_rows)
+
+        # Pairwise comparisons of adjusted means (Bonferroni t-test on LS means)
+        # SE for difference between two LS means ≈ sqrt(MSE * 2/n_harm)
+        _head("Pairwise Comparisons of Adjusted Means (Bonferroni)")
+        ph_rows = []
+        m_tests = len(group_levels) * (len(group_levels)-1) / 2
+        n_per_grp = {lv: groups.count(lv) for lv in group_levels}
+        for lv1, lv2 in combinations(group_levels, 2):
+            n1, n2 = n_per_grp[lv1], n_per_grp[lv2]
+            se = math.sqrt(mse * (1/n1 + 1/n2)) if mse > 0 else np.nan
+            diff = adj_means[lv1] - adj_means[lv2]
+            if math.isnan(se) or se == 0:
+                ph_rows.append([f"{lv1} vs {lv2}", fmt(diff,4), "–", "–", "–"]); continue
+            t_val = abs(diff) / se
+            p_raw = 2 * (1 - float(t_dist.cdf(t_val, dfe)))
+            p_adj = min(1., p_raw * m_tests)
+            mark  = sig_mark(p_adj)
+            ph_rows.append([f"{lv1} vs {lv2}", fmt(diff,4), fmt(t_val,4), fmt(p_adj,4),
+                             f"significant {mark}" if mark else "ns"])
+        _tbl(["Comparison","Difference","t","p (Bonf.)","Result"], ph_rows)
+
+        # Plots
+        if HAS_MPL:
+            fig = Figure(figsize=(11, 4), dpi=100)
+            ax1 = fig.add_subplot(121)
+            ax1.scatter(yhat, residuals, s=22, color="#4c72b0", alpha=0.8)
+            ax1.axhline(0, color="k", lw=0.8)
+            ax1.set_xlabel("Fitted values"); ax1.set_ylabel("Residuals")
+            ax1.set_title("Residuals vs Fitted"); ax1.yaxis.grid(True, alpha=0.3)
+
+            from scipy.stats import probplot
+            ax2 = fig.add_subplot(122)
+            res_sort = np.sort(residuals)
+            rp = probplot(residuals, dist="norm")
+            ax2.plot(rp[0][0], rp[0][1], 'o', markersize=4, color="#4c72b0")
+            ax2.plot(rp[0][0], rp[1][1] + rp[1][0]*rp[0][0], 'r-', lw=1)
+            ax2.set_xlabel("Theoretical Quantiles"); ax2.set_ylabel("Sample Quantiles")
+            ax2.set_title("Normal Q-Q Plot of Residuals"); ax2.yaxis.grid(True, alpha=0.3)
+            fig.tight_layout()
+            cv = FigureCanvasTkAgg(fig, master=body); cv.draw()
+            cv.get_tk_widget().pack(fill=tk.X, padx=10, pady=6)
+
+
+# ═══════════════════════════════════════════════════════════════
+# MANOVA — Multivariate Analysis of Variance
+# ═══════════════════════════════════════════════════════════════
+class ManovaWindow:
+    """
+    MANOVA: simultaneously tests group differences across multiple DVs.
+    Reports: Wilks' Lambda, Pillai's Trace, Hotelling-Lawley, Roy's GCR.
+    Prerequisite checks:
+      1. n > p (obs > variables) per group
+      2. Multivariate normality (Mardia's skewness + kurtosis)
+      3. Homogeneity of covariance matrices (Box's M approximation)
+      4. Absence of multicollinearity (r > 0.95 among DVs)
+    Post-hoc: univariate ANOVAs with Bonferroni correction.
+    """
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent)
+        self.win.title("MANOVA — Multivariate Analysis of Variance")
+        self.win.geometry("1150x760"); set_icon(self.win)
+        self.gs = gs; self._build()
+
+    def _build(self):
+        mb = tk.Menu(self.win); self.win.config(menu=mb)
+        hm = tk.Menu(mb, tearoff=0)
+        hm.add_command(label="What is MANOVA?", command=self._help)
+        mb.add_cascade(label="Help", menu=hm)
+
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Button(top, text="▶ Run MANOVA", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13), command=self._run).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Paste from clipboard", command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(12,2))
+        self.alpha_var = tk.StringVar(value="0.05")
+        ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
+                     state="readonly", width=7).pack(side=tk.LEFT)
+
+        info = tk.Frame(self.win, bg="#f0f4ff", padx=8, pady=4)
+        info.pack(fill=tk.X, padx=8, pady=(0,4))
+        tk.Label(info, text=(
+            "Column layout:  [Group/Factor]  [DV 1]  [DV 2]  [DV 3]  ...\n"
+            "First row = column headers.  Group column = text labels.  DV columns = numeric.  "
+            "Minimum: 1 group column + 2 DV columns."),
+            font=("Times New Roman", 10), bg="#f0f4ff", justify="left").pack(anchor="w")
+
+        mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
+        self.n_rows = 24; self.n_cols = 8
+        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+
+        col_hints = ["Group","DV 1","DV 2","DV 3","DV 4","DV 5","DV 6","DV 7"]
+        self.header_entries = []
+        for j in range(self.n_cols):
+            e = tk.Entry(self.inner, width=13, bg="#dce8ff", font=("Times New Roman",11))
+            e.insert(0, col_hints[j] if j < len(col_hints) else f"DV{j}")
+            e.grid(row=0, column=j, padx=1, pady=1)
+            self.header_entries.append(e)
+        self.entries = []
+        for i in range(self.n_rows):
+            row_ = []
+            for j in range(self.n_cols):
+                e = tk.Entry(self.inner, width=13, font=("Times New Roman",11))
+                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+            self.entries.append(row_)
+
+    def _help(self):
+        messagebox.showinfo("What is MANOVA?",
+            "Multivariate Analysis of Variance (MANOVA) simultaneously tests\n"
+            "whether group means differ across multiple dependent variables.\n\n"
+            "Advantages over multiple ANOVAs:\n"
+            "• Controls Type I error inflation (no need for Bonferroni on DVs)\n"
+            "• Detects effects that individual ANOVAs may miss\n"
+            "• Accounts for correlations among DVs\n\n"
+            "KEY ASSUMPTIONS:\n"
+            "1. Multivariate normality of DV vector within groups\n"
+            "2. Homogeneity of covariance matrices across groups (Box's M)\n"
+            "3. No perfect multicollinearity among DVs\n"
+            "4. n > p: observations must exceed number of DVs per group\n\n"
+            "Test statistics (all equivalent, differ in power):\n"
+            "• Wilks' Lambda: most commonly reported\n"
+            "• Pillai's Trace: most robust to assumption violations\n"
+            "• Hotelling-Lawley Trace: powerful when one root dominates\n"
+            "• Roy's GCR: most powerful but least robust\n\n"
+            "Post-hoc: if MANOVA significant → run separate ANOVAs per DV\n"
+            "with Bonferroni correction (α / number of DVs).")
+
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception: return
+        for i, line in enumerate(data.splitlines()[:self.n_rows]):
+            for j, val in enumerate(line.split("\t")[:self.n_cols]):
+                self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,val.strip())
+
+    def _mardia_test(self, X):
+        """Mardia's multivariate normality: skewness and kurtosis tests."""
+        n, p = X.shape
+        if n < p + 1: return np.nan, np.nan, np.nan, np.nan
+        X_c = X - np.mean(X, axis=0)
+        S = np.cov(X.T, ddof=1)
+        try:
+            S_inv = np.linalg.pinv(S)
+        except Exception: return np.nan, np.nan, np.nan, np.nan
+        # Mahalanobis distances
+        D = X_c @ S_inv @ X_c.T
+        # Mardia skewness
+        b1p = float(np.sum(D**3)) / n**2
+        k_sk = n * b1p / 6.0
+        df_sk = p*(p+1)*(p+2)/6
+        p_sk  = float(1 - f_dist.cdf(k_sk/df_sk, df_sk, 1e6)) if df_sk > 0 else np.nan
+        # Mardia kurtosis
+        b2p = float(np.sum(np.diag(D)**2)) / n
+        k_ku = (b2p - p*(p+2)) / math.sqrt(8*p*(p+2)/n)
+        from scipy.stats import norm as _norm
+        p_ku = float(2 * (1 - _norm.cdf(abs(k_ku))))
+        return float(b1p), p_sk, float(b2p), p_ku
+
+    def _box_m_test(self, groups_data, group_levels):
+        """Box's M test for homogeneity of covariance matrices (approximate)."""
+        k = len(group_levels)
+        ns = [len(groups_data[lv]) for lv in group_levels]
+        p  = groups_data[group_levels[0]].shape[1]
+        covs = []
+        for lv in group_levels:
+            Xl = groups_data[lv]
+            if len(Xl) < 2: return np.nan, np.nan
+            covs.append(np.cov(Xl.T, ddof=1))
+        # Pooled covariance
+        n_tot = sum(ns)
+        S_pool = sum((n-1) * C for n, C in zip(ns, covs)) / (n_tot - k)
+        try:
+            ln_det_pool = np.log(max(np.linalg.det(S_pool), 1e-300))
+            ln_dets     = [np.log(max(np.linalg.det(C), 1e-300)) for C in covs]
+        except Exception: return np.nan, np.nan
+        M = (n_tot - k) * ln_det_pool - sum((n-1)*d for n,d in zip(ns, ln_dets))
+        # c1 correction
+        c1 = (sum(1/(n-1) for n in ns) - 1/(n_tot-k)) * (2*p**2 + 3*p - 1) / (6*(p+1)*(k-1))
+        chi2 = M * (1 - c1)
+        df_m  = p*(p+1)*(k-1)/2
+        from scipy.stats import chi2 as chi2_dist
+        p_m   = float(1 - chi2_dist.cdf(chi2, df_m)) if df_m > 0 else np.nan
+        return float(chi2), p_m
+
+    def _run(self):
+        alpha = float(self.alpha_var.get())
+        headers = [e.get().strip() or f"Col{j+1}" for j, e in enumerate(self.header_entries)]
+        dv_names = headers[1:]   # all columns after group
+
+        # ── Parse data ──
+        raw = [[e.get().strip() for e in row] for row in self.entries]
+        raw = [r for r in raw if any(v for v in r)]
+        if not raw: messagebox.showwarning("No data","Please enter data."); return
+
+        groups = []; dv_rows = []; skipped = 0
+        for row in raw:
+            if len(row) < 2: skipped += 1; continue
+            grp = row[0].strip()
+            if not grp: skipped += 1; continue
+            vals = []
+            for v in row[1:]:
+                if not v: break
+                try: vals.append(float(v.replace(",",".")))
+                except ValueError: break
+            if len(vals) >= 2:
+                groups.append(grp); dv_rows.append(vals)
+            else: skipped += 1
+
+        if skipped: messagebox.showinfo("Note", f"{skipped} row(s) skipped.")
+
+        n = len(dv_rows)
+        if n < 4: messagebox.showwarning("Too few data","Need ≥ 4 complete observations."); return
+
+        min_dv = min(len(r) for r in dv_rows)
+        if min_dv < 2:
+            messagebox.showwarning("Too few DVs","Need at least 2 dependent variables."); return
+
+        # Align all rows to same number of DVs
+        Y = np.array([r[:min_dv] for r in dv_rows], dtype=float)
+        p = min_dv  # number of DVs
+        dv_names_used = dv_names[:p]
+
+        group_levels = first_seen(groups)
+        k = len(group_levels)
+
+        # ── Guard 1: at least 2 groups ──
+        if k < 2:
+            messagebox.showwarning("Only one group","MANOVA requires ≥ 2 groups."); return
+
+        # ── Guard 2: n > p per group (critical!) ──
+        groups_data = {}
+        for lv in group_levels:
+            idx_ = [i for i, g in enumerate(groups) if g == lv]
+            groups_data[lv] = Y[idx_]
+        for lv in group_levels:
+            n_lv = len(groups_data[lv])
+            if n_lv <= p:
+                messagebox.showerror("n ≤ p VIOLATION",
+                    f"Group '{lv}' has {n_lv} observation(s) but {p} dependent variables.\n\n"
+                    "MANOVA requires n > p (observations > DVs) in EVERY group.\n"
+                    "Otherwise the within-group covariance matrix is singular\n"
+                    "and cannot be inverted — MANOVA is mathematically impossible.\n\n"
+                    "Solutions:\n"
+                    "• Collect more data\n"
+                    "• Reduce the number of dependent variables\n"
+                    "• Use PCA first to reduce dimensionality, then ANOVA on PC scores")
+                return
+
+        # ── Guard 3: Check multicollinearity among DVs ──
+        corr_Y = np.corrcoef(Y.T)
+        high_corr_pairs = []
+        for i in range(p):
+            for j in range(i+1, p):
+                if abs(corr_Y[i,j]) > 0.90:
+                    high_corr_pairs.append((dv_names_used[i], dv_names_used[j], corr_Y[i,j]))
+        if high_corr_pairs:
+            details = "\n".join(f"  • '{a}' & '{b}': r={c:.3f}" for a,b,c in high_corr_pairs)
+            ans = messagebox.askyesno("High multicollinearity among DVs",
+                "The following dependent variable pairs are highly correlated (|r| > 0.90):\n"
+                + details + "\n\n"
+                "High multicollinearity reduces the power of MANOVA and may lead\n"
+                "to a singular or near-singular covariance matrix.\n\n"
+                "Recommendation: consider removing redundant DVs or using PCA first.\n\n"
+                "Continue anyway?")
+            if not ans: return
+
+        # ── Guard 4: Multivariate normality (Mardia) ──
+        # Test on combined residuals (within-group deviations)
+        Y_res = np.vstack([groups_data[lv] - np.mean(groups_data[lv], axis=0)
+                            for lv in group_levels])
+        b1p, p_sk, b2p, p_ku = self._mardia_test(Y_res)
+        mv_normal = True
+        if (not math.isnan(p_sk) and p_sk < alpha) or (not math.isnan(p_ku) and p_ku < alpha):
+            mv_normal = False
+            ans = messagebox.askyesno("Multivariate normality violated (Mardia's test)",
+                f"Mardia's skewness:  b1p={fmt(b1p,4)},  p={fmt(p_sk,4)}\n"
+                f"Mardia's kurtosis:  b2p={fmt(b2p,4)},  p={fmt(p_ku,4)}\n\n"
+                "The multivariate normality assumption appears violated.\n"
+                "Pillai's Trace is the most robust statistic in this case.\n\n"
+                "Note: MANOVA is reasonably robust with larger samples (n > 20/group).\n\n"
+                "Continue? (Pillai's Trace will be highlighted as most reliable)")
+            if not ans: return
+
+        # ── Guard 5: Box's M test ──
+        box_chi2, box_p = self._box_m_test(groups_data, group_levels)
+        if not math.isnan(box_p) and box_p < 0.001:
+            ans = messagebox.askyesno("Heterogeneous covariance matrices (Box's M)",
+                f"Box's M: χ²={fmt(box_chi2,4)},  p={fmt(box_p,6)}\n\n"
+                "Covariance matrices differ significantly across groups.\n"
+                "Note: Box's M is extremely sensitive to non-normality.\n"
+                "If p is only slightly < 0.001, this may be a false alarm.\n\n"
+                "Pillai's Trace is most robust when this assumption is violated.\n\n"
+                "Continue?")
+            if not ans: return
+
+        # ══ MANOVA computation ══
+        # Between-groups matrix H and Within-groups matrix E
+        grand_mean = np.mean(Y, axis=0)
+        E = np.zeros((p, p))  # within (error)
+        H = np.zeros((p, p))  # between (hypothesis)
+        for lv in group_levels:
+            Xl = groups_data[lv]
+            nl = len(Xl)
+            grp_mean = np.mean(Xl, axis=0)
+            E += (Xl - grp_mean).T @ (Xl - grp_mean)
+            H += nl * np.outer(grp_mean - grand_mean, grp_mean - grand_mean)
+
+        df_h = k - 1        # between df
+        df_e = n - k        # within df
+
+        # Eigenvalues of E⁻¹H
+        try:
+            E_inv = np.linalg.pinv(E)
+            EinvH = E_inv @ H
+            eigenvalues = np.real(np.linalg.eigvals(EinvH))
+            eigenvalues = np.sort(eigenvalues[eigenvalues > 1e-10])[::-1]
+        except Exception as ex:
+            messagebox.showerror("Computation error",
+                f"Could not compute eigenvalues: {ex}\n"
+                "Check for singular covariance matrix (n ≤ p in some group)."); return
+
+        if len(eigenvalues) == 0:
+            messagebox.showerror("No valid eigenvalues",
+                "The covariance matrix is singular. Cannot compute MANOVA.\n"
+                "Ensure n > p in every group."); return
+
+        s = min(df_h, p)   # number of non-zero eigenvalues
+
+        # ── Four test statistics ──
+        # Wilks' Lambda
+        wilks_L = float(np.prod(1 / (1 + eigenvalues[:s])))
+        # Approximate F for Wilks
+        m_w = df_e + df_h - (p + df_h + 1) / 2
+        q_w = math.sqrt((p**2 * df_h**2 - 4) / (p**2 + df_h**2 - 5)) if (p**2 + df_h**2 - 5) > 0 else 1
+        df1_w = p * df_h
+        df2_w = m_w * q_w - p * df_h / 2 + 1
+        F_wilks = ((1 - wilks_L**(1/q_w)) / (wilks_L**(1/q_w))) * (df2_w / df1_w) if (wilks_L > 0 and q_w > 0) else np.nan
+        p_wilks = float(1 - f_dist.cdf(F_wilks, df1_w, df2_w)) if not math.isnan(F_wilks) else np.nan
+
+        # Pillai's Trace
+        pillai_V = float(np.sum(eigenvalues[:s] / (1 + eigenvalues[:s])))
+        # Approximate F for Pillai
+        m_p = max(p, df_h)
+        F_pillai = (pillai_V / s) / ((s - pillai_V) / s) * ((df_e + df_h - m_p - 1) / m_p) if (s - pillai_V > 0 and m_p > 0) else np.nan
+        df1_p = s * m_p; df2_p = s * (df_e + df_h - m_p - 1)
+        p_pillai = float(1 - f_dist.cdf(F_pillai, df1_p, df2_p)) if not math.isnan(F_pillai) else np.nan
+
+        # Hotelling-Lawley Trace
+        hl_T = float(np.sum(eigenvalues[:s]))
+        b_hl = (df_e + df_h - p - 1) * hl_T / s if s > 0 else np.nan
+        df1_hl = s * p; df2_hl = s * (df_e + df_h - p - 1)
+        F_hl   = b_hl * (df2_hl / (df1_hl * s)) if (not math.isnan(b_hl) and df1_hl > 0 and s > 0) else np.nan
+        p_hl   = float(1 - f_dist.cdf(F_hl, df1_hl, df2_hl)) if not math.isnan(F_hl) else np.nan
+
+        # Roy's GCR
+        roy_GCR = float(eigenvalues[0]) if len(eigenvalues) > 0 else np.nan
+        # Upper bound F for Roy
+        F_roy = roy_GCR * df_e / p if p > 0 else np.nan
+        p_roy = float(1 - f_dist.cdf(F_roy, p, df_e)) if not math.isnan(F_roy) else np.nan
+
+        # ── Univariate follow-up ANOVAs ──
+        univ_rows = []
+        bonf_alpha = alpha / p  # Bonferroni correction
+        for dv_i, dv_nm in enumerate(dv_names_used):
+            y_i = Y[:, dv_i]
+            grand_m = np.mean(y_i)
+            ss_b = sum(len(groups_data[lv]) * (np.mean(groups_data[lv][:,dv_i]) - grand_m)**2
+                       for lv in group_levels)
+            ss_w = sum(np.sum((groups_data[lv][:,dv_i] - np.mean(groups_data[lv][:,dv_i]))**2)
+                       for lv in group_levels)
+            ms_b = ss_b / df_h if df_h > 0 else np.nan
+            ms_w = ss_w / df_e if df_e > 0 else np.nan
+            F_i  = ms_b / ms_w if (not math.isnan(ms_w) and ms_w > 0) else np.nan
+            p_i  = float(1 - f_dist.cdf(F_i, df_h, df_e)) if not math.isnan(F_i) else np.nan
+            eta2_i = ss_b / (ss_b + ss_w) if (ss_b + ss_w) > 0 else np.nan
+            mark_bonf = "significant" if (not math.isnan(p_i) and p_i < bonf_alpha) else "ns"
+            univ_rows.append([dv_nm, fmt(F_i,4), fmt(p_i,4),
+                              fmt(eta2_i,4), eta2_label(eta2_i),
+                              f"α_Bonf = {fmt(bonf_alpha,4)}", mark_bonf])
+
+        self._show_results(wilks_L, F_wilks, p_wilks,
+                           pillai_V, F_pillai, p_pillai,
+                           hl_T, F_hl, p_hl,
+                           roy_GCR, F_roy, p_roy,
+                           df1_w, df2_w, df1_p, df2_p, df1_hl, df2_hl,
+                           univ_rows, dv_names_used,
+                           b1p, p_sk, b2p, p_ku, box_chi2, box_p,
+                           alpha, mv_normal, groups_data, group_levels, Y, p)
+
+    def _show_results(self, wilks_L, F_wilks, p_wilks,
+                      pillai_V, F_pillai, p_pillai,
+                      hl_T, F_hl, p_hl,
+                      roy_GCR, F_roy, p_roy,
+                      df1_w, df2_w, df1_p, df2_p, df1_hl, df2_hl,
+                      univ_rows, dv_names,
+                      b1p, p_sk, b2p, p_ku, box_chi2, box_p,
+                      alpha, mv_normal, groups_data, group_levels, Y, p):
+        win = tk.Toplevel(self.win); win.title("MANOVA — Results")
+        win.geometry("1180x800"); set_icon(win)
+
+        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(main, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas = tk.Canvas(main, yscrollcommand=vsb.set); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=canvas.yview)
+        body = tk.Frame(canvas); canvas.create_window((0,0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        def _head(txt):
+            tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
+                     anchor="w").pack(fill=tk.X, padx=10, pady=(8,2))
+        def _txt(txt, color="#000000"):
+            tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
+                     anchor="w", justify="left").pack(fill=tk.X, padx=10, pady=1)
+        def _tbl(headers, rows):
+            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=(2,8))
+
+        _head("MANOVA — Multivariate Analysis of Variance")
+
+        # Assumption checks
+        _head("Assumption Checks")
+        _txt(f"Mardia's skewness (multivar. normality):  b1p={fmt(b1p,4)},  p={fmt(p_sk,4)}  "
+             f"{'✓ OK' if math.isnan(p_sk) or p_sk > alpha else '⚠ violated'}",
+             "#000000" if math.isnan(p_sk) or p_sk > alpha else "#c62828")
+        _txt(f"Mardia's kurtosis (multivar. normality):  b2p={fmt(b2p,4)},  p={fmt(p_ku,4)}  "
+             f"{'✓ OK' if math.isnan(p_ku) or p_ku > alpha else '⚠ violated'}",
+             "#000000" if math.isnan(p_ku) or p_ku > alpha else "#c62828")
+        _txt(f"Box's M (homogeneity of cov. matrices):  χ²={fmt(box_chi2,4)},  p={fmt(box_p,6)}  "
+             f"{'✓ OK' if math.isnan(box_p) or box_p >= 0.001 else '⚠ significant (but Box M is sensitive to non-normality)'}",
+             "#000000" if math.isnan(box_p) or box_p >= 0.001 else "#b07000")
+
+        if not mv_normal:
+            _txt("⚠ Multivariate normality violated → Pillai's Trace is most reliable statistic.",
+                 "#c62828")
+
+        # MANOVA test statistics
+        _head("MANOVA Test Statistics")
+        recommended = "Pillai" if not mv_normal else "Wilks"
+        manova_rows = [
+            ["Wilks' Lambda",       fmt(wilks_L,6), fmt(F_wilks,4), f"{int(df1_w)},{int(df2_w)}",
+             fmt(p_wilks,4), sig_mark(p_wilks), "★ standard" if recommended=="Wilks" else ""],
+            ["Pillai's Trace",      fmt(pillai_V,6), fmt(F_pillai,4), f"{int(df1_p)},{int(df2_p)}",
+             fmt(p_pillai,4), sig_mark(p_pillai), "★ most robust" if recommended=="Pillai" else "robust"],
+            ["Hotelling-Lawley",    fmt(hl_T,6), fmt(F_hl,4), f"{int(df1_hl)},{int(df2_hl)}",
+             fmt(p_hl,4), sig_mark(p_hl), ""],
+            ["Roy's GCR",           fmt(roy_GCR,6), fmt(F_roy,4), f"–",
+             fmt(p_roy,4), sig_mark(p_roy), "upper bound"],
+        ]
+        _tbl(["Statistic","Value","F","df","p","Sig.","Note"], manova_rows)
+
+        # Interpretation
+        all_sig = all(not math.isnan(r[4]) and r[4] != "" and
+                      (float(r[4]) < alpha if r[4] not in ("","–") else False)
+                      for r in manova_rows if r[4] not in ("","–","н/д"))
+        if not math.isnan(p_pillai) and p_pillai < alpha:
+            _txt(f"✓ MANOVA significant (Pillai p={fmt(p_pillai,4)}): groups differ on the\n"
+                 f"  combination of dependent variables. Proceed to univariate follow-up tests.",
+                 "#1a6b1a")
+        elif not math.isnan(p_pillai):
+            _txt(f"✗ MANOVA not significant (Pillai p={fmt(p_pillai,4)}): no evidence that\n"
+                 f"  groups differ on the combination of DVs. Univariate tests not recommended.",
+                 "#c62828")
+
+        # Univariate follow-up
+        _head(f"Univariate Follow-Up ANOVAs (Bonferroni α = {fmt(alpha/len(dv_names),4)})")
+        _txt("Note: these are only interpretable after a significant MANOVA.",
+             "#666666")
+        _tbl(["Dependent Variable","F","p","partial η²","Effect","Bonf. α","Result"], univ_rows)
+
+        # Group means per DV
+        _head("Group Means per Dependent Variable")
+        means_headers = ["Group"] + dv_names
+        means_rows = []
+        for lv in group_levels:
+            row_ = [lv] + [fmt(float(np.mean(groups_data[lv][:,j])),4)
+                           for j in range(len(dv_names))]
+            means_rows.append(row_)
+        _tbl(means_headers, means_rows)
+
+        # Visualization: means per DV per group
+        if HAS_MPL and len(dv_names) >= 2:
+            n_dv = len(dv_names)
+            fig = Figure(figsize=(min(11, n_dv*1.8+1), 4.5), dpi=100)
+            colors_ = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
+            for di, dv_nm in enumerate(dv_names):
+                ax = fig.add_subplot(1, n_dv, di+1)
+                grp_means_ = [float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
+                grp_ses_   = [float(np.std(groups_data[lv][:,di],ddof=1)/math.sqrt(len(groups_data[lv])))
+                              for lv in group_levels]
+                xpos = range(len(group_levels))
+                ax.bar(xpos, grp_means_, yerr=grp_ses_, capsize=4,
+                       color=[colors_[i % len(colors_)] for i in range(len(group_levels))],
+                       alpha=0.8, error_kw={"ecolor":"#333","lw":1.5})
+                ax.set_xticks(list(xpos)); ax.set_xticklabels(group_levels, rotation=30, ha="right", fontsize=8)
+                ax.set_title(dv_nm, fontsize=9); ax.set_ylabel("Mean ± SE" if di==0 else "")
+                ax.yaxis.grid(True, alpha=0.3)
+            fig.suptitle("Group Means (±SE) per Dependent Variable", fontsize=10)
+            fig.tight_layout()
+            cv = FigureCanvasTkAgg(fig, master=body); cv.draw()
+            cv.get_tk_widget().pack(fill=tk.X, padx=10, pady=6)
+
+
+# ═══════════════════════════════════════════════════════════════
+# UPDATE MENU — add ANCOVA and MANOVA buttons
+# ═══════════════════════════════════════════════════════════════
+
+_SADTk_orig_init = SADTk.__init__
+
+def _SADTk_new_init(self, root):
+    _SADTk_orig_init(self, root)
+    # Replace main frame content
+    for w in root.winfo_children(): w.destroy()
+    root.geometry("1060x640")
+
+    mf = tk.Frame(root, bg="white"); mf.pack(expand=True, fill=tk.BOTH)
+    tk.Label(mf, text="S.A.D. — Statistical Analysis of Data",
+             font=("Times New Roman", 20, "bold"), fg="#000000", bg="white").pack(pady=12)
+
+    # ── ANOVA block ──
+    sect1 = tk.LabelFrame(mf, text="  Analysis of Variance (ANOVA)  ",
+                          font=("Times New Roman",12,"bold"), bg="white", fg="#1a4b8c")
+    sect1.pack(fill=tk.X, padx=20, pady=4)
+    bf = tk.Frame(sect1, bg="white"); bf.pack(pady=6)
+    for i, (txt, fc) in enumerate([("One-factor ANOVA",1),("Two-factor ANOVA",2),
+                                    ("Three-factor ANOVA",3),("Four-factor ANOVA",4)]):
+        tk.Button(bf, text=txt, width=22, height=2, font=("Times New Roman",12),
+                  command=lambda f=fc: self.open_table(f)).grid(row=0, column=i, padx=8, pady=4)
+
+    # ── Other analyses ──
+    sect2 = tk.LabelFrame(mf, text="  Other Statistical Methods  ",
+                          font=("Times New Roman",12,"bold"), bg="white", fg="#1a4b8c")
+    sect2.pack(fill=tk.X, padx=20, pady=4)
+    bf2 = tk.Frame(sect2, bg="white"); bf2.pack(pady=6)
+
+    btn_cfg = [
+        ("Descriptive\nStatistics",   "#1a6b1a", lambda: DescriptiveWindow(root, self.graph_settings)),
+        ("t-Test /\nMann-Whitney",     "#1a6b1a", lambda: TTestWindow(root)),
+        ("Correlation\nAnalysis",      "#1a4b8c", lambda: CorrelationWindow(root, self.graph_settings)),
+        ("Regression\nAnalysis",       "#4b1a8c", lambda: RegressionWindow(root, self.graph_settings)),
+        ("ANCOVA",                     "#4b1a8c", lambda: AncovaWindow(root, self.graph_settings)),
+        ("MANOVA",                     "#4b1a8c", lambda: ManovaWindow(root, self.graph_settings)),
+        ("Repeated\nMeasures ANOVA",   "#4b1a8c", lambda: RepeatedMeasuresWindow(root, self.graph_settings)),
+        ("Cluster\nAnalysis",          "#8c4b1a", lambda: ClusterWindow(root, self.graph_settings)),
+        ("PCA",                        "#8c4b1a", lambda: PCAWindow(root, self.graph_settings)),
+        ("Stability\nAnalysis (GxE)",  "#8c1a1a", lambda: StabilityWindow(root, self.graph_settings)),
+        ("Sample Size\nCalculator",    "#555555", lambda: SampleSizeWindow(root)),
+    ]
+    for i, (txt, col, cmd) in enumerate(btn_cfg):
+        tk.Button(bf2, text=txt, width=14, height=2, font=("Times New Roman",11),
+                  bg=col, fg="white", command=cmd).grid(row=i//6, column=i%6, padx=5, pady=4)
+
+    # ── Project buttons ──
+    pf = tk.Frame(mf, bg="white"); pf.pack(pady=6)
+    tk.Button(pf, text="📂 Open Project", width=18, font=("Times New Roman",11),
+              command=self.load_project).pack(side=tk.LEFT, padx=8)
+    tk.Button(pf, text="💾 Save Project", width=18, font=("Times New Roman",11),
+              command=self.save_project).pack(side=tk.LEFT, padx=8)
+
+    tk.Label(mf, text="Select analysis type → Enter data → Click Analyze",
+             font=("Times New Roman",11), fg="#666666", bg="white").pack(pady=4)
+
+    # re-init state (already done in orig_init but window was rebuilt)
+    self.table_win = None; self.report_win = None; self.graph_win = None
+    self._graph_figs = {}
+    self._active_cell = None; self._active_prev = None
+    self._sel_anchor = None; self._sel_cells = set(); self._sel_orig = {}
+    self._fill_drag = False; self._fill_rows = []; self._fill_cols = []
+    self.factor_title_map = {}
+    self.graph_settings = dict(DEF_GS)
+    self._current_project_path = None
+    self._lbf_cache = {}
+
+SADTk.__init__ = _SADTk_new_init
+
+
 if __name__ == "__main__":
     root = tk.Tk()
     set_icon(root)
