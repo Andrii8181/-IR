@@ -1881,6 +1881,9 @@ class SADTk:
                   command=self._paste_from_focus).pack(side=tk.LEFT, padx=4)
         tk.Button(ctl, text="Аналіз даних", width=bw, height=bh, font=bf_,
                   bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=(10, 4))
+        tk.Button(ctl, text="📚 Довідка", width=14, height=bh, font=bf_,
+                  bg="#1a4b8c", fg="white",
+                  command=lambda: show_help(tw)).pack(side=tk.LEFT, padx=4)
         tk.Button(ctl, text="Розробник", width=bw, height=bh, font=bf_,
                   command=self.show_about).pack(side=tk.RIGHT, padx=4)
 
@@ -1992,7 +1995,10 @@ class SADTk:
         # Design
         row_d = tk.Frame(frm); row_d.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 4))
         tk.Label(row_d, text="Дизайн:").pack(side=tk.LEFT)
-        tk.Button(row_d, text=" ? ", width=3, command=self.show_design_help).pack(side=tk.LEFT, padx=6)
+        tk.Button(row_d, text=" ? ", width=3, command=self.show_design_help).pack(side=tk.LEFT, padx=4)
+        tk.Button(row_d, text="📚 Детальніше", font=("Times New Roman",10), fg="#1a4b8c",
+                  relief=tk.FLAT, cursor="hand2",
+                  command=lambda: show_help(dlg, "Дизайни експерименту")).pack(side=tk.LEFT, padx=2)
         dv = tk.StringVar(value="crd"); rb_f = ("Times New Roman", 13)
         df = tk.Frame(frm); df.grid(row=2, column=1, sticky="w", pady=(10, 4), padx=(140, 0))
         for txt, val in [("CRD", "crd"), ("RCBD", "rcbd"), ("Split-plot (лише параметр.)", "split")]:
@@ -2045,6 +2051,17 @@ class SADTk:
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
         normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
         rb_f = ("Times New Roman", 13)
+        # Context help row
+        help_row = tk.Frame(frm); help_row.pack(fill=tk.X, pady=(0, 6))
+        tk.Button(help_row, text="📚 Нормальність розподілу", font=("Times New Roman",10),
+                  fg="#1a4b8c", relief=tk.FLAT, cursor="hand2",
+                  command=lambda: show_help(dlg, "Нормальність розподілу")).pack(side=tk.LEFT)
+        tk.Button(help_row, text="📚 Методи порівнянь", font=("Times New Roman",10),
+                  fg="#1a4b8c", relief=tk.FLAT, cursor="hand2",
+                  command=lambda: show_help(dlg, "Методи порівнянь")).pack(side=tk.LEFT, padx=6)
+        tk.Button(help_row, text="📚 Непараметричні тести", font=("Times New Roman",10),
+                  fg="#1a4b8c", relief=tk.FLAT, cursor="hand2",
+                  command=lambda: show_help(dlg, "Непараметричні тести")).pack(side=tk.LEFT)
         if normal:
             tk.Label(frm, text="Дані відповідають нормальному розподілу (Shapiro–Wilk).",
                      justify="left").pack(anchor="w", pady=(0, 8))
@@ -4804,6 +4821,615 @@ class ManovaWindow:
             cv.get_tk_widget().pack(fill=tk.X, padx=10, pady=6)
 
 
+
+# ═══════════════════════════════════════════════════════════════
+# ДОВІДКОВА СИСТЕМА
+# ═══════════════════════════════════════════════════════════════
+
+HELP_CONTENT = {}
+
+def _fill_help():
+    H = HELP_CONTENT
+    H["Швидкий старт"] = {"icon":"🚀","short":"З чого почати роботу з програмою","text":"""
+ШВИДКИЙ СТАРТ
+
+КРОК 1. Оберіть тип аналізу на головному екрані.
+КРОК 2. Введіть дані:
+  Ctrl+V - вставити з Excel
+  Файл -> Завантажити Excel (.xlsx)
+  Вручну (Enter - наступний рядок, стрілки - навігація)
+КРОК 3. Натисніть "Аналіз даних".
+КРОК 4. Програма автоматично перевірить:
+  ✓ Нормальність розподілу (Shapiro-Wilk)
+  ✓ Однорідність дисперсій (Левен)
+  ✓ Методологічну коректність дій
+КРОК 5. Скопіюйте звіт і графіки у Word.
+
+Збереження: Файл -> Зберегти проект (.sadp)
+"""}
+
+    H["Введення даних"] = {"icon":"📋","short":"Як правильно вводити та копіювати дані","text":"""
+ВВЕДЕННЯ ДАНИХ
+
+СТРУКТУРА ТАБЛИЦІ ДЛЯ ANOVA:
+  Ліві колонки = назви рівнів факторів (текст)
+  Праві колонки = числові значення повторностей
+
+  Варіант   | Повт.1 | Повт.2 | Повт.3
+  Контроль  |  4.2   |  4.5   |  4.1
+  Варіант1  |  5.8   |  6.1   |  5.9
+
+СПОСОБИ ВВЕДЕННЯ:
+  1. Вручну: клік -> введіть -> Enter (наступний рядок)
+  2. Ctrl+V: вставити з Excel
+  3. Файл -> Завантажити Excel (.xlsx, .xlsm)
+  4. Fill-handle: наведіть на правий нижній кут -> курсор змінюється -> тягніть вниз
+  5. Ctrl+C: скопіювати виділений діапазон
+
+⚠ Назви варіантів вводьте ОДНАКОВО (регістр важливий!)
+⚠ Десяткова кома автоматично замінюється на крапку
+"""}
+
+    H["Дизайни експерименту"] = {"icon":"🧪","short":"CRD, RCBD та Split-plot: коли що обирати","text":"""
+ДИЗАЙНИ ПОЛЬОВИХ ЕКСПЕРИМЕНТІВ
+
+CRD (Повна рандомізація):
+  ✓ Умови однорідні (лабораторія, вегетаційні горщики)
+  ✓ Мала кількість варіантів (2-5)
+
+RCBD (Блочна рандомізація):
+  ✓ Є градієнт родючості (схил, зволоження, pH)
+  ✓ Польові досліди з багатьма варіантами
+  Кожна числова колонка = один блок (повторність)
+  ✓ Виключає міжблокову варіацію з помилки -> точніший аналіз
+
+Split-plot (Спліт-плот):
+  ✓ Два фактори з РІЗНИМ розміром ділянок
+  Головний фактор (WP) = великі ділянки (обробіток ґрунту, норма посіву)
+  Підфактор (SP) = малі ділянки (сорти, дози добрив)
+
+  ⚠ УВАГА: два різних похибки!
+    Whole-plot error -> для тесту WP фактора
+    Sub-plot error (залишок) -> для SP та взаємодії
+  ⚠ Застосування RCBD замість Split-plot -> неправильні F-значення!
+
+ЯК ОБРАТИ:
+  Немає блоків -> CRD
+  Є блоки, однаковий розмір ділянок -> RCBD
+  Є блоки, різний розмір ділянок -> Split-plot
+"""}
+
+    H["Нормальність розподілу"] = {"icon":"📊","short":"Shapiro-Wilk і дії при порушенні","text":"""
+НОРМАЛЬНІСТЬ РОЗПОДІЛУ - SHAPIRO-WILK
+
+Перевіряється нормальність ЗАЛИШКІВ моделі (не сирих даних!).
+
+p > 0.05 -> нормальний -> параметричний аналіз ✓
+p <= 0.05 -> ненормальний -> трансформація або непараметричний
+
+⚠ ОБМЕЖЕННЯ:
+  n < 8: тест ненадійний
+  n > 100: виявляє найменші відхилення -> дивіться QQ-plot!
+
+ДІЇ ПРИ НЕНОРМАЛЬНОСТІ:
+
+1. ТРАНСФОРМАЦІЯ (повернення до параметричних методів):
+   ln(x)  - для правоскошених даних, відносних показників
+   sqrt(x) - для даних з рахунком (кількість особин, плям)
+   log10(x) - для великих значень
+   
+   Програма: перевіряє допустимість -> виконує -> перевіряє нормальність знову
+   ✓ Нормальний -> пропонує параметричний метод
+   ✗ Все ще ненормальний -> зупиняється, рекомендує непараметричний
+
+2. НЕПАРАМЕТРИЧНИЙ АНАЛІЗ:
+   CRD: Kruskal-Wallis -> Mann-Whitney (post-hoc)
+   RCBD: Friedman -> Wilcoxon (парний)
+"""}
+
+    H["Однорідність дисперсій"] = {"icon":"⚖️","short":"Тест Левена і наслідки порушення","text":"""
+ОДНОРІДНІСТЬ ДИСПЕРСІЙ - ТЕСТ ЛЕВЕНА
+
+Levene (center=median) = варіант Brown-Forsythe - найробустніший.
+
+p >= 0.05 -> умова виконується ✓
+p < 0.05 -> дисперсії різняться -> програма блокує і запитує підтвердження
+
+ДІЇ ПРИ ПОРУШЕННІ:
+  1. Трансформація (ln або sqrt стабілізують дисперсію)
+  2. Для двох груп -> Welch t-test (у модулі t-тест, автоматично)
+  3. Непараметричні методи не потребують рівності дисперсій
+
+ANOVA достатньо робастна якщо:
+  Розміри груп приблизно рівні
+  Відношення max/min дисперсій < 9:1
+"""}
+
+    H["Методи порівнянь"] = {"icon":"🔬","short":"НІР, Тьюкі, Дункан, Бонферроні","text":"""
+МЕТОДИ МНОЖИННИХ ПОРІВНЯНЬ (POST-HOC)
+
+НІР05 (Fisher Protected LSD):
+  ✓ Найпоширеніший в агрономії України
+  ✓ Виконується ТІЛЬКИ після значущого F (Protected LSD)
+  Рекомендується: <= 6 варіантів
+
+Тест Тьюкі (Tukey HSD):
+  ✓ Строгий контроль сімейної помилки (FWER)
+  Рекомендується: будь-яка кількість варіантів
+
+Тест Дункана:
+  ✓ Справжня степ-даун процедура: alpha_p = 1-(1-alpha)^(p-1)
+  ✓ Проміжний між LSD і Тьюкі
+  Рекомендується: 5-10 варіантів
+
+Бонферроні:
+  Найконсервативніший. p_adj = p x кількість_пар
+  Рекомендується: мала кількість запланованих порівнянь
+
+CLD ЛІТЕРИ:
+  Однакові літери = немає значущої різниці
+  Різні літери = є значуща різниця (p < alpha)
+
+ЗВЕДЕННЯ:
+  <= 6 варіантів -> НІР05
+  5-10 варіантів -> Дункан
+  Будь-яка кількість -> Тьюкі
+  Мало запланованих -> Бонферроні
+"""}
+
+    H["Непараметричні тести"] = {"icon":"📉","short":"KW, Friedman, MWU, Wilcoxon та розміри ефектів","text":"""
+НЕПАРАМЕТРИЧНІ МЕТОДИ
+
+Kruskal-Wallis (аналог ANOVA для CRD):
+  Глобальний тест. Розмір ефекту: epsilon^2
+  < 0.01 слабкий | 0.01-0.06 середній | > 0.14 сильний
+  Post-hoc: Mann-Whitney з Бонферроні (автоматично)
+
+Friedman (аналог RCBD ANOVA):
+  Для блочних дизайнів. Розмір ефекту: Kendall W
+  ⚠ Вимагає повні блоки (всі варіанти у кожному блоці)!
+  Post-hoc: Wilcoxon з Бонферроні
+
+Mann-Whitney U (попарне):
+  Розмір ефекту: Cliff delta
+  |delta| < 0.147: дуже слабкий | 0.147-0.33: слабкий
+  0.33-0.474: середній | > 0.474: сильний
+
+Wilcoxon signed-rank (парний):
+  Для пар спостережень або RCBD з 2 варіантами.
+  Розмір ефекту: r = Z/sqrt(n)
+"""}
+
+    H["Типи SS"] = {"icon":"∑","short":"Типи сум квадратів I-IV","text":"""
+ТИПИ СУМ КВАДРАТІВ
+
+При збалансованих даних - всі типи дають однаковий результат.
+Різниця виникає при незбалансованих даних.
+
+Тип I (Послідовний):
+  Порядок факторів ВАЖЛИВИЙ!
+  ⚠ Програма попередить при незбалансованих даних!
+  Коли: збалансовані дизайни, регресія з осмисленим порядком
+
+Тип II (Ієрархічний):
+  Порядок НЕ важливий. Вища потужність ніж III при відсутності взаємодій.
+  Коли: незбалансовані БЕЗ значущих взаємодій
+
+Тип III (Частковий) <- ЗА ЗАМОВЧУВАННЯМ:
+  Кожен ефект при всіх інших (включно зі взаємодіями).
+  Порядок НЕ важливий. Стандарт SPSS/SAS. ✓
+  Коли: більшість випадків, незбалансовані зі взаємодіями
+
+Тип IV:
+  Для незбалансованих з ПРОПУЩЕНИМИ КЛІТИНКАМИ.
+  Рідкісний у польових дослідах.
+
+РЕКОМЕНДАЦІЯ:
+  Збалансований -> будь-який тип
+  Незбалансований + взаємодії -> Тип III
+  Незбалансований + без взаємодій -> Тип II
+  Пропущені клітинки -> Тип IV
+"""}
+
+    H["Кореляційний аналіз"] = {"icon":"🔗","short":"Пірсон vs Спірмен, поправки, теплова карта","text":"""
+КОРЕЛЯЦІЙНИЙ АНАЛІЗ
+
+СТРУКТУРА ДАНИХ (два варіанти):
+  А) Перший рядок = назва показника, нижче - числові значення
+  Б) Перша колонка = назва показника, праворуч - значення
+
+МЕТОДИ:
+  Авто (рекомендовано): Shapiro-Wilk по кожному показнику
+    хоч один ненормальний -> Спірмен
+    всі нормальні -> Пірсон
+
+  Пірсон r: лінійний зв'язок, нормальний розподіл
+    ⚠ При ненормальних даних -> програма попередить!
+
+  Спірмен rho: монотонний зв'язок, будь-який розподіл
+
+ПОПРАВКИ НА МНОЖИННІ ПОРІВНЯННЯ:
+  Бонферроні: строга (FWER), p_adj = p x кількість_пар
+  BH (Benjamini-Hochberg FDR): ліберальніша, більш потужна
+  -> При > 10 показниках рекомендується BH
+
+ТЕПЛОВА КАРТА - кожна клітинка:
+  r = коефіцієнт | p = значущість після поправки | n = кількість пар
+  * p < 0.05 | ** p < 0.01
+
+ІНТЕРПРЕТАЦІЯ |r|:
+  0.0-0.2: дуже слабкий | 0.2-0.4: слабкий | 0.4-0.6: помірний
+  0.6-0.8: сильний | 0.8-1.0: дуже сильний
+"""}
+
+    H["Регресійний аналіз"] = {"icon":"📈","short":"7 моделей регресії, R², діагностика","text":"""
+РЕГРЕСІЙНИЙ АНАЛІЗ
+
+МОДЕЛІ:
+  1. Лінійна:       y = a + b*x
+  2. Квадратична:   y = a + b*x + c*x^2  (оптимум добрив)
+  3. Кубічна:       y = a + b*x + c*x^2 + d*x^3
+  4. Степенева:     y = a * x^b  (x > 0)
+  5. Експоненційна: y = a * e^(b*x)
+  6. Логарифмічна:  y = a + b*ln(x)  (x > 0)
+  7. Логістична 4P: y = d + (a-d)/(1+(x/c)^b)  (S-крива)
+
+ПОКАЗНИКИ ЯКОСТІ:
+  R^2   = частка варіації пояснена моделлю (0-1; > 0.9 - добре)
+  R^2adj = R^2 з урахуванням кількості параметрів
+  RMSE  = середньоквадратична помилка (в одиницях y)
+  F-тест = значущість моделі загалом
+
+ДІАГНОСТИКА:
+  Residuals vs Fitted: будь-який патерн -> модель неповна!
+  Shapiro-Wilk залишків: p > 0.05 -> нормальні ✓
+  Grubbs test: автоматичне виявлення викидів у залишках
+
+ВВЕДЕННЯ ДАНИХ:
+  Ліве поле: значення x | Праве поле: значення y
+  "Вставити дані": два стовпці з Excel (x | y)
+"""}
+
+    H["ANCOVA"] = {"icon":"🎛️","short":"Коваріаційний аналіз: контроль зовнішніх факторів","text":"""
+ANCOVA - КОВАРІАЦІЙНИЙ АНАЛІЗ
+
+Мета: порівняти групи усуваючи вплив коваріати.
+
+КОВАРІАТА - неперервна змінна яку вимірюєте але не контролюєте:
+  Початкова висота рослин, pH грунту, вміст гумусу, опади
+
+СТРУКТУРА:
+  [Група] | [Коваріата 1] | [Коваріата 2] | [Y - залежна змінна]
+
+ЗАХИСТ (8 перевірок):
+  1. n >= 6 спостережень
+  2. >= 2 груп
+  3. >= 2 спостережень у кожній групі
+  4. Мультиколінеарність коваріат (r > 0.95)
+  5. Паралельність ліній регресії <- КЛЮЧОВА!
+  6. Нормальність залишків
+  7. Однорідність дисперсій
+  8. Скориговані середні (LS Means)
+
+⚠ КРИТИЧНА ПЕРЕДУМОВА - ПАРАЛЕЛЬНІСТЬ ЛІНІЙ:
+  Тест взаємодії Група x Коваріата:
+  p < alpha -> лінії НЕ паралельні -> ANCOVA ЗАБЛОКОВАНА!
+
+РЕЗУЛЬТАТИ:
+  Скориговані (LS) Means = середні при однаковій коваріаті у всіх групах
+  Порівнюйте скориговані середні, а не нескориговані!
+"""}
+
+    H["MANOVA"] = {"icon":"🔢","short":"Багатовимірний аналіз кількох показників","text":"""
+MANOVA - БАГАТОВИМІРНИЙ ДИСПЕРСІЙНИЙ АНАЛІЗ
+
+Мета: порівняти групи за КІЛЬКОМА залежними змінними одночасно.
+
+НАВІЩО НЕ КІЛЬКА ANOVA?
+  4 ANOVA з alpha=0.05 -> 19% шанс хибної різниці!
+  MANOVA контролює сімейну помилку.
+
+⚠ КРИТИЧНА ВИМОГА: n > p У КОЖНІЙ ГРУПІ
+  n = кількість спостережень; p = кількість DV
+  n <= p в будь-якій групі -> ЖОРСТКЕ БЛОКУВАННЯ!
+
+ЗАХИСТ (7 перевірок):
+  1. n > p у кожній групі (блокування)
+  2. >= 2 DV
+  3. Мультиколінеарність DV (|r| > 0.90)
+  4. Багатовимірна нормальність (Mardia)
+  5. Однорідність коваріаційних матриць (Box M)
+  6. Чотири тестові статистики
+  7. Univariate тільки після значущого MANOVA
+
+СТАТИСТИКИ:
+  Wilks Lambda: стандартна
+  Pillai Trace: найробустніша ★ (при порушеннях)
+  Hotelling-Lawley: один домінантний ефект
+  Roy GCR: найпотужніша, найменш робастна
+
+ПОСЛІДОВНІСТЬ:
+  Перевірте передумови -> Pillai Trace ->
+  Якщо значущо -> univariate ANOVAs з Bonferroni (alpha/p)
+  Якщо незначущо -> univariate НЕ інтерпретуються!
+"""}
+
+    H["Аналіз стабільності"] = {"icon":"🌍","short":"GGE biplot та Eberhart-Russell для GxE","text":"""
+АНАЛІЗ СТАБІЛЬНОСТІ - GxE ВЗАЄМОДІЯ
+
+GxE: відносна продуктивність сортів змінюється між середовищами.
+
+СТРУКТУРА:
+  Рядки = Генотипи (сорти, лінії)
+  Стовпці = Середовища (роки, місця)
+  Значення = середня врожайність
+
+EBERHART-RUSSELL:
+  bi (коефіцієнт стабільності):
+    bi ~= 1.0 -> стабільний (середня реакція)
+    bi > 1.2  -> адаптивний (реагує на покращення умов)
+    bi < 0.8  -> консервативний (для бідних умов)
+
+  s^2d (дисперсія відхилень):
+    ~= 0 -> передбачуваний
+    > 0  -> непередбачуваний
+
+  Ідеал: висока середня + bi ~= 1 + s^2d ~= 0
+
+GGE BIPLOT:
+  Точки = генотипи
+  Стрілки = середовища
+  Близько до центру = стабільний генотип
+  Близько до стрілки середовища = добре виконує там
+"""}
+
+    H["Розмір вибірки"] = {"icon":"🔢","short":"Скільки повторностей потрібно?","text":"""
+КАЛЬКУЛЯТОР РОЗМІРУ ВИБІРКИ
+
+Параметри:
+  alpha: рівень значущості (зазвичай 0.05)
+  Потужність (1-beta): зазвичай 0.80 або 0.90
+  delta: мінімальна різниця яку хочете виявити (наприклад 0.5 т/га)
+  sigma: стандартне відхилення (з попередніх дослідів)
+  k: кількість варіантів
+
+РЕЖИМИ:
+  Порожнє поле "повторності" -> мінімальна кількість повторностей
+  Введіть повторності -> досягнута потужність тесту
+
+ТИПОВІ ЗНАЧЕННЯ (зернові):
+  CV 10-15%, виявити 10% різниці -> зазвичай 3-4 повторності
+  CV 20-25% -> 5-7 повторностей
+
+⚠ Планувати з потужністю >= 0.80!
+"""}
+
+    H["Проект"] = {"icon":"💾","short":"Збереження та відкриття проектів (.sadp)","text":"""
+УПРАВЛІННЯ ПРОЕКТАМИ
+
+Формат: .sadp (JSON-текст, можна відкрити у блокноті)
+
+ЩО ЗБЕРІГАЄТЬСЯ:
+  ✓ Кількість та назви факторів
+  ✓ Всі введені дані (назви варіантів і числа)
+  ✓ Кількість стовпців (повторностей)
+
+ДЛЯ КІЛЬКОХ ПОКАЗНИКІВ ОДНОГО ДОСЛІДУ:
+  1. Введіть схему досліду та перший показник
+  2. Збережіть: Файл -> Зберегти проект
+  3. Аналіз -> збережіть звіт
+  4. Видаліть числові дані, залиште назви варіантів
+  5. Введіть наступний показник -> аналіз -> звіт
+  Або збережіть окремий .sadp для кожного показника.
+
+МЕНЮ ФАЙЛ:
+  Зберегти проект (Ctrl+S)
+  Відкрити проект (Ctrl+O)
+  Очистити таблицю
+  Завантажити Excel
+"""}
+
+    H["Графіки і налаштування"] = {"icon":"🎨","short":"Boxplot, Venn, теплова карта та їх налаштування","text":"""
+ГРАФІЧНИЙ ЗВІТ
+
+BOXPLOT (коробка з вусами):
+  Верхній вус: Q3 + 1.5*IQR (або максимум)
+  Верхній край коробки: Q3 (75-й перцентиль)
+  Лінія: медіана (Q2)
+  Нижній край коробки: Q1 (25-й перцентиль)
+  Нижній вус: Q1 - 1.5*IQR (або мінімум)
+  Кружечки поза вусами: викиди (outliers)
+
+  Літери CLD над коробками:
+    Однакові -> немає значущої різниці
+    Різні -> є значуща різниця (p < alpha)
+
+ДІАГРАМА ВЕННА (сила впливу):
+  Кола = головні ефекти факторів
+  Перетини кіл = взаємодії між факторами
+  Сума всіх частин = 100%
+
+НАЛАШТУВАННЯ (кнопка ⚙ у вікні графіків):
+  Boxplot: шрифт, розмір, кольори коробки/медіани/вусів/викидів
+  Venn: шрифт, прозорість, кольори кіл і тексту
+  За замовчуванням: APA стиль
+
+КОПІЮВАННЯ:
+  "Копіювати PNG" -> 300 dpi -> Ctrl+V у Word
+  (Windows only; macOS/Linux - toolbar matplotlib)
+
+ТЕПЛОВА КАРТА (кореляція):
+  В клітинці: r / p / n
+  Налаштовується через ⚙: colormap, шрифти, кольори
+"""}
+
+    H["Позначення у звіті"] = {"icon":"📝","short":"Як читати таблиці і показники у звіті","text":"""
+ПОЗНАЧЕННЯ У ЗВІТІ
+
+ЗНАЧУЩІСТЬ:
+  **  p < 0.01 (висока значущість)
+  *   p < 0.05 (значущо)
+  -   p >= 0.05 (не значущо)
+
+ТАБЛИЦЯ ANOVA:
+  SS  = сума квадратів
+  df  = ступені свободи
+  MS  = середній квадрат (SS/df)
+  F   = критерій Фішера (MS_ефект / MS_залишок)
+  p   = ймовірність (менше = значущіше)
+
+СИЛА ВПЛИВУ (% від SS):
+  Частка загальної варіації по кожному джерелу.
+  Залишок включений. Сума всіх рядків = 100%.
+
+PARTIAL eta^2 (розмір ефекту):
+  eta^2 = SS_ефект / (SS_ефект + SS_залишок)
+  < 0.01: дуже слабкий | 0.01-0.06: слабкий
+  0.06-0.14: середній | > 0.14: сильний
+
+R^2 (коефіцієнт детермінації):
+  Частка варіації пояснена всією моделлю.
+  R^2 = 0.90 -> 90% варіації пояснено ✓
+
+CV% (коефіцієнт варіації):
+  < 10%: відмінна точність | 10-15%: хороша
+  15-20%: задовільна | > 20%: низька
+
+НІР05:
+  Якщо різниця > НІР05 -> статистично значуща.
+"""}
+
+_fill_help()
+
+
+
+class HelpWindow:
+    """Інтерактивне вікно довідки."""
+    def __init__(self, parent, start_topic=None):
+        self.win = tk.Toplevel(parent)
+        self.win.title("S.A.D. — Довідка")
+        self.win.geometry("1000x660"); set_icon(self.win)
+        self.current_topic = None
+        self._build()
+        topic = start_topic or list(HELP_CONTENT.keys())[0]
+        self._show_topic(topic)
+
+    def _build(self):
+        # Left panel
+        left = tk.Frame(self.win, width=220, bg="#f5f5f5", relief=tk.RIDGE, bd=1)
+        left.pack(side=tk.LEFT, fill=tk.Y); left.pack_propagate(False)
+        tk.Label(left, text="Зміст довідки",
+                 font=("Times New Roman",12,"bold"), bg="#1a4b8c", fg="white",
+                 pady=8).pack(fill=tk.X)
+        # Search
+        sf = tk.Frame(left, bg="#f5f5f5"); sf.pack(fill=tk.X, padx=6, pady=6)
+        tk.Label(sf, text="Пошук:", bg="#f5f5f5", font=("Times New Roman",11)).pack(side=tk.LEFT)
+        self._sv = tk.StringVar(); self._sv.trace_add("write", self._on_search)
+        tk.Entry(sf, textvariable=self._sv, font=("Times New Roman",11),
+                 relief=tk.FLAT, bg="white").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        # Topic buttons frame (scrollable)
+        self._tf = tk.Frame(left, bg="#f5f5f5"); self._tf.pack(fill=tk.BOTH, expand=True)
+        self._btn = {}; self._build_list(list(HELP_CONTENT.keys()))
+        # Right panel
+        right = tk.Frame(self.win, bg="white"); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._title = tk.Label(right, text="", font=("Times New Roman",14,"bold"),
+                               bg="#1a4b8c", fg="white", pady=8, padx=10, anchor="w")
+        self._title.pack(fill=tk.X)
+        tf2 = tk.Frame(right); tf2.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        ysb = ttk.Scrollbar(tf2); ysb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._txt = tk.Text(tf2, wrap="word", font=("Times New Roman",12),
+                            state="disabled", relief=tk.FLAT, bg="white",
+                            yscrollcommand=ysb.set, padx=10, pady=8, cursor="arrow")
+        self._txt.pack(fill=tk.BOTH, expand=True)
+        ysb.config(command=self._txt.yview)
+        self._txt.bind("<MouseWheel>",
+                       lambda e: self._txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        # Tags
+        self._txt.tag_configure("bold", font=("Times New Roman",12,"bold"))
+        self._txt.tag_configure("check", foreground="#1a6b1a", font=("Times New Roman",12))
+        self._txt.tag_configure("warn",  foreground="#c62828", font=("Times New Roman",12))
+        self._txt.tag_configure("normal",font=("Times New Roman",12))
+        # Bottom
+        bot = tk.Frame(right, bg="#f0f0f0", pady=4); bot.pack(fill=tk.X)
+        tk.Button(bot, text="<- Попередня", command=self._prev,
+                  font=("Times New Roman",11)).pack(side=tk.LEFT, padx=8)
+        tk.Button(bot, text="Наступна ->", command=self._next,
+                  font=("Times New Roman",11)).pack(side=tk.LEFT, padx=4)
+        tk.Button(bot, text="Закрити", command=self.win.destroy,
+                  font=("Times New Roman",11)).pack(side=tk.RIGHT, padx=8)
+
+    def _build_list(self, topics):
+        for w in self._tf.winfo_children(): w.destroy()
+        self._btn = {}
+        for topic in topics:
+            info = HELP_CONTENT.get(topic, {})
+            frm = tk.Frame(self._tf, bg="#f5f5f5", cursor="hand2")
+            frm.pack(fill=tk.X, padx=3, pady=1)
+            icon = info.get("icon","•")
+            lbl = tk.Label(frm, text=f"{icon}  {topic}",
+                           font=("Times New Roman",11,"bold"), bg="#f5f5f5",
+                           anchor="w", padx=6, pady=2)
+            lbl.pack(fill=tk.X)
+            sub = tk.Label(frm, text=f"    {info.get('short','')}",
+                           font=("Times New Roman",9), fg="#666", bg="#f5f5f5", anchor="w", padx=6)
+            sub.pack(fill=tk.X)
+            for w in [frm, lbl, sub]:
+                w.bind("<Button-1>", lambda e, t=topic: self._show_topic(t))
+                w.bind("<Enter>",  lambda e, f=frm: [c.configure(bg="#dce8ff") for c in [f]+list(f.winfo_children())])
+                w.bind("<Leave>",  lambda e, f=frm, t=topic: self._set_bg(f, t))
+            self._btn[topic] = frm
+
+    def _set_bg(self, frm, topic):
+        bg = "#c8d8ff" if topic == self.current_topic else "#f5f5f5"
+        frm.configure(bg=bg)
+        for w in frm.winfo_children(): w.configure(bg=bg)
+
+    def _on_search(self, *_):
+        q = self._sv.get().strip().lower()
+        if not q: self._build_list(list(HELP_CONTENT.keys())); return
+        matched = [t for t, info in HELP_CONTENT.items()
+                   if q in t.lower() or q in info.get("short","").lower()
+                   or q in info.get("text","").lower()]
+        self._build_list(matched)
+
+    def _show_topic(self, topic):
+        if topic not in HELP_CONTENT: return
+        self.current_topic = topic
+        info = HELP_CONTENT[topic]
+        self._title.configure(text=f"{info.get('icon','')}  {topic}")
+        for t, frm in self._btn.items(): self._set_bg(frm, t)
+        self._txt.configure(state="normal")
+        self._txt.delete("1.0", tk.END)
+        for line in info.get("text","").strip().split("\n"):
+            s = line.strip()
+            if s.startswith("✓") or s.startswith("✔"):
+                tag = "check"
+            elif s.startswith("⚠") or s.startswith("✗") or "БЛОК" in s or "КРИТ" in s:
+                tag = "warn"
+            elif line.isupper() and len(line) > 3:
+                tag = "bold"
+            else:
+                tag = "normal"
+            self._txt.insert(tk.END, line + "\n", tag)
+        self._txt.configure(state="disabled")
+        self._txt.yview_moveto(0)
+
+    def _prev(self):
+        keys = list(HELP_CONTENT.keys())
+        if self.current_topic in keys:
+            idx = keys.index(self.current_topic)
+            if idx > 0: self._show_topic(keys[idx-1])
+
+    def _next(self):
+        keys = list(HELP_CONTENT.keys())
+        if self.current_topic in keys:
+            idx = keys.index(self.current_topic)
+            if idx < len(keys)-1: self._show_topic(keys[idx+1])
+
+
+def show_help(parent, topic=None):
+    HelpWindow(parent, start_topic=topic)
+
 # ═══════════════════════════════════════════════════════════════
 # UPDATE MENU — add ANCOVA and MANOVA buttons
 # ═══════════════════════════════════════════════════════════════
@@ -4860,8 +5486,13 @@ def _SADTk_new_init(self, root):
     tk.Button(pf, text="💾 Save Project", width=18, font=("Times New Roman",11),
               command=self.save_project).pack(side=tk.LEFT, padx=8)
 
-    tk.Label(mf, text="Select analysis type → Enter data → Click Analyze",
+    tk.Label(mf, text="Оберіть тип аналізу -> Введіть дані -> Натисніть «Аналіз даних»",
              font=("Times New Roman",11), fg="#666666", bg="white").pack(pady=4)
+
+    # Help button
+    tk.Button(mf, text="📚  Довідка", font=("Times New Roman",12),
+              bg="#1a4b8c", fg="white", width=18,
+              command=lambda: show_help(root)).pack(pady=(2,8))
 
     # re-init state (already done in orig_init but window was rebuilt)
     self.table_win = None; self.report_win = None; self.graph_win = None
