@@ -242,7 +242,94 @@ def make_tv(parent, headers, rows, min_col=90):
 # ═══════════════════════════════════════════════════════════════
 # DATA HELPERS
 # ═══════════════════════════════════════════════════════════════
-def groups_by(long, keys):
+
+def _bind_nav(entries_2d, win, factors_count=0):
+    """Прив'язати навігацію Enter/стрілки до двовимірного масиву Entry."""
+    def _pos(w):
+        for i, row in enumerate(entries_2d):
+            for j, e in enumerate(row):
+                if e is w: return i, j
+        return None, None
+
+    def _on_enter(event):
+        i, j = _pos(event.widget)
+        if i is None: return "break"
+        ni = i + 1
+        if ni >= len(entries_2d): return "break"
+        entries_2d[ni][j].focus_set(); entries_2d[ni][j].icursor(tk.END)
+        return "break"
+
+    def _on_arrow(event):
+        i, j = _pos(event.widget)
+        if i is None: return "break"
+        if event.keysym == "Up":    i = max(0, i-1)
+        elif event.keysym == "Down": i = min(len(entries_2d)-1, i+1)
+        elif event.keysym == "Left": j = max(0, j-1)
+        elif event.keysym == "Right":j = min(len(entries_2d[i])-1, j+1)
+        entries_2d[i][j].focus_set(); entries_2d[i][j].icursor(tk.END)
+        return "break"
+
+    for row in entries_2d:
+        for e in row:
+            e.bind("<Return>", _on_enter)
+            e.bind("<Up>",     _on_arrow)
+            e.bind("<Down>",   _on_arrow)
+            e.bind("<Left>",   _on_arrow)
+            e.bind("<Right>",  _on_arrow)
+
+
+def _nav_move(entries_2d, ri, ci):
+    if 0 <= ri < len(entries_2d) and 0 <= ci < len(entries_2d[ri]):
+        entries_2d[ri][ci].focus_set(); entries_2d[ri][ci].icursor(tk.END)
+    return "break"
+
+def _nav_down(entries_2d, ri, ci, add_row_fn=None):
+    nri = ri + 1
+    if nri >= len(entries_2d) and add_row_fn:
+        try: add_row_fn()
+        except Exception: pass
+    _nav_move(entries_2d, min(nri, len(entries_2d)-1), ci)
+    return "break"
+
+def bind_nav(entries_2d, e, add_row_fn=None):
+    """Прив'язати навігацію Enter/стрілки до комірки Entry у двовимірному списку."""
+    def find_pos():
+        for ri, row in enumerate(entries_2d):
+            for ci, cell in enumerate(row):
+                if cell is e: return ri, ci
+        return None, None
+
+    def move(ri, ci):
+        if 0 <= ri < len(entries_2d) and 0 <= ci < len(entries_2d[ri]):
+            entries_2d[ri][ci].focus_set()
+            entries_2d[ri][ci].icursor(tk.END)
+
+    def on_enter(ev):
+        ri, ci = find_pos()
+        if ri is None: return "break"
+        nri = ri + 1
+        if nri >= len(entries_2d) and add_row_fn:
+            add_row_fn()
+        move(min(nri, len(entries_2d)-1), ci)
+        return "break"
+
+    def on_arrow(ev):
+        ri, ci = find_pos()
+        if ri is None: return "break"
+        k = ev.keysym
+        if   k == "Up":    move(max(0, ri-1), ci)
+        elif k == "Down":  move(min(len(entries_2d)-1, ri+1), ci)
+        elif k == "Left":  move(ri, max(0, ci-1))
+        elif k == "Right": move(ri, min(len(entries_2d[ri])-1, ci+1))
+        return "break"
+
+    e.bind("<Return>", on_enter)
+    e.bind("<Up>",    on_arrow)
+    e.bind("<Down>",  on_arrow)
+    e.bind("<Left>",  on_arrow)
+    e.bind("<Right>", on_arrow)
+
+
     g = defaultdict(list)
     for r in long:
         v = r.get("value", np.nan)
@@ -637,32 +724,36 @@ def _nir05(long, fkeys, mse, dfe, lbf):
 
 def build_eff_rows(table):
     """
-    Effect-strength table (% of SS_total).
-    Includes: factors, interactions, Residual.
-    Excludes: Total row (it IS 100% by definition — redundant).
-    Factors + Interactions + Residual = 100%.
+    Таблиця сили впливу (% від SS_total).
+    Включає: фактори, взаємодії, Залишок (не включає «Загальна» і WP-error).
+    Гарантія: сума всіх рядків = рівно 100.00% (остання строка коригується).
     """
-    ss_tot = 0.
+    ss_tot = np.nan
     for row in table:
-        if row[0] == "Загальна" and row[1] is not None \
-                and not (isinstance(row[1], float) and math.isnan(row[1])):
+        if row[0] == "Загальна" and row[1] is not None                 and not (isinstance(row[1], float) and math.isnan(row[1])):
             ss_tot = float(row[1]); break
-    if ss_tot <= 0:
-        # fallback: sum all non-nan SS values except Total
-        ss_tot = sum(float(r[1]) for r in table
-                     if r[1] is not None
-                     and not (isinstance(r[1], float) and math.isnan(r[1]))
-                     and r[0] != "Загальна")
+    if math.isnan(ss_tot):
+        total = 0.
+        for row in table:
+            if row[1] is not None and not (isinstance(row[1], float) and math.isnan(row[1]))                     and row[0] != "Загальна":
+                total += float(row[1])
+        ss_tot = total if total > 0 else np.nan
+    if math.isnan(ss_tot) or ss_tot <= 0:
+        return []
     out = []
     for row in table:
         nm, SSv = row[0], row[1]
-        if nm == "Загальна": continue          # skip Total — always 100%, not informative
-        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)): continue
-        # skip WP-error row — internal split-plot term, not a "real" source
+        if nm == "Загальна": continue
         if "WP-error" in str(nm): continue
-        pct = (float(SSv) / ss_tot * 100) if ss_tot > 0 else np.nan
-        out.append([nm, fmt(pct, 2)])
-    return out
+        if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)): continue
+        out.append([nm, float(SSv) / ss_tot * 100])
+    if not out: return []
+    # Коригуємо останній рядок щоб сума = рівно 100%
+    total_pct = sum(r[1] for r in out)
+    if abs(total_pct - 100.0) < 5.0:   # розумне відхилення
+        out[-1][1] += 100.0 - total_pct
+    return [[r[0], fmt(r[1], 2)] for r in out]
+
 
 def build_pe2_rows(table):
     ss_err = np.nan
@@ -1188,50 +1279,98 @@ class CorrelationWindow:
         if dlg.result: self.gs = dlg.result
 
     def _run_analysis(self):
-        """Ask params and run correlation."""
-        dlg = tk.Toplevel(self.win); dlg.title("Параметри аналізу"); dlg.resizable(False, False); set_icon(dlg)
-        frm = tk.Frame(dlg, padx=14, pady=12); frm.pack()
-
-        tk.Label(frm, text="Назви показників:", font=("Times New Roman", 12)).grid(row=0, column=0, sticky="w", pady=4)
-        names_var = tk.StringVar(value="row")
+        """Запит параметрів і запуск кореляційного аналізу."""
+        dlg = tk.Toplevel(self.win)
+        dlg.title("Параметри кореляційного аналізу")
+        dlg.resizable(False, False); set_icon(dlg)
+        frm = tk.Frame(dlg, padx=18, pady=14); frm.pack(fill=tk.BOTH, expand=True)
         rb_f = ("Times New Roman", 12)
-        tk.Radiobutton(frm, text="Перший рядок кожного стовпця", variable=names_var,
-                       value="row", font=rb_f).grid(row=1, column=0, sticky="w")
-        tk.Radiobutton(frm, text="Перша колонка (рядки = показники)", variable=names_var,
-                       value="col", font=rb_f).grid(row=2, column=0, sticky="w")
 
-        tk.Label(frm, text="Метод кореляції:", font=("Times New Roman", 12)).grid(row=3, column=0, sticky="w", pady=(10, 4))
+        # ── Розташування назв показників ──
+        tk.Label(frm, text="Де знаходяться назви показників?",
+                 font=("Times New Roman", 12, "bold")).grid(row=0, column=0, columnspan=2,
+                                                              sticky="w", pady=(0, 4))
+        names_var = tk.StringVar(value="row")
+        tk.Radiobutton(frm, text="У першому рядку кожного стовпця\n"
+                       "(кожен стовпець = один показник, перша клітинка = назва)",
+                       variable=names_var, value="row", font=rb_f, justify="left",
+                       wraplength=480).grid(row=1, column=0, columnspan=2, sticky="w", pady=2)
+        tk.Radiobutton(frm, text="У першій колонці\n"
+                       "(кожен рядок = один показник, перша клітинка рядка = назва)",
+                       variable=names_var, value="col", font=rb_f, justify="left",
+                       wraplength=480).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
+
+        ttk.Separator(frm, orient="horizontal").grid(row=3, column=0, columnspan=2,
+                                                      sticky="ew", pady=8)
+
+        # ── Метод кореляції ──
+        tk.Label(frm, text="Метод кореляції:",
+                 font=("Times New Roman", 12, "bold")).grid(row=4, column=0, columnspan=2,
+                                                              sticky="w", pady=(0, 4))
         meth_var = tk.StringVar(value="auto")
-        tk.Radiobutton(frm, text="Авто (перевірка нормальності → Pearson або Spearman)",
-                       variable=meth_var, value="auto", font=rb_f).grid(row=4, column=0, sticky="w")
-        tk.Radiobutton(frm, text="Пірсона (лише якщо дані нормально розподілені)",
-                       variable=meth_var, value="pearson", font=rb_f).grid(row=5, column=0, sticky="w")
-        tk.Radiobutton(frm, text="Спірмена (непараметричний, завжди коректний)",
-                       variable=meth_var, value="spearman", font=rb_f).grid(row=6, column=0, sticky="w")
+        methods = [
+            ("auto",    "Авто — автоматично перевіряє нормальність (рекомендовано)\n"
+                        "  → якщо всі показники нормальні: Пірсон\n"
+                        "  → якщо хоч один ненормальний: Спірмен"),
+            ("pearson", "Пірсон r — для нормально розподілених даних, лінійний зв'язок\n"
+                        "  ⚠ Програма попередить якщо дані не нормальні"),
+            ("spearman","Спірмен ρ — непараметричний, для будь-якого розподілу,\n"
+                        "  виявляє монотонний (не лише лінійний) зв'язок"),
+        ]
+        for ri, (val, txt) in enumerate(methods):
+            tk.Radiobutton(frm, text=txt, variable=meth_var, value=val,
+                           font=rb_f, justify="left", wraplength=480
+                           ).grid(row=5+ri, column=0, columnspan=2, sticky="w", pady=2)
 
-        tk.Label(frm, text="Поправка на множинні порівняння:", font=("Times New Roman", 12)).grid(row=7, column=0, sticky="w", pady=(10, 4))
+        ttk.Separator(frm, orient="horizontal").grid(row=8, column=0, columnspan=2,
+                                                      sticky="ew", pady=8)
+
+        # ── Поправка на множинні порівняння ──
+        tk.Label(frm, text="Поправка на множинні порівняння:",
+                 font=("Times New Roman", 12, "bold")).grid(row=9, column=0, columnspan=2,
+                                                              sticky="w", pady=(0, 4))
         corr_var = tk.StringVar(value="bonferroni")
-        for txt, val in [("Бонферроні (суворіша)", "bonferroni"),
-                          ("BH / FDR (Benjamini–Hochberg, ліберальніша)", "bh"),
-                          ("Без поправки (не рекомендується)", "none")]:
-            tk.Radiobutton(frm, text=txt, variable=corr_var, value=val, font=rb_f).grid(
-                row=8 + [("bonferroni","bh","none").index(val)], column=0, sticky="w")
+        corrections = [
+            ("bonferroni", "Бонферроні — суворіша, контролює сімейну помилку (FWER)\n"
+                           "  Рекомендується при ≤ 10 показниках"),
+            ("bh",         "Benjamini–Hochberg (FDR) — ліберальніша, більша потужність\n"
+                           "  Рекомендується при > 10 показниках"),
+            ("none",       "Без поправки — не рекомендується при > 3 показниках"),
+        ]
+        for ri, (val, txt) in enumerate(corrections):
+            tk.Radiobutton(frm, text=txt, variable=corr_var, value=val,
+                           font=rb_f, justify="left", wraplength=480
+                           ).grid(row=10+ri, column=0, columnspan=2, sticky="w", pady=2)
 
-        tk.Label(frm, text="Рівень значущості α:", font=("Times New Roman", 12)).grid(row=11, column=0, sticky="w", pady=(10, 4))
+        ttk.Separator(frm, orient="horizontal").grid(row=13, column=0, columnspan=2,
+                                                      sticky="ew", pady=8)
+
+        # ── Рівень значущості ──
+        tk.Label(frm, text="Рівень значущості α:",
+                 font=("Times New Roman", 12, "bold")).grid(row=14, column=0, sticky="w")
         alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(frm, textvariable=alpha_var, values=["0.01", "0.05", "0.10"],
-                     state="readonly", width=8).grid(row=11, column=1, sticky="w", padx=6)
+                     state="readonly", width=8,
+                     font=("Times New Roman",12)).grid(row=14, column=1, sticky="w", padx=8)
 
+        # ── Кнопки ──
+        bf = tk.Frame(frm); bf.grid(row=15, column=0, columnspan=2, pady=(14, 0))
         out = {"ok": False}
         def ok():
             out.update({"ok": True, "names_loc": names_var.get(),
                         "method": meth_var.get(), "correction": corr_var.get(),
                         "alpha": float(alpha_var.get())})
             dlg.destroy()
-        bf = tk.Frame(frm); bf.grid(row=12, column=0, columnspan=2, pady=(12, 0))
-        tk.Button(bf, text="OK", width=10, command=ok).pack(side=tk.LEFT, padx=4)
-        tk.Button(bf, text="Скасувати", width=12, command=dlg.destroy).pack(side=tk.LEFT)
-        dlg.update_idletasks(); center_win(dlg); dlg.bind("<Return>", lambda e: ok())
+        tk.Button(bf, text="Виконати аналіз", width=18, bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=ok).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", width=12,
+                  font=("Times New Roman",12), command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.update_idletasks()
+        # Примусово задати достатній розмір для всього вмісту
+        dlg.geometry("600x720")
+        center_win(dlg)
+        dlg.bind("<Return>", lambda e: ok())
         dlg.grab_set(); self.win.wait_window(dlg)
         if not out["ok"]: return
         self._compute_and_show(out["names_loc"], out["method"], out["alpha"], out["correction"])
@@ -2860,7 +2999,7 @@ def export_report_pdf(text_lines, filepath):
 class DescriptiveWindow:
     """Standalone descriptive statistics module."""
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Descriptive Statistics")
+        self.win = tk.Toplevel(parent); self.win.title("Описова статистика")
         self.win.geometry("1100x680"); set_icon(self.win)
         self.gs = gs; self._build()
 
@@ -2872,7 +3011,7 @@ class DescriptiveWindow:
         mb.add_cascade(label="File", menu=fm)
 
         top = tk.Frame(self.win, padx=6, pady=4); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Analyze", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
                   font=("Times New Roman",12), command=self._analyze).pack(side=tk.LEFT, padx=4)
         tk.Label(top, text="First row = variable names  |  Each column = one variable",
                  font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=8)
@@ -2898,6 +3037,7 @@ class DescriptiveWindow:
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
+        _bind_nav(self.entries, self.win)
 
     def _paste(self):
         w = self.win.focus_get()
@@ -2924,6 +3064,11 @@ class DescriptiveWindow:
                 for j in range(self.cols):
                     e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
                     e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
+                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
+                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
+                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
+                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
                 self.entries.append(row_); self.rows += 1
             for i, row in enumerate(raw):
                 for j, v in enumerate(row):
@@ -2979,27 +3124,27 @@ class DescriptiveWindow:
         self._show_result(headers, rows, data_cols, names)
 
     def _show_result(self, headers, rows, arrays, names):
-        win = tk.Toplevel(self.win); win.title("Descriptive Statistics — Results")
+        win = tk.Toplevel(self.win); win.title("Описова статистика — Результати")
         win.geometry("1300x600"); set_icon(win)
         top = tk.Frame(win, padx=6, pady=4); top.pack(fill=tk.X)
         def export_docx():
             p = filedialog.asksaveasfilename(defaultextension=".docx",filetypes=[("Word","*.docx")])
             if not p: return
             try:
-                export_report_docx([{"kind":"heading","text":"Descriptive Statistics","level":1},
+                export_report_docx([{"kind":"heading","text":"Описова статистика","level":1},
                                      {"kind":"table","headers":headers,"rows":rows}], [], p)
                 messagebox.showinfo("","Saved.")
             except Exception as ex: messagebox.showerror("",str(ex))
-        tk.Button(top, text="Export Word", command=export_docx).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Plot Boxplots", command=lambda: self._plot_boxes(arrays, names)).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="QQ-plots", command=lambda: self._plot_qq(arrays, names)).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Експорт у Word", command=export_docx).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Побудувати боксплоти", command=lambda: self._plot_boxes(arrays, names)).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="QQ-графіки", command=lambda: self._plot_qq(arrays, names)).pack(side=tk.LEFT, padx=4)
 
         frm, _ = make_tv(win, headers, rows, min_col=80)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
     def _plot_boxes(self, arrays, names):
         if not HAS_MPL: return
-        win = tk.Toplevel(self.win); win.title("Boxplots"); win.geometry("900x550")
+        win = tk.Toplevel(self.win); win.title("Боксплоти"); win.geometry("900x550")
         fig = Figure(figsize=(max(6, len(arrays)*0.9+1), 5), dpi=100)
         ax = fig.add_subplot(111)
         ax.boxplot([a[~np.isnan(a)] for a in arrays], labels=names, patch_artist=True)
@@ -3010,7 +3155,7 @@ class DescriptiveWindow:
         if not HAS_MPL: return
         from scipy.stats import probplot
         n = len(arrays); cols = min(n, 4); rows_n = math.ceil(n/cols)
-        win = tk.Toplevel(self.win); win.title("QQ-plots"); win.geometry("1000x600")
+        win = tk.Toplevel(self.win); win.title("QQ-графіки"); win.geometry("1000x600")
         fig = Figure(figsize=(cols*2.5+0.5, rows_n*2.5+0.5), dpi=100)
         for i, (arr, nm) in enumerate(zip(arrays, names)):
             a = arr[~np.isnan(arr)]
@@ -3029,31 +3174,31 @@ class DescriptiveWindow:
 # ═══════════════════════════════════════════════════════════════
 class TTestWindow:
     def __init__(self, parent):
-        self.win = tk.Toplevel(parent); self.win.title("t-Test / Mann-Whitney")
-        self.win.geometry("700x560"); set_icon(self.win); self._build()
+        self.win = tk.Toplevel(parent); self.win.title("t-тест / Критерій Манна-Уітні")
+        self.win.geometry("680x540"); set_icon(self.win); self._build()
 
     def _build(self):
         frm = tk.Frame(self.win, padx=12, pady=10); frm.pack(fill=tk.BOTH, expand=True)
-        tk.Label(frm, text="Test type:", font=("Times New Roman",12,"bold")).grid(row=0,column=0,sticky="w")
+        tk.Label(frm, text="Тип тесту:", font=("Times New Roman",12,"bold")).grid(row=0,column=0,sticky="w")
         self.test_var = tk.StringVar(value="ind")
         rf = ("Times New Roman",12)
-        for txt, val, r in [("Independent samples (2 groups)","ind",1),
-                             ("Paired samples (before/after)","paired",2),
-                             ("One sample (vs. known mean)","one",3)]:
+        for txt, val, r in [("Незалежні вибірки (2 групи)","ind",1),
+                             ("Парні вибірки (до/після)","paired",2),
+                             ("Одна вибірка (проти відомого μ)","one",3)]:
             tk.Radiobutton(frm, text=txt, variable=self.test_var, value=val, font=rf,
                            command=self._update_ui).grid(row=r, column=0, sticky="w")
 
-        tk.Label(frm, text="Group 1 / Sample:", font=("Times New Roman",12)).grid(row=4,column=0,sticky="w",pady=(10,2))
+        tk.Label(frm, text="Група 1 / Вибірка:", font=("Times New Roman",12)).grid(row=4,column=0,sticky="w",pady=(10,2))
         self.e1 = tk.Text(frm, width=50, height=4, font=("Times New Roman",11))
         self.e1.grid(row=5, column=0, columnspan=2, sticky="ew")
-        tk.Label(frm, text="(comma or space or newline separated)", font=("Times New Roman",10), fg="#666").grid(row=6,column=0,sticky="w")
+        tk.Label(frm, text="(через кому, пробіл або кожне значення з нового рядка)", font=("Times New Roman",10), fg="#666").grid(row=6,column=0,sticky="w")
 
-        self.lbl2 = tk.Label(frm, text="Group 2:", font=("Times New Roman",12))
+        self.lbl2 = tk.Label(frm, text="Група 2:", font=("Times New Roman",12))
         self.lbl2.grid(row=7,column=0,sticky="w",pady=(8,2))
         self.e2 = tk.Text(frm, width=50, height=4, font=("Times New Roman",11))
         self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
 
-        self.lbl_mu = tk.Label(frm, text="Known mean (μ₀):", font=("Times New Roman",12))
+        self.lbl_mu = tk.Label(frm, text="Відоме середнє (μ₀):", font=("Times New Roman",12))
         self.e_mu = tk.Entry(frm, width=12, font=("Times New Roman",12)); self.e_mu.insert(0,"0")
 
         # alpha
@@ -3062,7 +3207,7 @@ class TTestWindow:
         ttk.Combobox(frm, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=8).grid(row=11, column=1, sticky="w")
 
-        tk.Button(frm, text="▶ Run", bg="#c62828", fg="white", font=("Times New Roman",13),
+        tk.Button(frm, text="▶ Виконати", bg="#c62828", fg="white", font=("Times New Roman",13),
                   command=self._run).grid(row=12, column=0, pady=12, sticky="w")
         self.result_var = tk.StringVar()
         tk.Label(frm, textvariable=self.result_var, font=("Times New Roman",11),
@@ -3184,21 +3329,21 @@ def detect_outliers_iqr(arr):
 # REGRESSION MODULE
 # ═══════════════════════════════════════════════════════════════
 class RegressionWindow:
-    MODELS = ["Linear:  y = a + bx",
-              "Quadratic:  y = a + bx + cx²",
-              "Cubic:  y = a + bx + cx² + dx³",
-              "Power:  y = a·xᵇ",
-              "Exponential:  y = a·eᵇˣ",
-              "Logarithmic:  y = a + b·ln(x)",
-              "Logistic (4-param):  y = d + (a-d)/(1+(x/c)ᵇ)"]
+    MODELS = ["Лінійна:  y = a + bx",
+              "Квадратична:  y = a + bx + cx²",
+              "Кубічна:  y = a + bx + cx² + dx³",
+              "Степенева:  y = a·xᵇ",
+              "Експоненційна:  y = a·eᵇˣ",
+              "Логарифмічна:  y = a + b·ln(x)",
+              "Логістична (4-пар.):  y = d + (a-d)/(1+(x/c)ᵇ)"]
 
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Regression Analysis")
-        self.win.geometry("1050x720"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent); self.win.title("Регресійний аналіз")
+        self.win.geometry("920x680"); set_icon(self.win); self.gs = gs; self._build()
 
     def _build(self):
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Label(top, text="Model:", font=("Times New Roman",12)).pack(side=tk.LEFT)
+        tk.Label(top, text="Модель:", font=("Times New Roman",12)).pack(side=tk.LEFT)
         self.model_var = tk.StringVar(value=self.MODELS[0])
         ttk.Combobox(top, textvariable=self.model_var, values=self.MODELS,
                      state="readonly", width=44, font=("Times New Roman",11)).pack(side=tk.LEFT, padx=6)
@@ -3206,9 +3351,9 @@ class RegressionWindow:
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
-        tk.Button(top, text="▶ Run", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
                   font=("Times New Roman",13), command=self._run).pack(side=tk.LEFT, padx=10)
-        tk.Button(top, text="Paste data", command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Вставити дані", command=self._paste).pack(side=tk.LEFT, padx=4)
 
         # data entry
         mid = tk.Frame(self.win); mid.pack(fill=tk.X, padx=8)
@@ -3216,7 +3361,7 @@ class RegressionWindow:
             tk.Label(mid, text=nm, font=("Times New Roman",11,"bold")).grid(row=0, column=j, padx=4)
         self.tx = tk.Text(mid, width=36, height=14, font=("Times New Roman",11)); self.tx.grid(row=1,column=0,padx=4,pady=2)
         self.ty = tk.Text(mid, width=36, height=14, font=("Times New Roman",11)); self.ty.grid(row=1,column=1,padx=4,pady=2)
-        tk.Label(mid, text="Enter values one per line or comma-separated",
+        tk.Label(mid, text="Вводьте одне значення на рядок або через кому",
                  font=("Times New Roman",10), fg="#666").grid(row=2,column=0,columnspan=2,sticky="w",padx=4)
 
         # result area
@@ -3375,23 +3520,23 @@ class RegressionWindow:
 # ═══════════════════════════════════════════════════════════════
 class SampleSizeWindow:
     def __init__(self, parent):
-        self.win = tk.Toplevel(parent); self.win.title("Sample Size Calculator")
-        self.win.geometry("600x520"); self.win.resizable(False, False); set_icon(self.win)
+        self.win = tk.Toplevel(parent); self.win.title("Калькулятор розміру вибірки та потужності")
+        self.win.geometry("580x500"); self.win.resizable(False, False); set_icon(self.win)
         self._build()
 
     def _build(self):
         frm = tk.Frame(self.win, padx=16, pady=14); frm.pack(fill=tk.BOTH, expand=True)
-        tk.Label(frm, text="Sample Size & Statistical Power Calculator",
+        tk.Label(frm, text="Калькулятор розміру вибірки та статистичної потужності",
                  font=("Times New Roman",13,"bold")).grid(row=0,column=0,columnspan=3,pady=(0,12))
         rf = ("Times New Roman",12)
         params = [
-            ("Design:", None, "design"),
-            ("α (significance level):", "0.05", "alpha"),
-            ("Power (1-β):", "0.80", "power"),
-            ("Expected difference (δ):", "", "delta"),
-            ("Standard deviation (σ):", "", "sigma"),
-            ("Number of treatments (k):", "3", "k"),
-            ("Number of replications (r) — leave blank to calculate:", "", "r"),
+            ("Дизайн:", None, "design"),
+            ("α (рівень значущості):", "0.05", "alpha"),
+            ("Потужність (1-β):", "0.80", "power"),
+            ("Очікувана різниця (δ):", "", "delta"),
+            ("Стандартне відхилення (σ):", "", "sigma"),
+            ("Кількість варіантів (k):", "3", "k"),
+            ("Кількість повторностей (r) — залиште порожнім для розрахунку:", "", "r"),
         ]
         self.vars = {}
         row_i = 1
@@ -3406,7 +3551,7 @@ class SampleSizeWindow:
                 tk.Entry(frm, textvariable=var, width=14, font=rf).grid(row=row_i,column=1,sticky="w",padx=6)
             self.vars[key] = var; row_i += 1
 
-        tk.Button(frm, text="▶ Calculate", bg="#c62828", fg="white", font=rf,
+        tk.Button(frm, text="▶ Розрахувати", bg="#c62828", fg="white", font=rf,
                   command=self._calc).grid(row=row_i, column=0, columnspan=2, pady=14)
         self.res_var = tk.StringVar()
         tk.Label(frm, textvariable=self.res_var, font=("Times New Roman",11),
@@ -3475,22 +3620,22 @@ class SampleSizeWindow:
 # ═══════════════════════════════════════════════════════════════
 class ClusterWindow:
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Cluster Analysis")
-        self.win.geometry("1000x680"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent); self.win.title("Кластерний аналіз")
+        self.win.geometry("900x620"); set_icon(self.win); self.gs = gs; self._build()
 
     def _build(self):
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Label(top, text="Method:", font=("Times New Roman",12)).pack(side=tk.LEFT)
+        tk.Label(top, text="Метод:", font=("Times New Roman",12)).pack(side=tk.LEFT)
         self.meth_var = tk.StringVar(value="ward")
         ttk.Combobox(top, textvariable=self.meth_var,
                      values=["ward","complete","average","single"],
                      state="readonly", width=14).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="k (clusters):", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+        tk.Label(top, text="k (кластерів):", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
         self.k_var = tk.IntVar(value=3)
         tk.Spinbox(top, from_=2, to=20, textvariable=self.k_var, width=5).pack(side=tk.LEFT)
-        tk.Button(top, text="▶ Cluster", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Кластеризувати", bg="#c62828", fg="white",
                   font=("Times New Roman",12), command=self._run).pack(side=tk.LEFT, padx=8)
-        tk.Label(top, text="First row = variable names; first column = object names",
+        tk.Label(top, text="Перший рядок = назви змінних; перша колонка = назви об'єктів",
                  font=("Times New Roman",10), fg="#666").pack(side=tk.LEFT)
 
         # data entry
@@ -3511,7 +3656,13 @@ class ClusterWindow:
             for j in range(self.cols_n):
                 e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
                 e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
+                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
+                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
+                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
+                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
             self.entries.append(row_)
+        _bind_nav(self.entries, self.win)
 
     def _run(self):
         from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
@@ -3545,7 +3696,7 @@ class ClusterWindow:
         labels_cl = fcluster(Z, k, criterion='maxclust')
 
         if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
-        win = tk.Toplevel(self.win); win.title("Cluster Analysis — Dendrogram"); win.geometry("1000x620")
+        win = tk.Toplevel(self.win); win.title("Кластерний аналіз — Дендрограма"); win.geometry("1000x620")
         fig = Figure(figsize=(10, 5.5), dpi=100)
         ax = fig.add_subplot(111)
         dendrogram(Z, labels=obj_names, ax=ax, leaf_rotation=90, leaf_font_size=9,
@@ -3565,15 +3716,15 @@ class ClusterWindow:
 # ═══════════════════════════════════════════════════════════════
 class PCAWindow:
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Principal Component Analysis (PCA)")
-        self.win.geometry("1050x700"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent); self.win.title("Аналіз головних компонент (PCA)")
+        self.win.geometry("960x660"); set_icon(self.win); self.gs = gs; self._build()
 
     def _build(self):
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Run PCA", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Запустити PCA", bg="#c62828", fg="white",
                   font=("Times New Roman",13), command=self._run).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Paste data", command=self._paste).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="First row = variable names; first column = object labels (optional)",
+        tk.Button(top, text="Вставити дані", command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="Перший рядок = назви змінних; перша колонка = мітки об'єктів (необов'язково)",
                  font=("Times New Roman",10), fg="#666").pack(side=tk.LEFT, padx=8)
 
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -3593,7 +3744,13 @@ class PCAWindow:
             for j in range(self.cols_n):
                 e = tk.Entry(self.inner, width=11, font=("Times New Roman",11))
                 e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
+                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
+                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
+                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
+                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
             self.entries.append(row_)
+        _bind_nav(self.entries, self.win)
 
     def _paste(self):
         w = self.win.focus_get()
@@ -3645,7 +3802,7 @@ class PCAWindow:
         n_comp = min(len(eigenvalues), X.shape[1])
 
         if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
-        win = tk.Toplevel(self.win); win.title("PCA Results"); win.geometry("1100x700")
+        win = tk.Toplevel(self.win); win.title("PCA — Результати"); win.geometry("1100x700")
 
         fig = Figure(figsize=(11, 6), dpi=100)
         # Scree plot
@@ -3692,7 +3849,7 @@ class PCAWindow:
         # Summary table
         summary_rows = [[f"PC{i+1}", fmt(eigenvalues[i],4), fmt(explained[i],2),
                          fmt(float(np.sum(explained[:i+1])),2)] for i in range(n_comp)]
-        frm, _ = make_tv(win, ["Component","Eigenvalue","Variance %","Cumulative %"], summary_rows)
+        frm, _ = make_tv(win, ["Компонент","Власне значення","% дисперсії","Кумулятивний %"], summary_rows)
         frm.pack(fill=tk.X, padx=8, pady=4)
 
 
@@ -3701,14 +3858,14 @@ class PCAWindow:
 # ═══════════════════════════════════════════════════════════════
 class RepeatedMeasuresWindow:
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Repeated Measures ANOVA")
-        self.win.geometry("950x700"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent); self.win.title("Дисперсійний аналіз повторних вимірювань")
+        self.win.geometry("880x640"); set_icon(self.win); self.gs = gs; self._build()
 
     def _build(self):
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Label(top, text="Columns = time points / conditions  |  Rows = subjects",
+        tk.Label(top, text="Стовпці = часові точки / умови  |  Рядки = суб'єкти",
                  font=("Times New Roman",11)).pack(side=tk.LEFT)
-        tk.Button(top, text="▶ Analyze", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
                   font=("Times New Roman",12), command=self._run).pack(side=tk.RIGHT, padx=4)
 
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -3731,7 +3888,13 @@ class RepeatedMeasuresWindow:
             for j in range(self.cols_n):
                 e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
                 e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
+                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
+                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
+                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
+                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
             self.entries.append(row_)
+        _bind_nav(self.entries, self.win)
 
     def _run(self):
         # Read data
@@ -3788,7 +3951,7 @@ class RepeatedMeasuresWindow:
         min_sw = min((p for p in sw_ps if not math.isnan(p)), default=np.nan)
 
         if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
-        win = tk.Toplevel(self.win); win.title("Repeated Measures — Results"); win.geometry("1000x680")
+        win = tk.Toplevel(self.win); win.title("Повторні виміри — Результати"); win.geometry("1000x680")
 
         res_txt = (f"Repeated Measures ANOVA\n"
                    f"Subjects: {n},  Time points: {k}\n\n"
@@ -3827,7 +3990,7 @@ class RepeatedMeasuresWindow:
                     ph_rows.append([f"{time_names[j]} vs {time_names[jj]}",
                                     fmt(float(st),4), fmt(p_adj,4),
                                     "sig. " + sig_mark(p_adj) if p_adj < ALPHA else "–"])
-            frm, _ = make_tv(win, ["Pair","t","p (Bonf.)","Result"], ph_rows)
+            frm, _ = make_tv(win, ["Пара","t","p (Bonf.)","Висновок"], ph_rows)
             frm.pack(fill=tk.X, padx=8, pady=4)
 
 
@@ -3836,14 +3999,14 @@ class RepeatedMeasuresWindow:
 # ═══════════════════════════════════════════════════════════════
 class StabilityWindow:
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Stability Analysis (GxE)")
-        self.win.geometry("1100x720"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent); self.win.title("Аналіз стабільності (GxE)")
+        self.win.geometry("980x660"); set_icon(self.win); self.gs = gs; self._build()
 
     def _build(self):
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Label(top, text="Rows = Genotypes/Varieties  |  Columns = Environments",
+        tk.Label(top, text="Рядки = Генотипи/Сорти  |  Стовпці = Середовища",
                  font=("Times New Roman",11)).pack(side=tk.LEFT)
-        tk.Button(top, text="▶ Analyze", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
                   font=("Times New Roman",12), command=self._run).pack(side=tk.RIGHT, padx=4)
 
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -3855,7 +4018,7 @@ class StabilityWindow:
         self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
 
         self.env_entries = []
-        tk.Label(self.inner, text="Genotype", relief=tk.RIDGE, width=14,
+        tk.Label(self.inner, text="Генотип", relief=tk.RIDGE, width=14,
                  bg="#f0f0f0", font=("Times New Roman",11)).grid(row=0, column=0, padx=1, pady=1)
         for j in range(1, self.cols_n):
             e = tk.Entry(self.inner, width=12, bg="#e8f0ff", font=("Times New Roman",11))
@@ -3867,7 +4030,13 @@ class StabilityWindow:
             for j in range(self.cols_n):
                 e = tk.Entry(self.inner, width=12 if j==0 else 10, font=("Times New Roman",11))
                 e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
+                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
+                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
+                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
+                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
             self.entries.append(row_)
+        _bind_nav(self.entries, self.win)
 
     def _run(self):
         env_names = [e.get().strip() or f"E{i+1}" for i, e in enumerate(self.env_entries)]
@@ -3908,8 +4077,8 @@ class StabilityWindow:
             s2d = ss_dev / max(len(yi)-2, 1)  # variance of deviations
             gen_mean = float(np.nanmean(y))
             er_rows.append([gen_names[i], fmt(gen_mean,3), fmt(b_i,4), fmt(s2d,4),
-                            "Stable (bi≈1, s²d≈0)" if abs(b_i-1)<0.2 and s2d<0.1 else
-                            "Responsive" if b_i > 1.2 else "Conservative" if b_i < 0.8 else "Average"])
+                            "Стабільний (bi≈1, s²d≈0)" if abs(b_i-1)<0.2 and s2d<0.1 else
+                            "Адаптивний" if b_i > 1.2 else "Консервативний" if b_i < 0.8 else "Середній"])
 
         # ── GGE Biplot via SVD ──────────────────────────────────
         # center by environment means
@@ -3922,7 +4091,7 @@ class StabilityWindow:
         var_exp = S**2 / np.sum(S**2) * 100
 
         if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
-        win = tk.Toplevel(self.win); win.title("Stability Analysis — Results"); win.geometry("1150x720")
+        win = tk.Toplevel(self.win); win.title("Аналіз стабільності — Результати"); win.geometry("1150x720")
 
         fig = Figure(figsize=(11, 5.5), dpi=100)
         # GGE biplot
@@ -3951,7 +4120,7 @@ class StabilityWindow:
 
         fig.tight_layout()
         cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        frm, _ = make_tv(win, ["Genotype","Mean","bi","s²d","Stability class"], er_rows)
+        frm, _ = make_tv(win, ["Генотип","Середнє","bi","s²d","Клас стабільності"], er_rows)
         frm.pack(fill=tk.X, padx=8, pady=4)
 
 
@@ -3973,22 +4142,22 @@ class AncovaWindow:
     """
     def __init__(self, parent, gs):
         self.win = tk.Toplevel(parent)
-        self.win.title("ANCOVA — Analysis of Covariance")
-        self.win.geometry("1100x740"); set_icon(self.win)
+        self.win.title("ANCOVA — Коваріаційний аналіз")
+        self.win.geometry("980x680"); set_icon(self.win)
         self.gs = gs; self._build()
 
     def _build(self):
         # ── Menu ──
         mb = tk.Menu(self.win); self.win.config(menu=mb)
         hm = tk.Menu(mb, tearoff=0)
-        hm.add_command(label="What is ANCOVA?", command=self._help)
-        mb.add_cascade(label="Help", menu=hm)
+        hm.add_command(label="Що таке ANCOVA?", command=self._help)
+        mb.add_cascade(label="Довідка", menu=hm)
 
         # ── Toolbar ──
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Run ANCOVA", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Виконати ANCOVA", bg="#c62828", fg="white",
                   font=("Times New Roman", 13), command=self._run).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Paste from clipboard",
+        tk.Button(top, text="Вставити з буфера",
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(12, 2))
         self.alpha_var = tk.StringVar(value="0.05")
@@ -4015,7 +4184,7 @@ class AncovaWindow:
         canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
 
-        col_hints = ["Group", "Covariate 1", "Covariate 2", "Covariate 3", "Covariate 4", "Dependent Y"]
+        col_hints = ["Група", "Коваріата 1", "Коваріата 2", "Коваріата 3", "Коваріата 4", "Залежна Y"]
         self.header_entries = []
         for j in range(self.n_cols):
             e = tk.Entry(self.inner, width=14, bg="#dce8ff", font=("Times New Roman", 11))
@@ -4030,9 +4199,10 @@ class AncovaWindow:
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
+        _bind_nav(self.entries, self.win)
 
     def _help(self):
-        messagebox.showinfo("What is ANCOVA?",
+        messagebox.showinfo("Що таке ANCOVA?",
             "Analysis of Covariance (ANCOVA) combines ANOVA and linear regression.\n\n"
             "It tests group differences on a dependent variable while statistically\n"
             "controlling for the effect of one or more continuous covariates.\n\n"
@@ -4067,7 +4237,7 @@ class AncovaWindow:
         raw = [[e.get().strip() for e in row] for row in self.entries]
         raw = [r for r in raw if any(v for v in r)]
         if not raw:
-            messagebox.showwarning("No data", "Please enter data first."); return
+            messagebox.showwarning("Немає даних", "Please enter data first."); return
 
         groups = []; cov_data = [[] for _ in cov_cols]; y_data = []
         skipped = 0
@@ -4090,14 +4260,14 @@ class AncovaWindow:
         n = len(y_data)
         # ── Guard 1: minimum observations ──
         if n < 6:
-            messagebox.showwarning("Too few observations",
+            messagebox.showwarning("Замало спостережень",
                 f"ANCOVA requires at least 6 complete observations.\nFound: {n}."); return
 
         # ── Guard 2: at least 2 groups ──
         group_levels = first_seen(groups)
         k = len(group_levels)
         if k < 2:
-            messagebox.showwarning("Only one group",
+            messagebox.showwarning("Лише одна група",
                 "ANCOVA requires at least 2 groups.\n"
                 "Check that the Group column contains different labels."); return
 
@@ -4106,7 +4276,7 @@ class AncovaWindow:
         grp_counts = Counter(groups)
         min_grp = min(grp_counts.values())
         if min_grp < 2:
-            messagebox.showwarning("Group too small",
+            messagebox.showwarning("Занадто мала група",
                 f"Each group needs ≥ 2 observations.\n"
                 f"Smallest group has {min_grp} observation(s)."); return
 
@@ -4118,7 +4288,7 @@ class AncovaWindow:
             for i in range(len(cov_cols)):
                 for j in range(i+1, len(cov_cols)):
                     if abs(corr_matrix[i,j]) > 0.95:
-                        ans = messagebox.askyesno("High multicollinearity",
+                        ans = messagebox.askyesno("Висока мультиколінеарність",
                             f"Covariates '{cov_cols[i]}' and '{cov_cols[j]}' are highly correlated\n"
                             f"(r = {corr_matrix[i,j]:.3f}).\n\n"
                             "This may cause unstable estimates (multicollinearity problem).\n"
@@ -4187,7 +4357,7 @@ class AncovaWindow:
         for lv in group_levels[1:]:
             d = np.array([1. if g == lv else 0. for g in groups])
             X_parts.append(d); g_idx.append(idx_cur); idx_cur += 1
-        ts["Group"] = g_idx
+        ts["Група"] = g_idx
         # covariates
         for cov_name, cov_arr in zip(cov_cols, covs_arr):
             cov_norm = (cov_arr - np.mean(cov_arr)) / (np.std(cov_arr, ddof=1) + 1e-12)
@@ -4210,11 +4380,11 @@ class AncovaWindow:
             F  = ms / mse if (not math.isnan(mse) and mse > 0) else np.nan
             p  = float(1 - f_dist.cdf(F, df, dfe)) if not math.isnan(F) else np.nan
             mark = sig_mark(p) if not math.isnan(p) else ""
-            concl = f"significant {mark}" if mark else ("ns" if not math.isnan(p) else "–")
+            concl = f"significant {mark}" if mark else ("незнач." if not math.isnan(p) else "–")
             anova_rows.append([term, fmt(ss,4), str(df), fmt(ms,4), fmt(F,4), fmt(p,4), concl])
 
-        anova_rows.append(["Residual", fmt(sse,4), str(dfe), fmt(mse,4), "", "", ""])
-        anova_rows.append(["Total",    fmt(sst,4), str(n-1), "", "", "", ""])
+        anova_rows.append(["Залишок", fmt(sse,4), str(dfe), fmt(mse,4), "", "", ""])
+        anova_rows.append(["Загальна",    fmt(sst,4), str(n-1), "", "", "", ""])
 
         # ── Guard 7: Normality of residuals ──
         try: W_res, p_res = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
@@ -4267,7 +4437,7 @@ class AncovaWindow:
     def _show_results(self, anova_rows, adj_means, raw_means, group_levels,
                       residuals, W_res, p_res, lev_F, lev_p,
                       slope_details, R2, mse, dfe, alpha, y, yhat, groups):
-        win = tk.Toplevel(self.win); win.title("ANCOVA — Results")
+        win = tk.Toplevel(self.win); win.title("ANCOVA — Результати")
         win.geometry("1150x760"); set_icon(win)
 
         # scrollable body
@@ -4288,7 +4458,7 @@ class AncovaWindow:
         def _tbl(headers, rows):
             f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=(2,8))
 
-        _head("ANCOVA — Analysis of Covariance")
+        _head("ANCOVA — Коваріаційний аналіз")
         _txt(f"R² = {fmt(R2,4)}   |   MSE = {fmt(mse,4)}   |   df_error = {dfe}")
 
         # Assumption checks
@@ -4310,13 +4480,13 @@ class AncovaWindow:
 
         # ANOVA table
         _head("ANCOVA Table (Type III SS)")
-        _tbl(["Source","SS","df","MS","F","p","Result"], anova_rows)
+        _tbl(["Джерело","SS","df","MS","F","p","Висновок"], anova_rows)
 
         # Adjusted means
         _head("Group Means")
         means_rows = [[lv, fmt(raw_means[lv],4), fmt(adj_means[lv],4)]
                       for lv in group_levels]
-        _tbl(["Group","Unadjusted Mean","Adjusted Mean (LS Mean)"], means_rows)
+        _tbl(["Група","Unadjusted Mean","Adjusted Mean (LS Mean)"], means_rows)
 
         # Pairwise comparisons of adjusted means (Bonferroni t-test on LS means)
         # SE for difference between two LS means ≈ sqrt(MSE * 2/n_harm)
@@ -4335,8 +4505,8 @@ class AncovaWindow:
             p_adj = min(1., p_raw * m_tests)
             mark  = sig_mark(p_adj)
             ph_rows.append([f"{lv1} vs {lv2}", fmt(diff,4), fmt(t_val,4), fmt(p_adj,4),
-                             f"significant {mark}" if mark else "ns"])
-        _tbl(["Comparison","Difference","t","p (Bonf.)","Result"], ph_rows)
+                             f"significant {mark}" if mark else "незнач."])
+        _tbl(["Порівняння","Різниця","t","p (Bonf.)","Висновок"], ph_rows)
 
         # Plots
         if HAS_MPL:
@@ -4376,20 +4546,20 @@ class ManovaWindow:
     """
     def __init__(self, parent, gs):
         self.win = tk.Toplevel(parent)
-        self.win.title("MANOVA — Multivariate Analysis of Variance")
-        self.win.geometry("1150x760"); set_icon(self.win)
+        self.win.title("MANOVA — Багатовимірний дисперсійний аналіз")
+        self.win.geometry("1020x700"); set_icon(self.win)
         self.gs = gs; self._build()
 
     def _build(self):
         mb = tk.Menu(self.win); self.win.config(menu=mb)
         hm = tk.Menu(mb, tearoff=0)
-        hm.add_command(label="What is MANOVA?", command=self._help)
-        mb.add_cascade(label="Help", menu=hm)
+        hm.add_command(label="Що таке MANOVA?", command=self._help)
+        mb.add_cascade(label="Довідка", menu=hm)
 
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Run MANOVA", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Виконати MANOVA", bg="#c62828", fg="white",
                   font=("Times New Roman", 13), command=self._run).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Paste from clipboard", command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Вставити з буфера", command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(12,2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
@@ -4411,7 +4581,7 @@ class ManovaWindow:
         self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
 
-        col_hints = ["Group","DV 1","DV 2","DV 3","DV 4","DV 5","DV 6","DV 7"]
+        col_hints = ["Група","ЗЗ 1","ЗЗ 2","ЗЗ 3","ЗЗ 4","ЗЗ 5","ЗЗ 6","ЗЗ 7"]
         self.header_entries = []
         for j in range(self.n_cols):
             e = tk.Entry(self.inner, width=13, bg="#dce8ff", font=("Times New Roman",11))
@@ -4424,10 +4594,16 @@ class ManovaWindow:
             for j in range(self.n_cols):
                 e = tk.Entry(self.inner, width=13, font=("Times New Roman",11))
                 e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
+                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
+                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
+                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
+                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
+                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
             self.entries.append(row_)
+        _bind_nav(self.entries, self.win)
 
     def _help(self):
-        messagebox.showinfo("What is MANOVA?",
+        messagebox.showinfo("Що таке MANOVA?",
             "Multivariate Analysis of Variance (MANOVA) simultaneously tests\n"
             "whether group means differ across multiple dependent variables.\n\n"
             "Advantages over multiple ANOVAs:\n"
@@ -4511,7 +4687,7 @@ class ManovaWindow:
         # ── Parse data ──
         raw = [[e.get().strip() for e in row] for row in self.entries]
         raw = [r for r in raw if any(v for v in r)]
-        if not raw: messagebox.showwarning("No data","Please enter data."); return
+        if not raw: messagebox.showwarning("Немає даних","Please enter data."); return
 
         groups = []; dv_rows = []; skipped = 0
         for row in raw:
@@ -4530,11 +4706,11 @@ class ManovaWindow:
         if skipped: messagebox.showinfo("Note", f"{skipped} row(s) skipped.")
 
         n = len(dv_rows)
-        if n < 4: messagebox.showwarning("Too few data","Need ≥ 4 complete observations."); return
+        if n < 4: messagebox.showwarning("Замало даних","Need ≥ 4 complete observations."); return
 
         min_dv = min(len(r) for r in dv_rows)
         if min_dv < 2:
-            messagebox.showwarning("Too few DVs","Need at least 2 dependent variables."); return
+            messagebox.showwarning("Замало залежних змінних","Need at least 2 dependent variables."); return
 
         # Align all rows to same number of DVs
         Y = np.array([r[:min_dv] for r in dv_rows], dtype=float)
@@ -4546,7 +4722,7 @@ class ManovaWindow:
 
         # ── Guard 1: at least 2 groups ──
         if k < 2:
-            messagebox.showwarning("Only one group","MANOVA requires ≥ 2 groups."); return
+            messagebox.showwarning("Лише одна група","MANOVA requires ≥ 2 groups."); return
 
         # ── Guard 2: n > p per group (critical!) ──
         groups_data = {}
@@ -4556,7 +4732,7 @@ class ManovaWindow:
         for lv in group_levels:
             n_lv = len(groups_data[lv])
             if n_lv <= p:
-                messagebox.showerror("n ≤ p VIOLATION",
+                messagebox.showerror("ПОРУШЕННЯ: n ≤ p",
                     f"Group '{lv}' has {n_lv} observation(s) but {p} dependent variables.\n\n"
                     "MANOVA requires n > p (observations > DVs) in EVERY group.\n"
                     "Otherwise the within-group covariance matrix is singular\n"
@@ -4576,7 +4752,7 @@ class ManovaWindow:
                     high_corr_pairs.append((dv_names_used[i], dv_names_used[j], corr_Y[i,j]))
         if high_corr_pairs:
             details = "\n".join(f"  • '{a}' & '{b}': r={c:.3f}" for a,b,c in high_corr_pairs)
-            ans = messagebox.askyesno("High multicollinearity among DVs",
+            ans = messagebox.askyesno("Висока мультиколінеарність між ЗЗ",
                 "The following dependent variable pairs are highly correlated (|r| > 0.90):\n"
                 + details + "\n\n"
                 "High multicollinearity reduces the power of MANOVA and may lead\n"
@@ -4593,7 +4769,7 @@ class ManovaWindow:
         mv_normal = True
         if (not math.isnan(p_sk) and p_sk < alpha) or (not math.isnan(p_ku) and p_ku < alpha):
             mv_normal = False
-            ans = messagebox.askyesno("Multivariate normality violated (Mardia's test)",
+            ans = messagebox.askyesno("Порушення багатовимірної нормальності (тест Мардіа)",
                 f"Mardia's skewness:  b1p={fmt(b1p,4)},  p={fmt(p_sk,4)}\n"
                 f"Mardia's kurtosis:  b2p={fmt(b2p,4)},  p={fmt(p_ku,4)}\n\n"
                 "The multivariate normality assumption appears violated.\n"
@@ -4605,7 +4781,7 @@ class ManovaWindow:
         # ── Guard 5: Box's M test ──
         box_chi2, box_p = self._box_m_test(groups_data, group_levels)
         if not math.isnan(box_p) and box_p < 0.001:
-            ans = messagebox.askyesno("Heterogeneous covariance matrices (Box's M)",
+            ans = messagebox.askyesno("Неоднорідність коваріаційних матриць (Box M)",
                 f"Box's M: χ²={fmt(box_chi2,4)},  p={fmt(box_p,6)}\n\n"
                 "Covariance matrices differ significantly across groups.\n"
                 "Note: Box's M is extremely sensitive to non-normality.\n"
@@ -4636,12 +4812,12 @@ class ManovaWindow:
             eigenvalues = np.real(np.linalg.eigvals(EinvH))
             eigenvalues = np.sort(eigenvalues[eigenvalues > 1e-10])[::-1]
         except Exception as ex:
-            messagebox.showerror("Computation error",
+            messagebox.showerror("Помилка обчислення",
                 f"Could not compute eigenvalues: {ex}\n"
                 "Check for singular covariance matrix (n ≤ p in some group)."); return
 
         if len(eigenvalues) == 0:
-            messagebox.showerror("No valid eigenvalues",
+            messagebox.showerror("Немає дійсних власних значень",
                 "The covariance matrix is singular. Cannot compute MANOVA.\n"
                 "Ensure n > p in every group."); return
 
@@ -4694,7 +4870,7 @@ class ManovaWindow:
             F_i  = ms_b / ms_w if (not math.isnan(ms_w) and ms_w > 0) else np.nan
             p_i  = float(1 - f_dist.cdf(F_i, df_h, df_e)) if not math.isnan(F_i) else np.nan
             eta2_i = ss_b / (ss_b + ss_w) if (ss_b + ss_w) > 0 else np.nan
-            mark_bonf = "significant" if (not math.isnan(p_i) and p_i < bonf_alpha) else "ns"
+            mark_bonf = "значуще" if (not math.isnan(p_i) and p_i < bonf_alpha) else "незнач."
             univ_rows.append([dv_nm, fmt(F_i,4), fmt(p_i,4),
                               fmt(eta2_i,4), eta2_label(eta2_i),
                               f"α_Bonf = {fmt(bonf_alpha,4)}", mark_bonf])
@@ -4716,7 +4892,7 @@ class ManovaWindow:
                       univ_rows, dv_names,
                       b1p, p_sk, b2p, p_ku, box_chi2, box_p,
                       alpha, mv_normal, groups_data, group_levels, Y, p):
-        win = tk.Toplevel(self.win); win.title("MANOVA — Results")
+        win = tk.Toplevel(self.win); win.title("MANOVA — Результати")
         win.geometry("1180x800"); set_icon(win)
 
         main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
@@ -4736,7 +4912,7 @@ class ManovaWindow:
         def _tbl(headers, rows):
             f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=(2,8))
 
-        _head("MANOVA — Multivariate Analysis of Variance")
+        _head("MANOVA — Багатовимірний дисперсійний аналіз")
 
         # Assumption checks
         _head("Assumption Checks")
@@ -4751,7 +4927,7 @@ class ManovaWindow:
              "#000000" if math.isnan(box_p) or box_p >= 0.001 else "#b07000")
 
         if not mv_normal:
-            _txt("⚠ Multivariate normality violated → Pillai's Trace is most reliable statistic.",
+            _txt("⚠ Порушення багатовимірної нормальності → Pillai Trace є найнадійнішою статистикою.",
                  "#c62828")
 
         # MANOVA test statistics
@@ -4759,15 +4935,15 @@ class ManovaWindow:
         recommended = "Pillai" if not mv_normal else "Wilks"
         manova_rows = [
             ["Wilks' Lambda",       fmt(wilks_L,6), fmt(F_wilks,4), f"{int(df1_w)},{int(df2_w)}",
-             fmt(p_wilks,4), sig_mark(p_wilks), "★ standard" if recommended=="Wilks" else ""],
+             fmt(p_wilks,4), sig_mark(p_wilks), "★ стандарт" if recommended=="Wilks" else ""],
             ["Pillai's Trace",      fmt(pillai_V,6), fmt(F_pillai,4), f"{int(df1_p)},{int(df2_p)}",
-             fmt(p_pillai,4), sig_mark(p_pillai), "★ most robust" if recommended=="Pillai" else "robust"],
+             fmt(p_pillai,4), sig_mark(p_pillai), "★ найробустніша" if recommended=="Pillai" else "робастна"],
             ["Hotelling-Lawley",    fmt(hl_T,6), fmt(F_hl,4), f"{int(df1_hl)},{int(df2_hl)}",
              fmt(p_hl,4), sig_mark(p_hl), ""],
             ["Roy's GCR",           fmt(roy_GCR,6), fmt(F_roy,4), f"–",
-             fmt(p_roy,4), sig_mark(p_roy), "upper bound"],
+             fmt(p_roy,4), sig_mark(p_roy), "верхня межа"],
         ]
-        _tbl(["Statistic","Value","F","df","p","Sig.","Note"], manova_rows)
+        _tbl(["Статистика","Значення","F","df","p","Знач.","Примітка"], manova_rows)
 
         # Interpretation
         all_sig = all(not math.isnan(r[4]) and r[4] != "" and
@@ -4786,11 +4962,11 @@ class ManovaWindow:
         _head(f"Univariate Follow-Up ANOVAs (Bonferroni α = {fmt(alpha/len(dv_names),4)})")
         _txt("Note: these are only interpretable after a significant MANOVA.",
              "#666666")
-        _tbl(["Dependent Variable","F","p","partial η²","Effect","Bonf. α","Result"], univ_rows)
+        _tbl(["Залежна змінна","F","p","partial η²","Ефект","Bonf. α","Висновок"], univ_rows)
 
         # Group means per DV
         _head("Group Means per Dependent Variable")
-        means_headers = ["Group"] + dv_names
+        means_headers = ["Група"] + dv_names
         means_rows = []
         for lv in group_levels:
             row_ = [lv] + [fmt(float(np.mean(groups_data[lv][:,j])),4)
@@ -5301,10 +5477,378 @@ CV% (коефіцієнт варіації):
 
 _fill_help()
 
+# ── Розширення довідки детальними поясненнями ───────────────
+def _extend_help():
+    H = HELP_CONTENT
+
+    H["Описова статистика"] = {"icon":"📐","short":"Базові показники: середнє, SD, медіана, довірчий інтервал","text":"""
+ЩО ТАКЕ ОПИСОВА СТАТИСТИКА?
+
+Перш ніж виконувати будь-який статистичний аналіз, корисно описати ваші дані
+за допомогою базових числових характеристик. Це допомагає:
+  - Зрозуміти загальний характер даних (велике чи маленьке розкидання?)
+  - Виявити можливі помилки у введенні (занадто великі або малі значення)
+  - Оцінити чи підходять параметричні методи
+
+ЯК ВВОДИТИ ДАНІ:
+  Кожен стовпець = один показник (змінна).
+  Перша клітинка стовпця = назва показника (текст).
+  Решта клітинок = числові значення.
+
+  Приклад:
+  | Врожайність | Висота рослин | Маса 1000 зерен |
+  |    4.2      |     95.3      |      38.2       |
+  |    5.1      |    102.1      |      41.5       |
+  |    4.8      |     98.7      |      39.8       |
+
+ЩО ОЗНАЧАЄ КОЖЕН ПОКАЗНИК:
+
+n (кількість спостережень):
+  Кількість числових значень у вибірці. Чим більше n, тим надійніший аналіз.
+  Мінімально рекомендовано n >= 5 для більшості тестів.
+
+Середнє (Mean):
+  Середньоарифметичне значення. Сума всіх значень поділена на їх кількість.
+  Чутливе до викидів: одне дуже велике або мале значення може суттєво змінити середнє.
+
+SD (стандартне відхилення):
+  Показує наскільки в середньому значення відхиляються від середнього.
+  Велике SD = великий розкид = висока варіабельність.
+  Приблизно 68% значень знаходяться в межах Mean ± 1*SD (для нормального розподілу).
+
+СП (стандартна похибка середнього, SE):
+  SE = SD / sqrt(n)
+  Показує точність оцінки середнього. Чим більше n, тим менше SE.
+  Використовується для побудови довірчих інтервалів.
+
+Мін / Макс:
+  Найменше та найбільше значення у вибірці.
+  Дуже корисні для виявлення помилок введення даних!
+
+Медіана:
+  Значення що ділить впорядкований ряд навпіл: 50% значень нижче, 50% вище.
+  На відміну від середнього, стійка до викидів.
+  Якщо середнє >> медіани -> дані правоскошені.
+  Якщо середнє << медіани -> дані лівоскошені.
+
+Q1 (перший квартиль, 25-й перцентиль):
+  25% значень нижче цього рівня.
+
+Q3 (третій квартиль, 75-й перцентиль):
+  75% значень нижче цього рівня.
+  IQR = Q3 - Q1 = міжквартильний розмах (стійка міра варіабельності).
+
+CV% (коефіцієнт варіації):
+  CV = SD / Mean x 100%
+  Відносна мінливість у відсотках. Дозволяє порівнювати варіабельність
+  показників з різними одиницями виміру.
+  Для польових дослідів: CV < 10% = відмінна точність.
+
+Асиметрія (Skewness):
+  = 0: симетричний розподіл
+  > 0: правостороння асиметрія (хвіст праворуч, більшість значень ліворуч)
+  < 0: лівостороння асиметрія
+  |асиметрія| > 1 = суттєве відхилення від нормального розподілу.
+
+Ексцес (Kurtosis):
+  Показує «гостроту» розподілу порівняно з нормальним.
+  = 0: нормальний розподіл
+  > 0: гостроверхий (більше значень поблизу середнього та більше викидів)
+  < 0: пласковерхий
+
+95% Довірчий інтервал (ДІ):
+  Діапазон в якому знаходиться «справжнє» середнє генеральної сукупності
+  з ймовірністю 95%.
+  Якщо 95% ДІ двох груп не перетинаються -> є підстави вважати що середні різні.
+  Але для строгого висновку потрібен статистичний тест!
+
+SW p (Shapiro-Wilk p-значення):
+  Тест нормальності розподілу.
+  p > 0.05: дані відповідають нормальному розподілу (параметричні тести можна)
+  p <= 0.05: дані не відповідають (розгляньте непараметричні тести)
+"""}
+
+    H["t-тест"] = {"icon":"🔀","short":"Порівняння двох груп: t-тест, Велш, Манн-Уітні, Вілкоксон","text":"""
+ЩО ТАКЕ t-ТЕСТ?
+
+t-тест — це статистичний тест для порівняння ДВОХ груп або вибірок.
+Відповідає на питання: «Чи є різниця між середніми статистично значущою,
+чи це просто випадкові коливання?»
+
+ПРОГРАМА АВТОМАТИЧНО ОБИРАЄ ПРАВИЛЬНИЙ ТЕСТ:
+  1. Перевіряє нормальність розподілу (Shapiro-Wilk) для кожної групи
+  2. Перевіряє рівність дисперсій (тест Левена) для незалежних вибірок
+  3. Обирає відповідний тест:
+     Нормальний + рівні дисперсії -> t-тест Стьюдента
+     Нормальний + нерівні дисперсії -> t-тест Велша (Welch)
+     Ненормальний -> Mann-Whitney U або Wilcoxon
+
+ТРИ РЕЖИМИ:
+
+1. НЕЗАЛЕЖНІ ВИБІРКИ (2 різні групи):
+   Порівнюємо дві незалежні групи.
+   Приклад: врожайність сорту А проти сорту Б.
+   ⚠ Спостереження у групах НЕ пов'язані між собою.
+
+   Введення: Група 1 і Група 2 - числа через Enter або кому.
+
+   Якщо дані нормальні:
+     Рівні дисперсії (Левен p >= 0.05) -> t-тест Стьюдента (класичний)
+     Нерівні дисперсії (Левен p < 0.05) -> t-тест Велша (Welch) - більш точний!
+   Якщо ненормальні -> Mann-Whitney U (непараметричний аналог)
+
+2. ПАРНІ ВИБІРКИ (до/після, або парні вимірювання):
+   Ті самі об'єкти вимірюються двічі.
+   Приклад: маса рослин до і після обробки; врожайність на тих самих ділянках у 2 роки.
+   ⚠ Вимагає ОДНАКОВУ кількість спостережень у обох групах!
+   ⚠ Порядок важливий: перше значення Групи 1 пов'язане з першим Групи 2.
+
+   Якщо дані нормальні -> Парний t-тест
+   Якщо ненормальні -> Wilcoxon signed-rank
+
+3. ОДНА ВИБІРКА (проти відомого значення):
+   Перевіряємо чи середнє вибірки відрізняється від заданого значення.
+   Приклад: чи відрізняється врожайність від нормативного показника 5 т/га?
+
+   Введіть відоме середнє μ₀ і значення вибірки.
+
+ЯК ЧИТАТИ РЕЗУЛЬТАТИ:
+  t (або U, W) - значення тестової статистики
+  p - ймовірність отримати такий або більший результат якщо H₀ вірна
+  p < 0.05: різниця значуща ✓
+  p >= 0.05: різниця незначуща (але це не означає що груп немає!)
+
+РОЗМІР ЕФЕКТУ для Mann-Whitney (Cliff's delta):
+  Показує не лише ЧИ є різниця, але й НАСКІЛЬКИ вона велика.
+  |delta| < 0.147: дуже слабкий (практично немає різниці)
+  0.147-0.33: слабкий
+  0.33-0.474: середній
+  > 0.474: сильний (суттєва практична різниця)
+
+ПОРАДА:
+  Значущий p ≠ велика різниця! При великих n навіть мізерна різниця буде значущою.
+  Завжди оцінюйте розмір ефекту разом з p-значенням.
+"""}
+
+    H["Описова статистика — боксплот"] = {"icon":"📦","short":"Як читати боксплот (діаграму коробку з вусами)","text":"""
+БОКСПЛОТ (ДІАГРАМА КОРОБКА З ВУСАМИ)
+
+Боксплот — це графічний спосіб відобразити розподіл даних
+не залежно від кількості спостережень.
+
+ЯК ЧИТАТИ:
+
+        ╷  <- верхній вус: Q3 + 1.5*IQR
+        │     (або максимальне значення якщо воно менше)
+    ┌───┐
+    │   │  <- верхній край коробки: Q3 (75-й перцентиль)
+    │═══│  <- жирна лінія: МЕДІАНА (Q2, 50-й перцентиль)
+    │   │  <- нижній край коробки: Q1 (25-й перцентиль)
+    └───┘
+        │
+        ╵  <- нижній вус: Q1 - 1.5*IQR
+           (або мінімальне значення якщо воно більше)
+
+    ○   <- окремі точки: ВИКИДИ (outliers)
+           значення далі ніж 1.5*IQR від коробки
+
+ЩО ТАКЕ IQR?
+  IQR = Q3 - Q1 = міжквартильний розмах.
+  Вміщує 50% «середніх» значень.
+  Чим більша коробка, тим більший розкид «типових» значень.
+
+ЯК ПОРІВНЮВАТИ БОКСПЛОТИ:
+  Коробки не перекриваються -> можлива значуща різниця
+  Медіани дуже різні -> явна різниця між групами
+  Коробка однієї групи всередині іншої -> групи схожі
+
+ЛІТЕРИ CLD НАД БОКСПЛОТАМИ:
+  Це результат пост-хок аналізу після ANOVA.
+  Однакові літери -> немає значущої різниці між цими варіантами
+  Різні літери -> є значуща різниця (p < alpha)
+  Приклад: ab і a не різняться, ab і b не різняться, але a і b можуть різнятися!
+
+ВИКИДИ (outliers):
+  Значення далі 1.5*IQR від коробки.
+  Можуть бути:
+  - Помилками вимірювання (перевірте журнал польового досліду!)
+  - Справжніми екстремальними значеннями (посуха, хвороба тощо)
+  - Важливою біологічною інформацією
+  Не видаляйте викиди без перевірки!
+"""}
+
+    H["Кластерний аналіз — детально"] = {"icon":"🌿","short":"Ієрархічна кластеризація та дендрограма","text":"""
+КЛАСТЕРНИЙ АНАЛІЗ — ДЕТАЛЬНЕ ПОЯСНЕННЯ
+
+Кластерний аналіз групує об'єкти (сорти, проби, ділянки) так,
+щоб схожі між собою опинились в одному кластері.
+
+КОЛИ ЗАСТОСОВУВАТИ:
+  ✓ Класифікація сортів за комплексом ознак
+  ✓ Групування ґрунтових проб за хімічним складом
+  ✓ Виявлення природних груп у даних без попередньої класифікації
+
+ВВЕДЕННЯ ДАНИХ:
+  Перший стовпець: назва об'єкта (сорт, зразок тощо)
+  Решта стовпців: числові ознаки (показники)
+  Перший рядок: назви показників
+
+  Приклад:
+  | Сорт    | Висота | Врожайн. | Стійкість |
+  | Поліська|  95.3  |   5.8    |    7.2    |
+  | Київська| 102.1  |   6.4    |    8.1    |
+  | Одеська |  88.5  |   5.1    |    6.8    |
+
+  Програма автоматично СТАНДАРТИЗУЄ дані (z-оцінки) щоб показники
+  з різними одиницями виміру мали однаковий вплив.
+
+МЕТОДИ ЗЧЕПЛЕННЯ (linkage):
+  ward:      Мінімізує внутрішньокластерну дисперсію.
+             Найпопулярніший метод, зазвичай дає найкращі результати. ✓
+  complete:  Дистанція між найдальшими об'єктами кластерів.
+             Дає компактні кластери однакового розміру.
+  average:   Середня дистанція між всіма парами.
+             Компроміс між ward і complete.
+  single:    Дистанція між найближчими об'єктами.
+             Схильний до «ефекту ланцюга» (довгі ланцюжкові кластери).
+
+ЯК ЧИТАТИ ДЕНДРОГРАМУ:
+  Вертикальна вісь = відстань (несхожість).
+  Гілки зливаються на рівні що відповідає відстані між кластерами.
+  Чим вища точка злиття, тим менш схожі ці кластери.
+
+  Щоб отримати k кластерів: проведіть горизонтальну лінію на відповідній висоті
+  так щоб перетнути k вертикальних гілок.
+
+ВИБІР КІЛЬКОСТІ КЛАСТЕРІВ k:
+  k задається вручну. Як обрати?
+  - Дивіться на дендрограму: де є великий «стрибок» у висоті злиття -> там природна межа
+  - k = кількість природних груп у вашому досліді (сорти різного типу, ґрунтові зони тощо)
+  - Типово для агрономічних досліджень: k = 2-5
+
+КОЛІРНЕ КОДУВАННЯ НА ДЕНДРОГРАМІ:
+  Різні кольори = різні кластери.
+  Горизонтальна пунктирна лінія показує поріг відсікання для k кластерів.
+"""}
+
+    H["PCA — детально"] = {"icon":"🔮","short":"Як читати biplot та scree plot аналізу головних компонент","text":"""
+АНАЛІЗ ГОЛОВНИХ КОМПОНЕНТ (PCA) — ДЕТАЛЬНО
+
+Уявіть що у вас є 10 показників для кожного сорту.
+Це важко уявити і проаналізувати. PCA стискає цю інформацію
+до 2-3 нових «узагальнених» показників (головних компонент)
+які описують більшу частину різноманітності у ваших даних.
+
+КОЛИ ЗАСТОСОВУВАТИ:
+  ✓ Багато показників (> 5-7) для кожного об'єкта
+  ✓ Хочете виявити природне групування об'єктів
+  ✓ Хочете зрозуміти які показники «ходять разом»
+  ✓ Як крок перед MANOVA якщо n <= p
+
+ВВЕДЕННЯ ДАНИХ:
+  Перша колонка: мітка об'єкта (необов'язково, назва сорту тощо)
+  Решта колонок: числові показники
+  Перший рядок: назви показників
+
+SCREE PLOT (ліворуч):
+  Стовпчасти: % дисперсії пояснений кожною компонентою.
+  Лінія (червона): кумулятивний % пояснення.
+  Горизонтальна пунктирна: 80% поріг.
+
+  Скільки компонент залишити? «Правило ліктя»:
+  Знайдіть точку де графік різко змінює нахил (стає плоским) ->
+  це і є оптимальна кількість компонент.
+  Зазвичай: PC1+PC2 разом пояснюють 70-85% -> достатньо для аналізу.
+
+BIPLOT (посередині):
+  Поєднує розташування об'єктів (точки) і змінних (стрілки) на одному графіку.
+
+  Точки (об'єкти/сорти):
+    Близькі точки = схожі об'єкти за всім комплексом показників.
+    Далекі точки = дуже різні об'єкти.
+    Кластери точок = природні групи.
+
+  Стрілки (змінні/показники):
+    Довга стрілка = показник добре описується цими компонентами.
+    Напрямок стрілки = в якому напрямку зростає цей показник.
+    Стрілки в одному напрямку = показники корелюють (ростуть разом).
+    Стрілки протилежних напрямків = показники обернено корельовані.
+    Стрілки під прямим кутом = показники не пов'язані.
+
+    Об'єкт близький до стрілки = він має відносно більше значення цього показника.
+
+ТЕПЛОВА КАРТА НАВАНТАЖЕНЬ (праворуч):
+  Показує як кожен вихідний показник «вкладається» в кожну головну компоненту.
+  Великі значення (темно-зелені або темно-червоні) = сильний зв'язок.
+  PC1 зазвичай = «загальний розмір» або «загальна продуктивність».
+  PC2 = наступна за важливістю вісь незалежна від PC1.
+"""}
+
+    H["Повторні виміри ANOVA"] = {"icon":"⏱️","short":"Аналіз динамічних вимірювань одних і тих самих об'єктів","text":"""
+ДИСПЕРСІЙНИЙ АНАЛІЗ ПОВТОРНИХ ВИМІРЮВАНЬ
+
+КОЛИ ЗАСТОСОВУВАТИ:
+  Одні й ті самі суб'єкти (рослини, тварини, ділянки) вимірюються КІЛЬКА РАЗІВ:
+  - У різні моменти часу (висота рослин через кожні 2 тижні)
+  - За різних умов (доза добрив A, потім B, потім C)
+  - До і після (більш ніж 2 точки -> потрібен повторний ANOVA; якщо 2 точки -> парний t-тест)
+
+  ✓ Динаміка росту рослин
+  ✓ Зміна вмісту поживних речовин по фазах вегетації
+  ✓ Відповідь на послідовні обробки
+
+  ⚠ ВІДМІНА від звичайного ANOVA: тут спостереження НЕ незалежні
+  (одна рослина вимірюється кілька разів -> між вимірами є зв'язок).
+
+ВВЕДЕННЯ ДАНИХ:
+  Рядки = суб'єкти (рослини, ділянки тощо)
+  Стовпці = часові точки або умови (T1, T2, T3 ...)
+  Перший рядок заголовків (синій) = назви часових точок
+
+  Приклад (висота рослин, см):
+  | Суб'єкт | Тиждень1 | Тиждень2 | Тиждень3 | Тиждень4 |
+  | Ділянка1|   15.2   |   28.4   |   45.1   |   58.3   |
+  | Ділянка2|   14.8   |   26.9   |   43.7   |   56.8   |
+
+ЩО ПОКАЗУЮТЬ РЕЗУЛЬТАТИ:
+
+SS (суми квадратів):
+  SS_time = варіація пояснена часом (основний ефект)
+  SS_subj = варіація між суб'єктами (усувається з помилки -> підвищує точність!)
+  SS_error = залишкова варіація
+
+F-тест для «time»:
+  p < 0.05: є значуща динаміка (показник змінюється через час)
+  p >= 0.05: немає значущої динаміки
+
+Partial η² (розмір ефекту часу):
+  Показує яку частку варіації пояснює фактор «час».
+  > 0.14: сильний ефект (виразна динаміка).
+
+ГРАФІК MEANS ± SE:
+  Показує як середнє значення змінюється у часі.
+  SE (смужки похибок) показують точність оцінки середнього.
+  Чим менші смужки, тим точніше середнє визначено.
+
+ПОСТ-ХОК (Бонферроні):
+  Після значущого F виконуються попарні порівняння часових точок.
+  Показує ЯКІ САМЕ пари часових точок відрізняються.
+  p_adj = скориговане p (Бонферроні = множення на кількість пар).
+
+НОРМАЛЬНІСТЬ РІЗНИЦЬ:
+  Перевіряється нормальність різниць між парами часових точок.
+  p > 0.05: нормальний -> результати надійні.
+  p <= 0.05: розгляньте непараметричний аналог (тест Фрідмана).
+"""}
+
+    H["Аналіз головних компонент"] = H["PCA — детально"]
+    H["Кластерний аналіз — пояснення"] = H["Кластерний аналіз — детально"]
+    H["t-тест / Манн-Уітні"] = H["t-тест"]
+
+_extend_help()
 
 
 class HelpWindow:
-    """Інтерактивне вікно довідки."""
     def __init__(self, parent, start_topic=None):
         self.win = tk.Toplevel(parent)
         self.win.title("S.A.D. — Довідка")
@@ -5443,7 +5987,7 @@ def _SADTk_new_init(self, root):
     root.geometry("1060x640")
 
     mf = tk.Frame(root, bg="white"); mf.pack(expand=True, fill=tk.BOTH)
-    tk.Label(mf, text="S.A.D. — Statistical Analysis of Data",
+    tk.Label(mf, text="S.A.D. — Статистичний аналіз даних",
              font=("Times New Roman", 20, "bold"), fg="#000000", bg="white").pack(pady=12)
 
     # ── ANOVA block ──
