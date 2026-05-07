@@ -1282,8 +1282,21 @@ class CorrelationWindow:
         """Запит параметрів і запуск кореляційного аналізу."""
         dlg = tk.Toplevel(self.win)
         dlg.title("Параметри кореляційного аналізу")
-        dlg.resizable(False, False); set_icon(dlg)
-        frm = tk.Frame(dlg, padx=18, pady=14); frm.pack(fill=tk.BOTH, expand=True)
+        dlg.resizable(True, True); set_icon(dlg)
+
+        # ── Scrollable container ────────────────────────────────
+        outer = tk.Frame(dlg); outer.pack(fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(outer, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas_dlg = tk.Canvas(outer, yscrollcommand=vsb.set, highlightthickness=0)
+        canvas_dlg.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=canvas_dlg.yview)
+        frm = tk.Frame(canvas_dlg, padx=18, pady=14)
+        canvas_dlg.create_window((0, 0), window=frm, anchor="nw")
+        frm.bind("<Configure>",
+                 lambda e: canvas_dlg.configure(scrollregion=canvas_dlg.bbox("all")))
+        dlg.bind("<MouseWheel>",
+                 lambda e: canvas_dlg.yview_scroll(int(-1*(e.delta/120)), "units"))
+
         rb_f = ("Times New Roman", 12)
 
         # ── Розташування назв показників ──
@@ -1366,9 +1379,15 @@ class CorrelationWindow:
         tk.Button(bf, text="Скасувати", width=12,
                   font=("Times New Roman",12), command=dlg.destroy).pack(side=tk.LEFT, padx=4)
 
+        # ── Авторозмір: підганяємо вікно під вміст (але не більше екрану) ──
         dlg.update_idletasks()
-        # Примусово задати достатній розмір для всього вмісту
-        dlg.geometry("600x720")
+        frm.update_idletasks()
+        req_w = frm.winfo_reqwidth() + 30   # +scrollbar width
+        req_h = frm.winfo_reqheight() + 20
+        scr_w = dlg.winfo_screenwidth(); scr_h = dlg.winfo_screenheight()
+        win_w = min(req_w, scr_w - 80)
+        win_h = min(req_h, scr_h - 120)
+        dlg.geometry(f"{win_w}x{win_h}")
         center_win(dlg)
         dlg.bind("<Return>", lambda e: ok())
         dlg.grab_set(); self.win.wait_window(dlg)
@@ -3787,7 +3806,7 @@ class RegressionWindow:
 
         # data entry
         mid = tk.Frame(self.win); mid.pack(fill=tk.X, padx=8)
-        for j, nm in enumerate(["x (independent)","y (dependent)"]):
+        for j, nm in enumerate(["x (незалежна змінна)", "y (залежна змінна)"]):
             tk.Label(mid, text=nm, font=("Times New Roman",11,"bold")).grid(row=0, column=j, padx=4)
         self.tx = tk.Text(mid, width=36, height=14, font=("Times New Roman",11)); self.tx.grid(row=1,column=0,padx=4,pady=2)
         self.ty = tk.Text(mid, width=36, height=14, font=("Times New Roman",11)); self.ty.grid(row=1,column=1,padx=4,pady=2)
@@ -3830,26 +3849,28 @@ class RegressionWindow:
 
     def _fit_model(self, name, x, y, alpha):
         from scipy.optimize import curve_fit
+        # Зіставлення назви моделі (підтримує укр. назви з combobox)
+        n_ = name.strip().lower()
         try:
-            if name == "Linear":
+            if "лінійна" in n_ or n_ == "linear":
                 X = np.column_stack([np.ones(len(x)), x])
                 beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
                 yhat = X @ beta
                 params = {"a": beta[0], "b": beta[1]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x"
-            elif name == "Quadratic":
+            elif "квадратична" in n_ or n_ == "quadratic":
                 X = np.column_stack([np.ones(len(x)), x, x**2])
                 beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
                 yhat = X @ beta
                 params = {"a": beta[0], "b": beta[1], "c": beta[2]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x + {fmt(beta[2],4)}·x²"
-            elif name == "Cubic":
+            elif "кубічна" in n_ or n_ == "cubic":
                 X = np.column_stack([np.ones(len(x)), x, x**2, x**3])
                 beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
                 yhat = X @ beta
                 params = {"a": beta[0], "b": beta[1], "c": beta[2], "d": beta[3]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x + {fmt(beta[2],4)}·x² + {fmt(beta[3],4)}·x³"
-            elif name == "Power":
+            elif "степенева" in n_ or n_ == "power":
                 if np.any(x <= 0): messagebox.showwarning("","Степенева модель вимагає x > 0."); return None
                 lx, ly = np.log(x), np.log(y)
                 X = np.column_stack([np.ones(len(lx)), lx])
@@ -3858,21 +3879,21 @@ class RegressionWindow:
                 yhat = a * x**b
                 params = {"a": a, "b": b}
                 eq = f"y = {fmt(a,4)}·x^{fmt(b,4)}"
-            elif name == "Exponential":
+            elif "експоненційна" in n_ or n_ == "exponential":
                 X = np.column_stack([np.ones(len(x)), x])
                 beta, *_ = np.linalg.lstsq(X, np.log(np.abs(y)+1e-10), rcond=None)
                 a, b = math.exp(beta[0]), beta[1]
                 yhat = a * np.exp(b * x)
                 params = {"a": a, "b": b}
                 eq = f"y = {fmt(a,4)}·e^({fmt(b,4)}·x)"
-            elif name == "Logarithmic":
+            elif "логарифмічна" in n_ or n_ == "logarithmic":
                 if np.any(x <= 0): messagebox.showwarning("","Логарифмічна модель вимагає x > 0."); return None
                 X = np.column_stack([np.ones(len(x)), np.log(x)])
                 beta, *_ = np.linalg.lstsq(X, y, rcond=None)
                 yhat = X @ beta
                 params = {"a": beta[0], "b": beta[1]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·ln(x)"
-            elif name == "Logistic (4-param)":
+            elif "логістична" in n_ or "logistic" in n_:
                 def logistic4(xx, a, b, c, d):
                     return d + (a - d) / (1 + (xx/c)**b)
                 p0 = [max(y), 1, np.median(x), min(y)]
@@ -3881,7 +3902,8 @@ class RegressionWindow:
                 params = {"a":popt[0],"b":popt[1],"c":popt[2],"d":popt[3]}
                 eq = f"y = {fmt(popt[3],4)} + ({fmt(popt[0],4)}-{fmt(popt[3],4)})/(1+(x/{fmt(popt[2],4)})^{fmt(popt[1],4)})"
             else:
-                return None
+                messagebox.showerror("Невідома модель",
+                    f"Модель '{name}' не розпізнана.\nОберіть модель зі списку."); return None
 
             residuals = y - yhat; sse = float(np.sum(residuals**2))
             sst = float(np.sum((y - np.mean(y))**2))
