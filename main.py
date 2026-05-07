@@ -1537,7 +1537,7 @@ class CorrelationWindow:
             else: return
 
         win = tk.Toplevel(self.win)
-        win.title("Діаграми розсіювання"); win.geometry("980x800"); set_icon(win)
+        win.title("Матриця діаграм розсіювання"); win.geometry("980x800"); set_icon(win)
 
         top = tk.Frame(win, padx=6, pady=4); top.pack(fill=tk.X)
         tk.Label(top, text="Діаграми розсіювання для всіх пар показників",
@@ -2088,7 +2088,7 @@ class SADTk:
                   bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=(10, 4))
         tk.Button(ctl, text="📚 Довідка", width=14, height=bh, font=bf_,
                   bg="#1a4b8c", fg="white",
-                  command=lambda: show_help(tw)).pack(side=tk.LEFT, padx=4)
+                  command=lambda: show_help(self.table_win)).pack(side=tk.LEFT, padx=4)
         tk.Button(ctl, text="Розробник", width=bw, height=bh, font=bf_,
                   command=self.show_about).pack(side=tk.RIGHT, padx=4)
 
@@ -3279,7 +3279,6 @@ class SADTk:
             for cx, fnm in fcentres:
                 ax.text(cx, -0.22, fnm, ha="center", va="top", transform=ax.get_xaxis_transform(), **fp)
         self._graph_figs["bp"] = fig_bp
-        FigureCanvasTkAgg(fig_bp, master=bp_frame).draw() or None
         cv_bp = FigureCanvasTkAgg(fig_bp, master=bp_frame); cv_bp.draw()
         cv_bp.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
@@ -3444,7 +3443,7 @@ class DescriptiveWindow:
         top = tk.Frame(self.win, padx=6, pady=4); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
                   font=("Times New Roman",12), command=self._analyze).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="First row = variable names  |  Each column = one variable",
+        tk.Label(top, text="Перший рядок = назви змінних  |  Кожен стовпець = один показник",
                  font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=8)
 
         # data table
@@ -3527,7 +3526,7 @@ class DescriptiveWindow:
             if col_name and col_vals:
                 names.append(col_name); data_cols.append(np.array(col_vals, dtype=float))
 
-        if not data_cols: messagebox.showwarning("","No numeric data found."); return
+        if not data_cols: messagebox.showwarning("","Числових даних не знайдено."); return
 
         # compute stats
         from scipy.stats import skew, kurtosis
@@ -3564,7 +3563,7 @@ class DescriptiveWindow:
             try:
                 export_report_docx([{"kind":"heading","text":"Описова статистика","level":1},
                                      {"kind":"table","headers":headers,"rows":rows}], [], p)
-                messagebox.showinfo("","Saved.")
+                messagebox.showinfo("","Збережено.")
             except Exception as ex: messagebox.showerror("",str(ex))
         tk.Button(top, text="Експорт у Word", command=export_docx).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="Побудувати боксплоти", command=lambda: self._plot_boxes(arrays, names)).pack(side=tk.LEFT, padx=4)
@@ -3669,16 +3668,16 @@ class TTestWindow:
         alpha = float(self.alpha_var.get())
         x1 = self._parse(self.e1)
         t = self.test_var.get()
-        if len(x1) < 2: self.result_var.set("Group 1 needs ≥ 2 values."); return
+        if len(x1) < 2: self.result_var.set("Група 1 потребує ≥ 2 значень."); return
 
         lines = []
-        lines.append(f"n₁ = {len(x1)},  Mean₁ = {fmt(np.mean(x1),4)},  SD₁ = {fmt(np.std(x1,ddof=1),4)}")
+        lines.append(f"n₁ = {len(x1)},  Сер₁ = {fmt(np.mean(x1),4)},  SD₁ = {fmt(np.std(x1,ddof=1),4)}")
 
         # normality check
         try: _, sw1 = shapiro(x1)
         except Exception: sw1 = np.nan
         normal1 = (not math.isnan(sw1)) and sw1 > 0.05
-        lines.append(f"Shapiro–Wilk (Group 1): W={fmt(sw1,4)} → {'normal' if normal1 else 'NOT normal'}")
+        lines.append(f"Shapiro–Wilk (Група 1): W={fmt(sw1,4)} → {'нормальний' if normal1 else 'НЕ нормальний'}")
 
         if t == "one":
             try: mu0 = float(self.e_mu.get())
@@ -3686,19 +3685,19 @@ class TTestWindow:
             stat, p = ttest_1samp(x1, mu0)
             lines.append(f"\nOne-sample t-test (μ₀={mu0}):")
             lines.append(f"t = {fmt(stat,4)},  df = {len(x1)-1},  p = {fmt(p,4)}")
-            lines.append("→ Significant difference" if p < alpha else "→ No significant difference")
+            lines.append("→ Значуща різниця" if p < alpha else "→ Немає значущої різниці")
         else:
             x2 = self._parse(self.e2)
-            if len(x2) < 2: self.result_var.set("Group 2 needs ≥ 2 values."); return
+            if len(x2) < 2: self.result_var.set("Група 2 потребує ≥ 2 значень."); return
             try: _, sw2 = shapiro(x2)
             except Exception: sw2 = np.nan
             normal2 = (not math.isnan(sw2)) and sw2 > 0.05
-            lines.append(f"n₂ = {len(x2)},  Mean₂ = {fmt(np.mean(x2),4)},  SD₂ = {fmt(np.std(x2,ddof=1),4)}")
-            lines.append(f"Shapiro–Wilk (Group 2): W={fmt(sw2,4)} → {'normal' if normal2 else 'NOT normal'}")
+            lines.append(f"n₂ = {len(x2)},  Сер₂ = {fmt(np.mean(x2),4)},  SD₂ = {fmt(np.std(x2,ddof=1),4)}")
+            lines.append(f"Shapiro–Wilk (Група 2): W={fmt(sw2,4)} → {'нормальний' if normal2 else 'НЕ нормальний'}")
 
             if t == "paired":
                 if len(x1) != len(x2):
-                    self.result_var.set("Paired test requires equal sample sizes."); return
+                    self.result_var.set("Парний тест вимагає однакових розмірів вибірок."); return
                 if normal1 and normal2:
                     stat, p = ttest_rel(x1, x2)
                     lines.append(f"\nPaired t-test:  t={fmt(stat,4)},  df={len(x1)-1},  p={fmt(p,4)}")
@@ -3710,10 +3709,10 @@ class TTestWindow:
                 try: lev_s, lev_p = levene(x1, x2, center='median')
                 except Exception: lev_p = np.nan
                 equal_var = (not math.isnan(lev_p)) and lev_p >= 0.05
-                lines.append(f"Levene test: p={fmt(lev_p,4)} → {'equal variances' if equal_var else 'unequal variances'}")
+                lines.append(f"Тест Левена: p={fmt(lev_p,4)} → {'рівні дисперсії' if equal_var else 'нерівні дисперсії'}")
                 if normal1 and normal2:
                     stat, p = ttest_ind(x1, x2, equal_var=equal_var)
-                    test_name = "Independent t-test" if equal_var else "Welch t-test (unequal var)"
+                    test_name = "Незалежний t-тест" if equal_var else "t-тест Велша (нерівні дисперсії)"
                     n1, n2 = len(x1), len(x2)
                     df_w = (np.var(x1,ddof=1)/n1 + np.var(x2,ddof=1)/n2)**2 / \
                            ((np.var(x1,ddof=1)/n1)**2/(n1-1) + (np.var(x2,ddof=1)/n2)**2/(n2-1)) if not equal_var else n1+n2-2
@@ -3722,9 +3721,9 @@ class TTestWindow:
                     U, p = mannwhitneyu(x1, x2, alternative="two-sided")
                     d = cliffs_d(x1, x2)
                     lines.append(f"\nMann–Whitney U (non-normal):  U={fmt(U,3)},  p={fmt(p,4)}")
-                    lines.append(f"Cliff's δ = {fmt(d,4)}  ({cliffs_lbl(abs(d))} effect)")
+                    lines.append(f"Cliff's δ = {fmt(d,4)}  ({cliffs_lbl(abs(d))} ефект)")
 
-            lines.append("→ Significant difference" if p < alpha else "→ No significant difference")
+            lines.append("→ Значуща різниця" if p < alpha else "→ Немає значущої різниці")
 
         self.result_var.set("\n".join(lines))
 
@@ -3822,7 +3821,7 @@ class RegressionWindow:
         alpha = float(self.alpha_var.get())
         x = self._parse_col(self.tx); y = self._parse_col(self.ty)
         n = min(len(x),len(y)); x = x[:n]; y = y[:n]
-        if n < 4: messagebox.showwarning("","Need ≥ 4 data points."); return
+        if n < 4: messagebox.showwarning("Замало даних","Потрібно ≥ 4 точки даних."); return
 
         model_name = self.model_var.get().split(":")[0].strip()
         result = self._fit_model(model_name, x, y, alpha)
@@ -3851,7 +3850,7 @@ class RegressionWindow:
                 params = {"a": beta[0], "b": beta[1], "c": beta[2], "d": beta[3]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x + {fmt(beta[2],4)}·x² + {fmt(beta[3],4)}·x³"
             elif name == "Power":
-                if np.any(x <= 0): messagebox.showwarning("","Power model requires x > 0."); return None
+                if np.any(x <= 0): messagebox.showwarning("","Степенева модель вимагає x > 0."); return None
                 lx, ly = np.log(x), np.log(y)
                 X = np.column_stack([np.ones(len(lx)), lx])
                 beta, *_ = np.linalg.lstsq(X, ly, rcond=None)
@@ -3867,7 +3866,7 @@ class RegressionWindow:
                 params = {"a": a, "b": b}
                 eq = f"y = {fmt(a,4)}·e^({fmt(b,4)}·x)"
             elif name == "Logarithmic":
-                if np.any(x <= 0): messagebox.showwarning("","Logarithmic model requires x > 0."); return None
+                if np.any(x <= 0): messagebox.showwarning("","Логарифмічна модель вимагає x > 0."); return None
                 X = np.column_stack([np.ones(len(x)), np.log(x)])
                 beta, *_ = np.linalg.lstsq(X, y, rcond=None)
                 yhat = X @ beta
@@ -3902,18 +3901,18 @@ class RegressionWindow:
                     "RMSE":rmse,"F":F,"p_F":p_F,"sw_p":sw_p,
                     "residuals":residuals,"yhat":yhat,"sse":sse,"sst":sst,"n":n,"k":k}
         except Exception as ex:
-            messagebox.showerror("Fitting error", str(ex)); return None
+            messagebox.showerror("Помилка підгонки", str(ex)); return None
 
     def _show_result(self, r, x, y, model_name, alpha):
         for w in self.res_frame.winfo_children(): w.destroy()
 
         # text summary
-        info = (f"Model: {model_name}\n"
-                f"Equation: {r['equation']}\n"
+        info = (f"Модель: {model_name}\n"
+                f"Рівняння: {r['equation']}\n"
                 f"R² = {fmt(r['R2'],4)}   R²adj = {fmt(r['R2_adj'],4)}   RMSE = {fmt(r['RMSE'],4)}\n"
-                f"F = {fmt(r['F'],4)},  p = {fmt(r['p_F'],4)} {'✓ significant' if r['p_F'] is not None and not math.isnan(r['p_F']) and r['p_F'] < alpha else '✗ not significant'}\n"
+                f"F = {fmt(r['F'],4)},  p = {fmt(r['p_F'],4)} {'✓ значуще' if r['p_F'] is not None and not math.isnan(r['p_F']) and r['p_F'] < alpha else '✗ незначуще'}\n"
                 f"Shapiro–Wilk (residuals): p = {fmt(r['sw_p'],4)}  "
-                f"{'✓ residuals normal' if r['sw_p'] is not None and not math.isnan(r['sw_p']) and r['sw_p'] > 0.05 else '⚠ residuals NOT normal'}")
+                f"{'✓ залишки нормальні' if r['sw_p'] is not None and not math.isnan(r['sw_p']) and r['sw_p'] > 0.05 else '⚠ залишки НЕ нормальні'}")
 
         tk.Label(self.res_frame, text=info, font=("Times New Roman",11),
                  justify="left", anchor="w").pack(anchor="w")
@@ -3928,12 +3927,12 @@ class RegressionWindow:
             ax1.plot(x_sort, r["yhat"][idx_sort], "r-", lw=2, label="Підгонка")
             # 95% довірча смуга (confidence band) ★
             n_pts = len(x)
-            if n_pts > r["k"] + 2 and not math.isnan(r.get("RMSE", float("nan"))):
+            if n_pts > r.get("k", 0) + 2 and not math.isnan(r.get("RMSE", float("nan"))):
                 try:
                     x_pred = np.linspace(x.min(), x.max(), 200)
                     # Для лінійної/квадратичної моделі — аналітична смуга
                     # Для інших — апроксимація через bootstrap-like SE
-                    rmse_ = r["RMSE"]; dfe_ = n_pts - r["k"] - 1
+                    rmse_ = r.get("RMSE", 0); dfe_ = n_pts - r.get("k", 0) - 1
                     if dfe_ > 0:
                         t_crit_ = float(t_dist.ppf(0.975, dfe_))
                         x_mean_ = np.mean(x)
@@ -3964,7 +3963,7 @@ class RegressionWindow:
         out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
         if out_idx is not None:
             tk.Label(self.res_frame,
-                     text=f"⚠ Grubbs outlier detected in residuals: observation #{out_idx+1}  (G={fmt(G,3)})",
+                     text=f"⚠ Викид виявлено (тест Граббса) у залишках: спостереження #{out_idx+1}  (G={fmt(G,3)})",
                      fg="#c62828", font=("Times New Roman",11)).pack(anchor="w")
 
 
@@ -4020,10 +4019,10 @@ class SampleSizeWindow:
             design = self.vars["design"].get()
             r_str = self.vars["r"].get().strip()
         except ValueError:
-            self.res_var.set("Please fill in all numeric fields."); return
+            self.res_var.set("Будь ласка, заповніть усі числові поля."); return
 
         if delta <= 0 or sigma <= 0 or k < 2:
-            self.res_var.set("δ and σ must be positive; k ≥ 2."); return
+            self.res_var.set("δ та σ мають бути додатними; k ≥ 2."); return
 
         z_alpha = float(norm.ppf(1 - alpha/2))
         z_beta  = float(norm.ppf(power))
@@ -4037,33 +4036,33 @@ class SampleSizeWindow:
             from scipy.stats import ncf
             F_crit = float(f_dist.ppf(1-alpha, k-1, k*(r-1)))
             achieved_power = float(1 - ncf.cdf(F_crit, k-1, k*(r-1), lambda_nc))
-            lines.append(f"Design: {design},  k={k} treatments,  r={r} replications")
-            lines.append(f"Non-centrality λ = {fmt(lambda_nc,3)}")
-            lines.append(f"F_crit(α={alpha}) = {fmt(F_crit,3)}")
-            lines.append(f"Achieved power (1-β) = {fmt(achieved_power,4)}")
+            lines.append(f"Дизайн: {design},  k={k} варіантів,  r={r} повторностей")
+            lines.append(f"Нецентральність λ = {fmt(lambda_nc,3)}")
+            lines.append(f"F_крит(α={alpha}) = {fmt(F_crit,3)}")
+            lines.append(f"Досягнута потужність (1-β) = {fmt(achieved_power,4)}")
             lines.append(f"\n{'✓ Sufficient power' if achieved_power >= power else '✗ Insufficient power — increase replications'}")
         else:
             # calculate r needed
             # iterative: increase r until power achieved
             from scipy.stats import ncf
-            lines.append(f"Design: {design},  k={k} treatments")
-            lines.append(f"Target: α={alpha}, power={power}, δ={delta}, σ={sigma}\n")
+            lines.append(f"Дизайн: {design},  k={k} варіантів")
+            lines.append(f"Ціль: α={alpha}, потужність={power}, δ={delta}, σ={sigma}\n")
             found = False
             for r in range(2, 101):
                 lambda_nc = k * r * (delta**2) / (2 * sigma**2)
                 F_crit = float(f_dist.ppf(1-alpha, k-1, k*(r-1)))
                 pwr = float(1 - ncf.cdf(F_crit, k-1, k*(r-1), lambda_nc))
                 if pwr >= power:
-                    lines.append(f"Minimum replications required: r = {r}")
-                    lines.append(f"Achieved power = {fmt(pwr,4)}")
-                    lines.append(f"Total observations = {k*r}")
+                    lines.append(f"Мінімальна кількість повторностей: r = {r}")
+                    lines.append(f"Досягнута потужність = {fmt(pwr,4)}")
+                    lines.append(f"Загальна кількість спостережень = {k*r}")
                     if design == "RCBD":
-                        lines.append(f"→ RCBD: {r} complete blocks, {k} treatments each")
+                        lines.append(f"→ RCBD: {r} повних блоків, по {k} варіантів у кожному")
                     elif design == "Split-plot":
-                        lines.append(f"→ Split-plot: ≥ {r} blocks for whole-plot factor")
+                        lines.append(f"→ Split-plot: ≥ {r} блоків для whole-plot фактора")
                     found = True; break
             if not found:
-                lines.append("Could not achieve target power with r ≤ 100.\nConsider increasing δ or reducing σ.")
+                lines.append("Не вдалося досягти цільової потужності при r ≤ 100.\nРозгляньте збільшення δ або зменшення σ.")
 
         self.res_var.set("\n".join(lines))
 
@@ -4122,7 +4121,7 @@ class ClusterWindow:
         from scipy.spatial.distance import pdist
         raw = [[e.get().strip() for e in row] for row in self.entries]
         raw = [r for r in raw if any(v for v in r)]
-        if not raw: messagebox.showwarning("","No data."); return
+        if not raw: messagebox.showwarning("","Немає даних."); return
 
         obj_names = []; data_matrix = []
         for row in raw:
@@ -4134,7 +4133,7 @@ class ClusterWindow:
             if nm and vals:
                 obj_names.append(nm); data_matrix.append(vals)
 
-        if len(data_matrix) < 2: messagebox.showwarning("","Need ≥ 2 objects."); return
+        if len(data_matrix) < 2: messagebox.showwarning("Замало об'єктів","Потрібно ≥ 2 об'єкти."); return
         min_cols = min(len(r) for r in data_matrix)
         X = np.array([r[:min_cols] for r in data_matrix], dtype=float)
 
@@ -4154,14 +4153,14 @@ class ClusterWindow:
         ax = fig.add_subplot(111)
         dendrogram(Z, labels=obj_names, ax=ax, leaf_rotation=90, leaf_font_size=9,
                    color_threshold=Z[-(k-1), 2] if k > 1 else np.inf)
-        ax.set_title(f"Hierarchical clustering ({method} linkage, k={k})")
-        ax.set_ylabel("Distance")
+        ax.set_title(f"Ієрархічна кластеризація (метод {method}, k={k})")
+        ax.set_ylabel("Відстань")
         fig.tight_layout()
         cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         # show cluster membership
         result_txt = "\n".join(f"{nm}: Cluster {cl}" for nm, cl in zip(obj_names, labels_cl))
-        tk.Label(win, text=result_txt, font=("Times New Roman",11), justify="left").pack(padx=8, pady=4)
+        tk.Label(win, text="Приналежність до кластерів:\n" + result_txt, font=("Times New Roman",11), justify="left").pack(padx=8, pady=4)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -4219,7 +4218,7 @@ class PCAWindow:
     def _run(self):
         raw = [[e.get().strip() for e in row] for row in self.entries]
         raw = [r for r in raw if any(v for v in r)]
-        if not raw: messagebox.showwarning("","No data."); return
+        if not raw: messagebox.showwarning("","Немає даних."); return
 
         obj_names = []; var_names = []; data_rows = []
         # detect if first col is labels (non-numeric)
@@ -4262,8 +4261,8 @@ class PCAWindow:
         ax1 = fig.add_subplot(131)
         ax1.bar(range(1, n_comp+1), explained[:n_comp], color="#4c72b0", alpha=0.8)
         ax1.plot(range(1, n_comp+1), np.cumsum(explained[:n_comp]), "ro-", markersize=4)
-        ax1.set_xlabel("PC"); ax1.set_ylabel("Variance explained (%)")
-        ax1.set_title("Scree plot")
+        ax1.set_xlabel("ГК"); ax1.set_ylabel("Пояснена дисперсія (%)")
+        ax1.set_title("Графік відсіювання (Scree)")
         ax1.axhline(80, color="gray", lw=0.8, ls="--")
 
         # Biplot (PC1 vs PC2)
@@ -4279,19 +4278,19 @@ class PCAWindow:
                          arrowprops=dict(arrowstyle="->", color="#c62828", lw=1.2))
             ax2.text(lx*1.05, ly*1.05, f"Var{j+1}" if not var_names else var_names[j],
                      fontsize=7, color="#c62828")
-        ax2.set_xlabel(f"PC1 ({fmt(explained[0],1)}%)")
-        ax2.set_ylabel(f"PC2 ({fmt(explained[1],1)}%)" if n_comp > 1 else "PC2")
-        ax2.set_title("Biplot (PC1 × PC2)"); ax2.axhline(0,color="k",lw=0.5); ax2.axvline(0,color="k",lw=0.5)
+        ax2.set_xlabel(f"ГК1 ({fmt(explained[0],1)}%)")
+        ax2.set_ylabel(f"ГК2 ({fmt(explained[1],1)}%)" if n_comp > 1 else "ГК2")
+        ax2.set_title("Biplot (ГК1 × ГК2)"); ax2.axhline(0,color="k",lw=0.5); ax2.axvline(0,color="k",lw=0.5)
 
         # Loadings heatmap
         ax3 = fig.add_subplot(133)
         load_mat = eigenvectors[:, :min(4, n_comp)]
         im = ax3.imshow(load_mat, cmap="RdYlGn", vmin=-1, vmax=1, aspect="auto")
         ax3.set_xticks(range(load_mat.shape[1]))
-        ax3.set_xticklabels([f"PC{i+1}" for i in range(load_mat.shape[1])], fontsize=8)
+        ax3.set_xticklabels([f"ГК{i+1}" for i in range(load_mat.shape[1])], fontsize=8)
         ax3.set_yticks(range(min_c))
         ax3.set_yticklabels([f"Var{j+1}" for j in range(min_c)], fontsize=8)
-        ax3.set_title("Loadings")
+        ax3.set_title("Навантаження")
         for i in range(min_c):
             for j in range(load_mat.shape[1]):
                 ax3.text(j, i, fmt(load_mat[i,j],2), ha="center", va="center", fontsize=7)
@@ -4300,7 +4299,7 @@ class PCAWindow:
         cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         # Summary table
-        summary_rows = [[f"PC{i+1}", fmt(eigenvalues[i],4), fmt(explained[i],2),
+        summary_rows = [[f"ГК{i+1}", fmt(eigenvalues[i],4), fmt(explained[i],2),
                          fmt(float(np.sum(explained[:i+1])),2)] for i in range(n_comp)]
         frm, _ = make_tv(win, ["Компонент","Власне значення","% дисперсії","Кумулятивний %"], summary_rows)
         frm.pack(fill=tk.X, padx=8, pady=4)
@@ -4365,7 +4364,7 @@ class RepeatedMeasuresWindow:
             if any(not math.isnan(v) for v in vals):
                 subjects.append(subj); data_rows.append(vals)
 
-        if len(data_rows) < 2: messagebox.showwarning("","Need ≥ 2 subjects."); return
+        if len(data_rows) < 2: messagebox.showwarning("Замало суб'єктів","Потрібно ≥ 2 суб'єкти."); return
         k = len(time_names); n = len(data_rows)
         data = np.array(data_rows, dtype=float)
 
@@ -4406,16 +4405,16 @@ class RepeatedMeasuresWindow:
         if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
         win = tk.Toplevel(self.win); win.title("Повторні виміри — Результати"); win.geometry("1000x680")
 
-        res_txt = (f"Repeated Measures ANOVA\n"
-                   f"Subjects: {n},  Time points: {k}\n\n"
+        res_txt = (f"Дисперсійний аналіз повторних вимірювань\n"
+                   f"Суб'єктів: {n},  Часових точок: {k}\n\n"
                    f"SS_time  = {fmt(SS_time,4)},  df = {df_time},  MS = {fmt(MS_time,4)}\n"
                    f"SS_subj  = {fmt(SS_subj,4)},  df = {df_subj}\n"
                    f"SS_error = {fmt(SS_error,4)},  df = {df_err},  MS = {fmt(MS_err,4)}\n\n"
                    f"F({df_time},{df_err}) = {fmt(F,4)},  p = {fmt(p,4)}"
-                   f"  {'✓ significant' if not math.isnan(p) and p < ALPHA else '✗ not significant'}\n"
+                   f"  {'✓ значуще' if not math.isnan(p) and p < ALPHA else '✗ незначуще'}\n"
                    f"Partial η² (time) = {fmt(eta2_time,4)}  ({eta2_label(eta2_time)})\n"
                    f"Shapiro–Wilk (differences, min p) = {fmt(min_sw,4)}"
-                   f"  {'✓ normal' if not math.isnan(min_sw) and min_sw > 0.05 else '⚠ check normality'}")
+                   f"  {'✓ нормальний' if not math.isnan(min_sw) and min_sw > 0.05 else '⚠ перевірте нормальність'}")
 
         tk.Label(win, text=res_txt, font=("Times New Roman",11), justify="left").pack(padx=8, pady=6, anchor="w")
 
@@ -4426,8 +4425,8 @@ class RepeatedMeasuresWindow:
         ax.errorbar(range(k), means_, yerr=ses_, fmt="o-", capsize=5,
                     color="#4c72b0", ecolor="#c62828", linewidth=2, markersize=7)
         ax.set_xticks(range(k)); ax.set_xticklabels(time_names)
-        ax.set_xlabel("Time point / Condition"); ax.set_ylabel("Mean ± SE")
-        ax.set_title("Repeated Measures: Means over Time"); ax.yaxis.grid(True, alpha=0.3)
+        ax.set_xlabel("Часова точка / Умова"); ax.set_ylabel("Середнє ± СП")
+        ax.set_title("Повторні виміри: динаміка середніх"); ax.yaxis.grid(True, alpha=0.3)
         fig.tight_layout()
         cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
@@ -4506,7 +4505,7 @@ class StabilityWindow:
             if any(not math.isnan(v) for v in vals):
                 gen_names.append(nm); matrix.append(vals)
 
-        if len(matrix) < 2: messagebox.showwarning("","Need ≥ 2 genotypes."); return
+        if len(matrix) < 2: messagebox.showwarning("Замало генотипів","Потрібно ≥ 2 генотипи."); return
         e_count = len(env_names); g_count = len(gen_names)
         data = np.array(matrix, dtype=float)
 
@@ -4560,8 +4559,8 @@ class StabilityWindow:
             ax1.annotate("", xy=(pc1_e[j]*sc_e*0.8, pc2_e[j]*sc_e*0.8), xytext=(0,0),
                          arrowprops=dict(arrowstyle="->", color="#c62828", lw=1.2))
             ax1.text(pc1_e[j]*sc_e*0.85, pc2_e[j]*sc_e*0.85, nm, fontsize=8, color="#c62828")
-        ax1.set_xlabel(f"PC1 ({fmt(var_exp[0],1)}%)"); ax1.set_ylabel(f"PC2 ({fmt(var_exp[1] if len(var_exp)>1 else 0,1)}%)")
-        ax1.set_title("GGE Biplot"); ax1.yaxis.grid(True, alpha=0.25)
+        ax1.set_xlabel(f"ГК1 ({fmt(var_exp[0],1)}%)"); ax1.set_ylabel(f"ГК2 ({fmt(var_exp[1] if len(var_exp)>1 else 0,1)}%)")
+        ax1.set_title("GGE Biplot (Генотип × Середовище)"); ax1.yaxis.grid(True, alpha=0.25)
 
         # Stability table
         ax2 = fig.add_subplot(122)
@@ -4569,7 +4568,7 @@ class StabilityWindow:
         col_labels = ["Genotype","Mean","bi","s²d","Stability"]
         tbl = ax2.table(cellText=er_rows, colLabels=col_labels, loc="center", cellLoc="center")
         tbl.auto_set_font_size(False); tbl.set_fontsize(9); tbl.scale(1, 1.4)
-        ax2.set_title("Eberhart–Russell Stability", pad=14)
+        ax2.set_title("Стабільність Eberhart–Russell", pad=14)
 
         fig.tight_layout()
         cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -4917,17 +4916,17 @@ class AncovaWindow:
         # Assumption checks
         _head("Assumption Checks")
         norm_color = "#000000" if math.isnan(p_res) or p_res > alpha else "#c62828"
-        _txt(f"Normality of residuals (Shapiro–Wilk):  W={fmt(W_res,4)},  p={fmt(p_res,4)}  "
+        _txt(f"Нормальність залишків (Shapiro–Wilk):  W={fmt(W_res,4)},  p={fmt(p_res,4)}  "
              f"{'✓ OK' if not math.isnan(p_res) and p_res > alpha else '⚠ VIOLATED'}",
              norm_color)
         lev_color = "#000000" if math.isnan(lev_p) or lev_p >= alpha else "#c62828"
-        _txt(f"Homogeneity of variances (Levene):  F={fmt(lev_F,4)},  p={fmt(lev_p,4)}  "
+        _txt(f"Однорідність дисперсій (Левен):  F={fmt(lev_F,4)},  p={fmt(lev_p,4)}  "
              f"{'✓ OK' if not math.isnan(lev_p) and lev_p >= alpha else '⚠ VIOLATED'}",
              lev_color)
         for cov_name, F_sl, p_sl in slope_details:
             sl_ok = math.isnan(p_sl) or p_sl >= alpha
             sl_color = "#000000" if sl_ok else "#c62828"
-            _txt(f"Homogeneity of slopes ({cov_name}):  F={fmt(F_sl,4)},  p={fmt(p_sl,4)}  "
+            _txt(f"Однорідність нахилів ({cov_name}):  F={fmt(F_sl,4)},  p={fmt(p_sl,4)}  "
                  f"{'✓ OK' if sl_ok else '⚠ VIOLATED — slopes differ'}",
                  sl_color)
 
@@ -4968,7 +4967,7 @@ class AncovaWindow:
             ax1.scatter(yhat, residuals, s=22, color="#4c72b0", alpha=0.8)
             ax1.axhline(0, color="k", lw=0.8)
             ax1.set_xlabel("Fitted values"); ax1.set_ylabel("Residuals")
-            ax1.set_title("Residuals vs Fitted"); ax1.yaxis.grid(True, alpha=0.3)
+            ax1.set_title("Залишки vs Підігнані"); ax1.yaxis.grid(True, alpha=0.3)
 
             from scipy.stats import probplot
             ax2 = fig.add_subplot(122)
@@ -4976,8 +4975,8 @@ class AncovaWindow:
             rp = probplot(residuals, dist="norm")
             ax2.plot(rp[0][0], rp[0][1], 'o', markersize=4, color="#4c72b0")
             ax2.plot(rp[0][0], rp[1][1] + rp[1][0]*rp[0][0], 'r-', lw=1)
-            ax2.set_xlabel("Theoretical Quantiles"); ax2.set_ylabel("Sample Quantiles")
-            ax2.set_title("Normal Q-Q Plot of Residuals"); ax2.yaxis.grid(True, alpha=0.3)
+            ax2.set_xlabel("Теоретичні квантилі"); ax2.set_ylabel("Вибіркові квантилі")
+            ax2.set_title("QQ-графік залишків"); ax2.yaxis.grid(True, alpha=0.3)
             fig.tight_layout()
             cv = FigureCanvasTkAgg(fig, master=body); cv.draw()
             cv.get_tk_widget().pack(fill=tk.X, padx=10, pady=6)
@@ -5159,11 +5158,11 @@ class ManovaWindow:
         if skipped: messagebox.showinfo("Note", f"{skipped} row(s) skipped.")
 
         n = len(dv_rows)
-        if n < 4: messagebox.showwarning("Замало даних","Need ≥ 4 complete observations."); return
+        if n < 4: messagebox.showwarning("Замало даних","Потрібно ≥ 4 повних спостереження."); return
 
         min_dv = min(len(r) for r in dv_rows)
         if min_dv < 2:
-            messagebox.showwarning("Замало залежних змінних","Need at least 2 dependent variables."); return
+            messagebox.showwarning("Замало залежних змінних","Потрібно щонайменше 2 залежних змінних."); return
 
         # Align all rows to same number of DVs
         Y = np.array([r[:min_dv] for r in dv_rows], dtype=float)
@@ -5403,22 +5402,22 @@ class ManovaWindow:
                       (float(r[4]) < alpha if r[4] not in ("","–") else False)
                       for r in manova_rows if r[4] not in ("","–","н/д"))
         if not math.isnan(p_pillai) and p_pillai < alpha:
-            _txt(f"✓ MANOVA significant (Pillai p={fmt(p_pillai,4)}): groups differ on the\n"
-                 f"  combination of dependent variables. Proceed to univariate follow-up tests.",
+            _txt(f"✓ MANOVA значущий (Pillai p={fmt(p_pillai,4)}): групи відрізняються за\n"
+                 f"  комбінацією залежних змінних. Перейдіть до одновимірних тестів.",
                  "#1a6b1a")
         elif not math.isnan(p_pillai):
-            _txt(f"✗ MANOVA not significant (Pillai p={fmt(p_pillai,4)}): no evidence that\n"
-                 f"  groups differ on the combination of DVs. Univariate tests not recommended.",
+            _txt(f"✗ MANOVA незначущий (Pillai p={fmt(p_pillai,4)}): немає підстав вважати що\n"
+                 f"  групи відрізняються за комбінацією ЗЗ. Одновимірні тести не рекомендовано.",
                  "#c62828")
 
         # Univariate follow-up
         _head(f"Univariate Follow-Up ANOVAs (Bonferroni α = {fmt(alpha/len(dv_names),4)})")
-        _txt("Note: these are only interpretable after a significant MANOVA.",
+        _txt("Примітка: ці результати інтерпретуються лише після значущого MANOVA.",
              "#666666")
         _tbl(["Залежна змінна","F","p","partial η²","Ефект","Bonf. α","Висновок"], univ_rows)
 
         # Group means per DV
-        _head("Group Means per Dependent Variable")
+        _head("Групові середні по залежних змінних")
         means_headers = ["Група"] + dv_names
         means_rows = []
         for lv in group_levels:
@@ -5444,7 +5443,7 @@ class ManovaWindow:
                 ax.set_xticks(list(xpos)); ax.set_xticklabels(group_levels, rotation=30, ha="right", fontsize=8)
                 ax.set_title(dv_nm, fontsize=9); ax.set_ylabel("Mean ± SE" if di==0 else "")
                 ax.yaxis.grid(True, alpha=0.3)
-            fig.suptitle("Group Means (±SE) per Dependent Variable", fontsize=10)
+            fig.suptitle("Групові середні (±СП) по залежних змінних", fontsize=10)
             fig.tight_layout()
             cv = FigureCanvasTkAgg(fig, master=body); cv.draw()
             cv.get_tk_widget().pack(fill=tk.X, padx=10, pady=6)
