@@ -1084,18 +1084,128 @@ def draw_venn(ax, factor_values, interaction_values, colors, alpha, font_size, f
 # CORRELATION ANALYSIS WINDOW
 # ═══════════════════════════════════════════════════════════════
 class CorrelationWindow:
+
+    HELP_TEXT = """
+КОРЕЛЯЦІЙНИЙ АНАЛІЗ — ПОКРОКОВА ІНСТРУКЦІЯ
+═══════════════════════════════════════════
+
+ЩО ТАКЕ КОРЕЛЯЦІЯ?
+  Кореляція показує наявність і силу статистичного зв'язку
+  між двома показниками.
+  Коефіцієнт кореляції r (або ρ) від -1 до +1:
+    r = +1 → ідеальний прямий зв'язок
+    r = -1 → ідеальний обернений зв'язок
+    r = 0  → зв'язку немає
+
+КРОК 1. ПІДГОТОВКА ТАБЛИЦІ ДАНИХ
+  Кожен стовпець таблиці = один показник (змінна).
+  Перейменуйте стовпці — двічі клікніть на заголовок
+  (синя клітинка вгорі) і введіть назву показника.
+
+  Кожен рядок = одне спостереження (рослина, ділянка, рік).
+  Введіть числові дані у клітинки.
+
+  Приклад:
+  | Врожайність | Висота | Маса зерна |
+  |    4.2      |  98.5  |   38.2     |
+  |    5.1      | 103.2  |   41.5     |
+
+  Мінімум: 2 стовпці (показники) по ≥ 3 значення.
+
+  Вставте дані з Excel: скопіюйте в Excel → клік на першу
+  клітинку таблиці → кнопка «Вставити з Excel».
+
+КРОК 2. ЗАПУСК АНАЛІЗУ
+  Натисніть «▶ Аналіз» → з'явиться вікно параметрів.
+
+КРОК 3. ВИБІР МЕТОДУ КОРЕЛЯЦІЇ
+
+  Авто (рекомендовано):
+    Програма перевіряє нормальність кожного показника.
+    Якщо всі нормальні → Пірсон.
+    Якщо хоч один ненормальний → Спірмен.
+
+  Пірсон r:
+    Для нормально розподілених, неперервних даних.
+    Вимірює ЛІНІЙНИЙ зв'язок.
+    ⚠ При порушенні нормальності — програма попередить!
+
+  Спірмен ρ (rho):
+    Непараметричний, для будь-якого розподілу.
+    Виявляє МОНОТОННИЙ зв'язок (не лише лінійний).
+    Надійніший при наявності викидів.
+
+КРОК 4. ПОПРАВКА НА МНОЖИННІ ПОРІВНЯННЯ
+  При n показниках виконується n×(n-1)/2 тестів.
+  Без поправки ризик хибних результатів зростає!
+
+  Бонферроні (строга):
+    p_скор = p × кількість_пар
+    Рекомендується при ≤ 10 показниках.
+
+  Benjamini-Hochberg/FDR (ліберальніша):
+    Контролює частку хибних відкриттів.
+    Рекомендується при > 10 показниках.
+
+КРОК 5. ІНТЕРПРЕТАЦІЯ ТЕПЛОВОЇ КАРТИ
+
+  В кожній клітинці три рядки:
+    r = -0.82     ← коефіцієнт кореляції
+    p = 0.003     ← p-значення після поправки
+    n = 15        ← кількість пар спостережень
+
+  Значущість позначається зірочками:
+    * — p < 0.05  (значущий зв'язок)
+    ** — p < 0.01 (високо значущий зв'язок)
+    без зірочки — p ≥ 0.05 (зв'язок незначущий)
+
+  Колір:
+    Зелений → позитивна кореляція (r > 0)
+    Червоний → негативна кореляція (r < 0)
+    Жовтий/білий → зв'язок відсутній
+
+КРОК 6. СИЛА ЗВ'ЯЗКУ — ІНТЕРПРЕТАЦІЯ |r|
+  0.00 – 0.19:  дуже слабкий (практично відсутній)
+  0.20 – 0.39:  слабкий
+  0.40 – 0.59:  помірний (середній)
+  0.60 – 0.79:  сильний
+  0.80 – 1.00:  дуже сильний
+
+  Для агрономічних досліджень:
+  |r| ≥ 0.60 — практично значущий зв'язок.
+
+КРОК 7. МАТРИЦЯ ДІАГРАМ РОЗСІЮВАННЯ
+  Відкривається автоматично після теплової карти.
+  По діагоналі — гістограма кожного показника.
+  Поза діагоналлю — точкові діаграми кожної пари.
+  Червона лінія — лінія тренду.
+
+  Якщо точки лежать уздовж прямої → сильна лінійна кореляція.
+  Якщо точки хаотичні → зв'язку немає.
+  Якщо є криволінійна залежність → розгляньте Спірмена.
+
+ВАЖЛИВО:
+  ⚠ Кореляція ≠ Причинно-наслідковий зв'язок!
+  Навіть дуже сильна кореляція не означає що один показник
+  СПРИЧИНЯЄ зміну іншого. Для висновків про причинність
+  потрібен регресійний аналіз або теоретичне обґрунтування.
+"""
+
     def __init__(self, root, graph_settings):
         self.root = root
         self.gs = dict(graph_settings)
-        self._figs = []
+        self._hm_fig = None
+        self._sc_fig = None
 
         self.win = tk.Toplevel(root)
-        self.win.title("Кореляційний аналіз"); self.win.geometry("1100x680"); set_icon(self.win)
+        self.win.title("Кореляційний аналіз")
+        self.win.geometry("1060x660"); set_icon(self.win)
 
         self._build_menu()
         self._build_toolbar()
         self._build_table()
 
+    # ── Меню ──────────────────────────────────────────────────
     def _build_menu(self):
         mb = tk.Menu(self.win)
         fm = tk.Menu(mb, tearoff=0)
@@ -1105,348 +1215,395 @@ class CorrelationWindow:
         fm.add_command(label="Завантажити Excel", command=self._load_excel)
         mb.add_cascade(label="Файл", menu=fm)
         em = tk.Menu(mb, tearoff=0)
-        em.add_command(label="Додати рядок", command=self.add_row)
-        em.add_command(label="Видалити рядок", command=self.del_row)
-        em.add_command(label="Додати стовпчик", command=self.add_col)
-        em.add_command(label="Видалити стовпчик", command=self.del_col)
+        em.add_command(label="Додати рядок",     command=self.add_row)
+        em.add_command(label="Видалити рядок",   command=self.del_row)
+        em.add_command(label="Додати стовпчик",  command=self.add_col)
+        em.add_command(label="Видалити стовпчик",command=self.del_col)
         mb.add_cascade(label="Правка", menu=em)
         self.win.config(menu=mb)
 
+    # ── Панель інструментів ───────────────────────────────────
     def _build_toolbar(self):
-        tb = tk.Frame(self.win, padx=6, pady=4); tb.pack(fill=tk.X)
-        tk.Button(tb, text="Аналіз", bg="#c62828", fg="white",
+        tb = tk.Frame(self.win, padx=6, pady=5); tb.pack(fill=tk.X)
+        # Основна кнопка аналізу — як у регресії
+        tk.Button(tb, text="▶ Аналіз", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
                   command=self._run_analysis).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування", command=self._settings).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="Вставити (буфер)", command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування",
+                  font=("Times New Roman", 11),
+                  command=self._settings).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="Вставити з Excel",
+                  font=("Times New Roman", 11),
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📋 Копіювати теплову карту",
+                  font=("Times New Roman", 11),
+                  command=self._copy_heatmap).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman", 11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+        # Підказка
+        tk.Label(tb,
+                 text="Двічі клікніть на заголовок стовпця щоб перейменувати показник",
+                 font=("Times New Roman", 9), fg="#666"
+                 ).pack(side=tk.LEFT, padx=10)
 
+    # ── Таблиця даних ─────────────────────────────────────────
     def _build_table(self):
-        self.rows = 12; self.cols = 6
-        self.canvas = tk.Canvas(self.win); self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = ttk.Scrollbar(self.win, orient="vertical", command=self.canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y); self.canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(self.canvas); self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda e: self.canvas.config(scrollregion=self.canvas.bbox("all")))
+        self.rows = 14; self.cols = 6
+        tbl_frm = tk.Frame(self.win); tbl_frm.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self.canvas = tk.Canvas(tbl_frm)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(tbl_frm, orient="vertical", command=self.canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>",
+                        lambda e: self.canvas.config(scrollregion=self.canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         self.header_labels = []
-        for j in range(self.cols):
-            lbl = tk.Label(self.inner, text=f"Показник {j+1}", relief=tk.RIDGE, width=14,
-                           bg="#f0f0f0", fg="#000000", font=("Times New Roman", 11))
-            lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
-            self.header_labels.append(lbl)
+        self.header_vars   = []   # StringVar для кожного заголовку
+        self._build_headers()
 
         self.entries = []
         for i in range(self.rows):
-            row_ = []
-            for j in range(self.cols):
-                e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
-                             highlightthickness=1, highlightbackground="#c0c0c0")
-                e.grid(row=i + 1, column=j, padx=2, pady=2)
-                e.bind("<Return>", self._on_enter)
-                e.bind("<Tab>", self._on_tab)
-                row_.append(e)
-            self.entries.append(row_)
+            self._add_row_widgets(i)
+        _bind_nav(self.entries, self.win)
 
-    def add_row(self):
-        i = len(self.entries); row_ = []
+    def _build_headers(self):
+        """Побудова заголовків з можливістю перейменування (подвійний клік)."""
+        for j in range(self.cols):
+            var = tk.StringVar(value=f"Показник {j+1}")
+            self.header_vars.append(var)
+            lbl = tk.Label(self.inner, textvariable=var,
+                           relief=tk.RIDGE, width=14, cursor="hand2",
+                           bg="#1a4b8c", fg="white",
+                           font=("Times New Roman", 11, "bold"))
+            lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
+            lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
+            self.header_labels.append(lbl)
+
+    def _rename_col(self, idx):
+        """Вікно перейменування стовпця."""
+        dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
+        dlg.resizable(False, False); dlg.grab_set()
+        tk.Label(dlg, text=f"Назва показника {idx+1}:",
+                 font=("Times New Roman", 12)).pack(padx=16, pady=(14, 4))
+        var = tk.StringVar(value=self.header_vars[idx].get())
+        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman", 12), width=28)
+        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
+
+        def apply():
+            nm = var.get().strip()
+            if nm: self.header_vars[idx].set(nm)
+            dlg.destroy()
+        tk.Button(dlg, text="ОК", bg="#c62828", fg="white",
+                  font=("Times New Roman", 12), command=apply).pack(pady=(4,14))
+        dlg.bind("<Return>", lambda ev: apply())
+        center_win(dlg)
+
+    def _add_row_widgets(self, i):
+        """Додати один рядок Entry-комірок."""
+        row_ = []
         for j in range(self.cols):
             e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
                          highlightthickness=1, highlightbackground="#c0c0c0")
-            e.grid(row=i + 1, column=j, padx=2, pady=2)
+            e.grid(row=i+1, column=j, padx=2, pady=2)
             e.bind("<Return>", self._on_enter)
-            e.bind("<Tab>", self._on_tab)
+            e.bind("<Tab>",    self._on_tab)
             row_.append(e)
-        self.entries.append(row_); self.rows += 1
+        self.entries.append(row_)
+
+    def add_row(self):
+        i = len(self.entries)
+        self._add_row_widgets(i); self.rows += 1
+        _bind_nav(self.entries, self.win)
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
 
     def del_row(self):
         if not self.entries: return
         for e in self.entries.pop(): e.destroy()
-        self.rows -= 1; self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        self.rows -= 1
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
 
     def add_col(self):
-        self.cols += 1; ci = self.cols - 1
-        lbl = tk.Label(self.inner, text=f"Показник {ci+1}", relief=tk.RIDGE, width=14,
-                       bg="#f0f0f0", fg="#000000", font=("Times New Roman", 11))
-        lbl.grid(row=0, column=ci, padx=2, pady=2, sticky="nsew"); self.header_labels.append(lbl)
+        ci = self.cols; self.cols += 1
+        var = tk.StringVar(value=f"Показник {ci+1}")
+        self.header_vars.append(var)
+        lbl = tk.Label(self.inner, textvariable=var,
+                       relief=tk.RIDGE, width=14, cursor="hand2",
+                       bg="#1a4b8c", fg="white",
+                       font=("Times New Roman", 11, "bold"))
+        lbl.grid(row=0, column=ci, padx=2, pady=2, sticky="nsew")
+        lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
+        self.header_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
             e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
                          highlightthickness=1, highlightbackground="#c0c0c0")
-            e.grid(row=i + 1, column=ci, padx=2, pady=2)
+            e.grid(row=i+1, column=ci, padx=2, pady=2)
             e.bind("<Return>", self._on_enter); e.bind("<Tab>", self._on_tab)
             row_.append(e)
+        _bind_nav(self.entries, self.win)
 
     def del_col(self):
         if self.cols <= 2: return
         self.header_labels.pop().destroy()
+        self.header_vars.pop()
         for row_ in self.entries: row_.pop().destroy()
         self.cols -= 1
 
+    # ── Навігація ─────────────────────────────────────────────
     def _on_enter(self, event):
         for i, row_ in enumerate(self.entries):
             for j, e in enumerate(row_):
                 if e is event.widget:
-                    ni = i + 1
-                    if ni >= len(self.entries): self.add_row()
-                    self.entries[ni][j].focus_set(); return "break"
+                    if i+1 >= len(self.entries): self.add_row()
+                    self.entries[i+1][j].focus_set(); return "break"
         return "break"
 
     def _on_tab(self, event):
         for i, row_ in enumerate(self.entries):
             for j, e in enumerate(row_):
                 if e is event.widget:
-                    nj = j + 1
-                    if nj >= self.cols: nj = 0; ni = i + 1
-                    else: ni = i
+                    nj = j+1; ni = i
+                    if nj >= self.cols: nj = 0; ni = i+1
                     if ni >= len(self.entries): self.add_row()
                     self.entries[ni][nj].focus_set(); return "break"
         return "break"
 
+    # ── Вставка, збереження, завантаження ────────────────────
     def _paste(self):
         w = self.win.focus_get()
         if not isinstance(w, tk.Entry): return
         try: data = self.win.clipboard_get()
         except Exception: return
-        # find pos
         pos = None
         for i, row_ in enumerate(self.entries):
             for j, e in enumerate(row_):
                 if e is w: pos = (i, j); break
             if pos: break
-        if not pos: return
+        if not pos: pos = (0, 0)
         r0, c0 = pos
         for ir, rt in enumerate(data.splitlines()):
-            cols = rt.split("\t")
-            for jc, val in enumerate(cols):
-                rr = r0 + ir; cc = c0 + jc
+            for jc, val in enumerate(rt.split("\t")):
+                rr = r0+ir; cc = c0+jc
                 while rr >= len(self.entries): self.add_row()
                 if cc >= self.cols: continue
-                self.entries[rr][cc].delete(0, tk.END); self.entries[rr][cc].insert(0, val)
+                self.entries[rr][cc].delete(0, tk.END)
+                self.entries[rr][cc].insert(0, val.strip())
 
     def _save_proj(self):
-        path = filedialog.asksaveasfilename(parent=self.win, defaultextension=".sadp",
-                                             filetypes=[("SAD проект", "*.sadp"), ("JSON", "*.json")])
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".sadp",
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")])
         if not path: return
-        rows = [[e.get() for e in row] for row in self.entries]
-        headers = [lbl.cget("text") for lbl in self.header_labels]
-        d = {"type": "correlation", "version": APP_VER, "headers": headers, "rows_data": rows}
+        d = {"type":"correlation","version":APP_VER,
+             "headers":[v.get() for v in self.header_vars],
+             "rows_data":[[e.get() for e in row] for row in self.entries]}
         try:
-            with open(path, "w", encoding="utf-8") as f: json.dump(d, f, ensure_ascii=False, indent=2)
+            with open(path,"w",encoding="utf-8") as f: json.dump(d,f,ensure_ascii=False,indent=2)
             messagebox.showinfo("Збережено", path)
-        except Exception as ex: messagebox.showerror("Помилка", str(ex))
+        except Exception as ex: messagebox.showerror("Помилка",str(ex))
 
     def _load_proj(self):
-        path = filedialog.askopenfilename(parent=self.win,
-                                           filetypes=[("SAD проект", "*.sadp"), ("JSON", "*.json")])
+        path = filedialog.askopenfilename(
+            parent=self.win, filetypes=[("SAD проект","*.sadp"),("JSON","*.json")])
         if not path: return
         try:
-            with open(path, "r", encoding="utf-8") as f: d = json.load(f)
-        except Exception as ex: messagebox.showerror("Помилка", str(ex)); return
-        headers = d.get("headers", [])
-        rd = d.get("rows_data", [])
+            with open(path,"r",encoding="utf-8") as f: d=json.load(f)
+        except Exception as ex: messagebox.showerror("Помилка",str(ex)); return
+        headers = d.get("headers",[])
+        rd      = d.get("rows_data",[])
         while self.cols < len(headers): self.add_col()
         for j, h in enumerate(headers):
-            if j < len(self.header_labels): self.header_labels[j].configure(text=h)
+            if j < len(self.header_vars): self.header_vars[j].set(h)
         while len(self.entries) < len(rd): self.add_row()
         for i, rv in enumerate(rd):
             for j, v in enumerate(rv):
-                if i < len(self.entries) and j < len(self.entries[i]):
-                    self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
+                if i<len(self.entries) and j<len(self.entries[i]):
+                    self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,v)
 
     def _load_excel(self):
-        if not HAS_OPENPYXL: messagebox.showerror("", "pip install openpyxl"); return
-        path = filedialog.askopenfilename(parent=self.win, filetypes=[("Excel", "*.xlsx *.xlsm *.xls")])
+        if not HAS_OPENPYXL: messagebox.showerror("","pip install openpyxl"); return
+        path = filedialog.askopenfilename(parent=self.win,
+                    filetypes=[("Excel","*.xlsx *.xlsm *.xls")])
         if not path: return
         try:
-            wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-            ws = wb.active
-            raw = [[cell for cell in row] for row in ws.iter_rows(values_only=True)]
+            wb = openpyxl.load_workbook(path,data_only=True,read_only=True)
+            raw = [[cell for cell in row] for row in wb.active.iter_rows(values_only=True)]
             wb.close()
-        except Exception as ex: messagebox.showerror("", str(ex)); return
+        except Exception as ex: messagebox.showerror("",str(ex)); return
         while raw and all(v is None for v in raw[-1]): raw.pop()
         if not raw: return
         nc = max(len(r) for r in raw)
         while self.cols < nc: self.add_col()
         while len(self.entries) < len(raw): self.add_row()
-        for i, row in enumerate(raw):
-            for j, v in enumerate(row):
-                if j >= self.cols: break
-                cv = "" if v is None else str(v).replace(",", ".")
-                self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, cv)
+        for i,row in enumerate(raw):
+            for j,v in enumerate(row):
+                if j>=self.cols: break
+                cv = "" if v is None else str(v).replace(",",".")
+                self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,cv)
 
     def _settings(self):
         dlg = GraphSettingsDlg(self.win, self.gs, show_heatmap=True)
         self.win.wait_window(dlg)
         if dlg.result: self.gs = dlg.result
 
+    # ── Копіювання ────────────────────────────────────────────
+    def _copy_heatmap(self):
+        if self._hm_fig is None:
+            messagebox.showwarning("","Спочатку виконайте аналіз."); return
+        ok, msg = _copy_fig_to_clipboard(self._hm_fig)
+        if ok: messagebox.showinfo("","Теплову карту скопійовано.\nВставте у Word через Ctrl+V.")
+        else:   messagebox.showwarning("",f"Помилка: {msg}")
+
+    # ── Довідка ───────────────────────────────────────────────
+    def _show_help(self):
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — Кореляційний аналіз")
+        win.geometry("700x640"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip())
+        txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
+    # ── Діалог параметрів і запуск ────────────────────────────
     def _run_analysis(self):
-        """Запит параметрів і запуск кореляційного аналізу."""
+        """Спрощений діалог параметрів — без блоку 'де знаходяться назви'
+        (назви беруться з заголовків стовпців які користувач перейменував)."""
         dlg = tk.Toplevel(self.win)
         dlg.title("Параметри кореляційного аналізу")
-        dlg.resizable(True, True); set_icon(dlg)
-
-        # ── Scrollable container ────────────────────────────────
-        outer = tk.Frame(dlg); outer.pack(fill=tk.BOTH, expand=True)
-        vsb = ttk.Scrollbar(outer, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas_dlg = tk.Canvas(outer, yscrollcommand=vsb.set, highlightthickness=0)
-        canvas_dlg.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.config(command=canvas_dlg.yview)
-        frm = tk.Frame(canvas_dlg, padx=18, pady=14)
-        canvas_dlg.create_window((0, 0), window=frm, anchor="nw")
-        frm.bind("<Configure>",
-                 lambda e: canvas_dlg.configure(scrollregion=canvas_dlg.bbox("all")))
-        dlg.bind("<MouseWheel>",
-                 lambda e: canvas_dlg.yview_scroll(int(-1*(e.delta/120)), "units"))
-
+        dlg.resizable(False, False); set_icon(dlg)
+        frm = tk.Frame(dlg, padx=20, pady=16); frm.pack(fill=tk.BOTH, expand=True)
         rb_f = ("Times New Roman", 12)
 
-        # ── Розташування назв показників ──
-        tk.Label(frm, text="Де знаходяться назви показників?",
-                 font=("Times New Roman", 12, "bold")).grid(row=0, column=0, columnspan=2,
-                                                              sticky="w", pady=(0, 4))
-        names_var = tk.StringVar(value="row")
-        tk.Radiobutton(frm, text="У першому рядку кожного стовпця\n"
-                       "(кожен стовпець = один показник, перша клітинка = назва)",
-                       variable=names_var, value="row", font=rb_f, justify="left",
-                       wraplength=480).grid(row=1, column=0, columnspan=2, sticky="w", pady=2)
-        tk.Radiobutton(frm, text="У першій колонці\n"
-                       "(кожен рядок = один показник, перша клітинка рядка = назва)",
-                       variable=names_var, value="col", font=rb_f, justify="left",
-                       wraplength=480).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
-
-        ttk.Separator(frm, orient="horizontal").grid(row=3, column=0, columnspan=2,
-                                                      sticky="ew", pady=8)
-
-        # ── Метод кореляції ──
+        # ── Метод кореляції ──────────────────────────────────
         tk.Label(frm, text="Метод кореляції:",
-                 font=("Times New Roman", 12, "bold")).grid(row=4, column=0, columnspan=2,
-                                                              sticky="w", pady=(0, 4))
+                 font=("Times New Roman", 12, "bold")).grid(
+                 row=0, column=0, columnspan=2, sticky="w", pady=(0,6))
         meth_var = tk.StringVar(value="auto")
         methods = [
-            ("auto",    "Авто — автоматично перевіряє нормальність (рекомендовано)\n"
-                        "  → якщо всі показники нормальні: Пірсон\n"
-                        "  → якщо хоч один ненормальний: Спірмен"),
-            ("pearson", "Пірсон r — для нормально розподілених даних, лінійний зв'язок\n"
-                        "  ⚠ Програма попередить якщо дані не нормальні"),
-            ("spearman","Спірмен ρ — непараметричний, для будь-якого розподілу,\n"
-                        "  виявляє монотонний (не лише лінійний) зв'язок"),
+            ("auto",
+             "Авто (рекомендовано) — перевіряє нормальність:\n"
+             "  ✓ всі нормальні → Пірсон\n"
+             "  ✓ хоч один ненормальний → Спірмен"),
+            ("pearson",
+             "Пірсон r — лінійний зв'язок, нормальний розподіл\n"
+             "  ⚠ При ненормальних даних програма попередить"),
+            ("spearman",
+             "Спірмен ρ — непараметричний, будь-який розподіл,\n"
+             "  монотонний зв'язок, стійкий до викидів"),
         ]
-        for ri, (val, txt) in enumerate(methods):
-            tk.Radiobutton(frm, text=txt, variable=meth_var, value=val,
-                           font=rb_f, justify="left", wraplength=480
-                           ).grid(row=5+ri, column=0, columnspan=2, sticky="w", pady=2)
+        for ri, (val, txt_) in enumerate(methods):
+            tk.Radiobutton(frm, text=txt_, variable=meth_var, value=val,
+                           font=rb_f, justify="left", wraplength=440
+                           ).grid(row=1+ri, column=0, columnspan=2, sticky="w", pady=3)
 
-        ttk.Separator(frm, orient="horizontal").grid(row=8, column=0, columnspan=2,
-                                                      sticky="ew", pady=8)
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=4, column=0, columnspan=2, sticky="ew", pady=10)
 
-        # ── Поправка на множинні порівняння ──
+        # ── Поправка на множинні порівняння ──────────────────
         tk.Label(frm, text="Поправка на множинні порівняння:",
-                 font=("Times New Roman", 12, "bold")).grid(row=9, column=0, columnspan=2,
-                                                              sticky="w", pady=(0, 4))
+                 font=("Times New Roman", 12, "bold")).grid(
+                 row=5, column=0, columnspan=2, sticky="w", pady=(0,6))
         corr_var = tk.StringVar(value="bonferroni")
         corrections = [
-            ("bonferroni", "Бонферроні — суворіша, контролює сімейну помилку (FWER)\n"
-                           "  Рекомендується при ≤ 10 показниках"),
-            ("bh",         "Benjamini–Hochberg (FDR) — ліберальніша, більша потужність\n"
-                           "  Рекомендується при > 10 показниках"),
-            ("none",       "Без поправки — не рекомендується при > 3 показниках"),
+            ("bonferroni",
+             "Бонферроні — строга, контролює сімейну помилку (FWER)\n"
+             "  Рекомендується при ≤ 10 показниках"),
+            ("bh",
+             "Benjamini–Hochberg (FDR) — ліберальніша, більша потужність\n"
+             "  Рекомендується при > 10 показниках"),
+            ("none",
+             "Без поправки — не рекомендується при > 3 показниках"),
         ]
-        for ri, (val, txt) in enumerate(corrections):
-            tk.Radiobutton(frm, text=txt, variable=corr_var, value=val,
-                           font=rb_f, justify="left", wraplength=480
-                           ).grid(row=10+ri, column=0, columnspan=2, sticky="w", pady=2)
+        for ri, (val, txt_) in enumerate(corrections):
+            tk.Radiobutton(frm, text=txt_, variable=corr_var, value=val,
+                           font=rb_f, justify="left", wraplength=440
+                           ).grid(row=6+ri, column=0, columnspan=2, sticky="w", pady=3)
 
-        ttk.Separator(frm, orient="horizontal").grid(row=13, column=0, columnspan=2,
-                                                      sticky="ew", pady=8)
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=9, column=0, columnspan=2, sticky="ew", pady=10)
 
-        # ── Рівень значущості ──
+        # ── Рівень значущості ─────────────────────────────────
         tk.Label(frm, text="Рівень значущості α:",
-                 font=("Times New Roman", 12, "bold")).grid(row=14, column=0, sticky="w")
+                 font=("Times New Roman", 12, "bold")).grid(row=10, column=0, sticky="w")
         alpha_var = tk.StringVar(value="0.05")
-        ttk.Combobox(frm, textvariable=alpha_var, values=["0.01", "0.05", "0.10"],
-                     state="readonly", width=8,
-                     font=("Times New Roman",12)).grid(row=14, column=1, sticky="w", padx=8)
+        ttk.Combobox(frm, textvariable=alpha_var, values=["0.01","0.05","0.10"],
+                     state="readonly", width=9,
+                     font=("Times New Roman",12)).grid(row=10, column=1, sticky="w", padx=8)
 
-        # ── Кнопки ──
-        bf = tk.Frame(frm); bf.grid(row=15, column=0, columnspan=2, pady=(14, 0))
+        # ── Кнопки ───────────────────────────────────────────
+        bf = tk.Frame(frm); bf.grid(row=11, column=0, columnspan=2, pady=(16,0))
         out = {"ok": False}
+
         def ok():
-            out.update({"ok": True, "names_loc": names_var.get(),
-                        "method": meth_var.get(), "correction": corr_var.get(),
-                        "alpha": float(alpha_var.get())})
+            out.update({"ok": True,
+                        "method":     meth_var.get(),
+                        "correction": corr_var.get(),
+                        "alpha":      float(alpha_var.get())})
             dlg.destroy()
-        tk.Button(bf, text="Виконати аналіз", width=18, bg="#c62828", fg="white",
+
+        tk.Button(bf, text="▶ Виконати аналіз", width=20,
+                  bg="#c62828", fg="white",
                   font=("Times New Roman",12), command=ok).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", width=12,
                   font=("Times New Roman",12), command=dlg.destroy).pack(side=tk.LEFT, padx=4)
 
-        # ── Авторозмір: підганяємо вікно під вміст (але не більше екрану) ──
         dlg.update_idletasks()
-        frm.update_idletasks()
-        req_w = frm.winfo_reqwidth() + 30   # +scrollbar width
-        req_h = frm.winfo_reqheight() + 20
-        scr_w = dlg.winfo_screenwidth(); scr_h = dlg.winfo_screenheight()
-        win_w = min(req_w, scr_w - 80)
-        win_h = min(req_h, scr_h - 120)
-        dlg.geometry(f"{win_w}x{win_h}")
         center_win(dlg)
         dlg.bind("<Return>", lambda e: ok())
         dlg.grab_set(); self.win.wait_window(dlg)
         if not out["ok"]: return
-        self._compute_and_show(out["names_loc"], out["method"], out["alpha"], out["correction"])
 
-    def _compute_and_show(self, names_loc, method, alpha, correction="bonferroni"):
-        # ── Extract raw grid ──────────────────────────────────
-        raw = [[e.get().strip() for e in row] for row in self.entries]
-        raw = [r for r in raw if any(v for v in r)]
-        if not raw: messagebox.showwarning("", "Немає даних."); return
+        # Назви показників — завжди з заголовків стовпців
+        self._compute_and_show(out["method"], out["alpha"], out["correction"])
 
-        if names_loc == "col":
-            labels = []; data_cols = []
-            for row in raw:
-                lbl = row[0] if row else ""
-                if not lbl: continue
-                vals = []
-                for v in row[1:]:
-                    if not v: continue
-                    try: vals.append(float(v.replace(",", ".")))
-                    except Exception: continue
-                if len(vals) >= 3:
-                    labels.append(lbl); data_cols.append(vals)
-        else:
-            n_cols = max(len(r) for r in raw) if raw else 0
-            labels = []; data_cols = []
-            for j in range(n_cols):
-                col_name = ""; col_vals = []
-                for row in raw:
-                    v = row[j] if j < len(row) else ""
-                    if not v: continue
-                    if not col_name:
-                        try:
-                            float(v.replace(",", "."))
-                            col_name = (self.header_labels[j].cget("text")
-                                        if j < len(self.header_labels) else f"П{j+1}")
-                            col_vals.append(float(v.replace(",", ".")))
-                        except ValueError:
-                            col_name = v
-                    else:
-                        try: col_vals.append(float(v.replace(",", ".")))
-                        except Exception: continue
-                if col_name and len(col_vals) >= 3:
-                    labels.append(col_name); data_cols.append(col_vals)
+    # ── Обчислення кореляцій ──────────────────────────────────
+    def _compute_and_show(self, method, alpha, correction="bonferroni"):
+        """
+        Читає дані зі стовпців таблиці.
+        Назви показників = заголовки стовпців (header_vars).
+        Кожен стовпець = один показник, рядки = спостереження.
+        """
+        # Збираємо дані по стовпцях
+        labels = []; data_cols = []
+        for j in range(self.cols):
+            col_name = self.header_vars[j].get().strip() or f"Показник {j+1}"
+            col_vals = []
+            for row in self.entries:
+                v = row[j].get().strip() if j < len(row) else ""
+                if not v: continue
+                try: col_vals.append(float(v.replace(",",".")))
+                except Exception: continue
+            if len(col_vals) >= 3:
+                labels.append(col_name)
+                data_cols.append(col_vals)
 
         if len(data_cols) < 2:
             messagebox.showwarning("Замало даних",
-                "Потрібно ≥ 2 показники з ≥ 3 значеннями кожен."); return
+                "Потрібно ≥ 2 стовпці з даними (≥ 3 значення у кожному).\n\n"
+                "Переконайтесь що дані введені у числовому форматі "
+                "і кожен стовпець містить хоча б 3 числа."); return
 
         n = len(labels)
-        # ── Per-pair arrays (не вирівнюємо — використовуємо pairwise) ──
         arrays = [np.array(d, dtype=float) for d in data_cols]
-        # matrix for pair lengths
-        n_mat = np.zeros((n, n), dtype=int)
+        n_mat  = np.zeros((n, n), dtype=int)
 
-        # ── Авто-вибір методу: Shapiro-Wilk на кожному показнику ──
+        # ── Авто-вибір / перевірка Пірсона ───────────────────
         actual_method = method
-        if method == "auto":
+        if method in ("auto", "pearson"):
             non_normal = []
             for i, arr in enumerate(arrays):
                 if len(arr) < 3: continue
@@ -1454,176 +1611,109 @@ class CorrelationWindow:
                     _, p_sw = shapiro(arr)
                     if p_sw <= 0.05: non_normal.append(labels[i])
                 except Exception: pass
-            if non_normal:
-                detail = ", ".join(non_normal[:5])
-                messagebox.showinfo("Авто-вибір методу",
-                    f"Показники, що не відповідають нормальному розподілу:\n{detail}\n\n"
-                    "Автоматично обрано метод Спірмена (непараметричний).")
-                actual_method = "spearman"
-            else:
-                messagebox.showinfo("Авто-вибір методу",
-                    "Усі показники відповідають нормальному розподілу.\n"
-                    "Автоматично обрано метод Пірсона.")
-                actual_method = "pearson"
 
-        # ── Попередження якщо Pearson обраний вручну ──
-        elif method == "pearson":
-            non_normal = []
-            for i, arr in enumerate(arrays):
-                if len(arr) < 3: continue
-                try:
-                    _, p_sw = shapiro(arr)
-                    if p_sw <= 0.05: non_normal.append(labels[i])
-                except Exception: pass
-            if non_normal:
-                detail = ", ".join(non_normal[:5])
-                ans = messagebox.askyesno("Увага: нормальність порушена",
-                    f"Показники, що не відповідають нормальному розподілу:\n{detail}\n\n"
-                    "Кореляція Пірсона передбачає нормальний розподіл обох змінних.\n"
-                    "При порушенні цієї умови результат може бути ненадійним.\n\n"
-                    "Рекомендація: використовуйте кореляцію Спірмена.\n\n"
-                    "Продовжити з Пірсоном попри порушення умови?")
+            if method == "auto":
+                if non_normal:
+                    messagebox.showinfo("Авто-вибір методу",
+                        f"Показники з ненормальним розподілом:\n"
+                        f"{', '.join(non_normal[:5])}\n\n"
+                        "Автоматично обрано: Спірмен (непараметричний).")
+                    actual_method = "spearman"
+                else:
+                    messagebox.showinfo("Авто-вибір методу",
+                        "Всі показники відповідають нормальному розподілу.\n"
+                        "Автоматично обрано: Пірсон.")
+                    actual_method = "pearson"
+            elif method == "pearson" and non_normal:
+                ans = messagebox.askyesno(
+                    "Увага: нормальність порушена",
+                    f"Показники з ненормальним розподілом:\n"
+                    f"{', '.join(non_normal[:5])}\n\n"
+                    "Кореляція Пірсона передбачає нормальний розподіл.\n"
+                    "Рекомендується: Спірмен.\n\n"
+                    "Продовжити з Пірсоном попри порушення?")
                 if not ans: return
 
-        # ── Побудова попарних матриць r та p ──────────────────
-        r_mat = np.full((n, n), np.nan); p_mat = np.full((n, n), np.nan)
-        np.fill_diagonal(r_mat, 1.0); np.fill_diagonal(p_mat, 1.0)
+        # ── Попарна кореляційна матриця ───────────────────────
+        r_mat = np.full((n, n), np.nan)
+        p_mat = np.full((n, n), np.nan)
+        np.fill_diagonal(r_mat, 1.0)
+        np.fill_diagonal(p_mat, 1.0)
         np.fill_diagonal(n_mat, [len(a) for a in arrays])
 
-        raw_p_pairs = []   # [(i, j, p_raw)] for correction
+        raw_p_pairs = []
         for i in range(n):
-            for j in range(i + 1, n):
-                # pairwise complete observations
+            for j in range(i+1, n):
                 a = arrays[i]; b = arrays[j]
                 min_len = min(len(a), len(b))
                 a2 = a[:min_len]; b2 = b[:min_len]
-                # remove pairs where either is NaN
                 mask = ~(np.isnan(a2) | np.isnan(b2))
                 a2 = a2[mask]; b2 = b2[mask]
                 pair_n = len(a2)
-                n_mat[i, j] = n_mat[j, i] = pair_n
-                if pair_n < 3:
-                    continue
+                n_mat[i,j] = n_mat[j,i] = pair_n
+                if pair_n < 3: continue
                 try:
                     if actual_method == "pearson":
                         r_, p_ = pearsonr(a2, b2)
                     else:
                         r_, p_ = spearmanr(a2, b2)
-                    r_mat[i, j] = r_mat[j, i] = float(r_)
+                    r_mat[i,j] = r_mat[j,i] = float(r_)
                     raw_p_pairs.append((i, j, float(p_)))
-                except Exception:
-                    pass
+                except Exception: pass
+
+        if not raw_p_pairs:
+            messagebox.showwarning("Замало даних",
+                "Жодної пари показників не має ≥ 3 спільних спостережень."); return
 
         # ── Поправка на множинні порівняння ───────────────────
-        m_tests = len(raw_p_pairs)
-        if m_tests == 0:
-            messagebox.showwarning("", "Жодної пари з достатньою кількістю даних."); return
-
+        m = len(raw_p_pairs)
         if correction == "bonferroni":
             for i, j, p_raw in raw_p_pairs:
-                p_adj = min(1.0, p_raw * m_tests)
-                p_mat[i, j] = p_mat[j, i] = p_adj
+                p_mat[i,j] = p_mat[j,i] = min(1.0, p_raw * m)
         elif correction == "bh":
-            # Benjamini–Hochberg FDR
-            sorted_pairs = sorted(raw_p_pairs, key=lambda x: x[2])
-            p_adj_arr = np.array([p for _, _, p in sorted_pairs])
-            m = len(p_adj_arr)
-            # BH adjustment
-            bh_adj = np.zeros(m)
-            for k in range(m - 1, -1, -1):
-                bh_adj[k] = min(1.0, p_adj_arr[k] * m / (k + 1))
-                if k < m - 1: bh_adj[k] = min(bh_adj[k], bh_adj[k + 1])
-            for idx, (i, j, _) in enumerate(sorted_pairs):
-                p_mat[i, j] = p_mat[j, i] = float(bh_adj[idx])
-        else:  # none
-            for i, j, p_raw in raw_p_pairs:
-                p_mat[i, j] = p_mat[j, i] = p_raw
+            sp = sorted(raw_p_pairs, key=lambda x: x[2])
+            bh = np.array([p for _,_,p in sp])
+            for k in range(len(bh)-1,-1,-1):
+                bh[k] = min(1.0, bh[k]*len(bh)/(k+1))
+                if k < len(bh)-1: bh[k] = min(bh[k], bh[k+1])
+            for idx,(i,j,_) in enumerate(sp):
+                p_mat[i,j] = p_mat[j,i] = float(bh[idx])
+        else:
+            for i,j,p_raw in raw_p_pairs:
+                p_mat[i,j] = p_mat[j,i] = p_raw
 
-        corr_label = {"bonferroni": "Бонферроні", "bh": "BH/FDR", "none": "без поправки"
+        corr_label = {"bonferroni":"Бонферроні","bh":"BH/FDR","none":"без поправки"
                       }.get(correction, correction)
+
+        # ── Показуємо результати ──────────────────────────────
         self._show_heatmap(labels, r_mat, p_mat, n_mat, alpha, actual_method, corr_label)
-        # Scatter plot matrix (діаграма розсіювання) — додаємо як другу вкладку
         self._show_scatter_matrix(labels, arrays, actual_method)
 
-    def _show_scatter_matrix(self, labels, arrays, method):
-        """Діаграма розсіювання (scatter plot) для кожної пари показників."""
-        if not HAS_MPL: return
-        n = len(labels)
-        if n < 2 or n > 8:
-            # При > 8 показниках матриця занадто густа — показуємо лише перші 4 пари
-            if n > 8:
-                labels = labels[:4]; arrays = arrays[:4]; n = 4
-            else: return
-
-        win = tk.Toplevel(self.win)
-        win.title("Матриця діаграм розсіювання"); win.geometry("980x800"); set_icon(win)
-
-        top = tk.Frame(win, padx=6, pady=4); top.pack(fill=tk.X)
-        tk.Label(top, text="Діаграми розсіювання для всіх пар показників",
-                 font=("Times New Roman", 12, "bold")).pack(side=tk.LEFT)
-
-        fig = Figure(figsize=(min(10, n * 2.2), min(10, n * 2.2)), dpi=100)
-        colors_sc = ["#4c72b0", "#dd8452", "#55a868", "#c44e52"]
-
-        for i in range(n):
-            for j in range(n):
-                ax = fig.add_subplot(n, n, i * n + j + 1)
-                if i == j:
-                    # По діагоналі — гістограма
-                    a = arrays[i][~np.isnan(arrays[i])]
-                    ax.hist(a, bins=max(5, int(np.sqrt(len(a)))),
-                            color="#4c72b0", alpha=0.7, edgecolor="white")
-                    ax.set_title(labels[i], fontsize=7, pad=2)
-                else:
-                    # Поза діагоналлю — scatter
-                    xi = arrays[j]; yi = arrays[i]
-                    min_n = min(len(xi), len(yi))
-                    xi = xi[:min_n]; yi = yi[:min_n]
-                    mask = ~(np.isnan(xi) | np.isnan(yi))
-                    xi = xi[mask]; yi = yi[mask]
-                    ax.scatter(xi, yi, s=12, alpha=0.7,
-                               color=colors_sc[i % len(colors_sc)])
-                    # Лінія тренду
-                    if len(xi) >= 3:
-                        try:
-                            z = np.polyfit(xi, yi, 1)
-                            p_f = np.poly1d(z)
-                            x_line = np.linspace(xi.min(), xi.max(), 50)
-                            ax.plot(x_line, p_f(x_line), "r-", lw=0.8, alpha=0.8)
-                        except Exception: pass
-                ax.tick_params(labelsize=5)
-                if j == 0: ax.set_ylabel(labels[i], fontsize=6)
-                if i == n - 1: ax.set_xlabel(labels[j], fontsize=6)
-                ax.spines["top"].set_visible(False)
-                ax.spines["right"].set_visible(False)
-
-        fig.suptitle(f"Матриця діаграм розсіювання ({method.capitalize()})",
-                     fontsize=10, y=1.01)
-        fig.tight_layout()
-        cv = FigureCanvasTkAgg(fig, master=win); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        def copy_sc():
-            ok, msg = _copy_fig_to_clipboard(fig)
-            if ok: messagebox.showinfo("", "Скопійовано.")
-            else: messagebox.showwarning("", f"Помилка: {msg}")
-        tk.Button(win, text="📋 Копіювати PNG", command=copy_sc).pack(pady=4)
-
-
-        if not HAS_MPL: messagebox.showwarning("", "matplotlib недоступний."); return
+    # ── Теплова карта ─────────────────────────────────────────
+    def _show_heatmap(self, labels, r_mat, p_mat, n_mat, alpha, method, corr_label):
+        if not HAS_MPL: messagebox.showwarning("","matplotlib недоступний."); return
         gs = self.gs
-        win = tk.Toplevel(self.win); win.title("Теплова карта кореляцій")
-        win.geometry("860x740"); set_icon(win)
-        tb = tk.Frame(win, padx=6, pady=4); tb.pack(fill=tk.X)
+        win = tk.Toplevel(self.win)
+        win.title("Теплова карта кореляцій")
+        win.geometry("880x760"); set_icon(win)
+
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
         tk.Button(tb, text="⚙ Налаштування",
-                  command=lambda: self._restyle(win, labels, r_mat, p_mat, n_mat, alpha, method, corr_label)
+                  font=("Times New Roman",11),
+                  command=lambda: self._restyle(
+                      win, labels, r_mat, p_mat, n_mat, alpha, method, corr_label)
                   ).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb, text=f"Метод: {method.capitalize()}   |   Поправка: {corr_label}   |   α={alpha}",
-                 font=("Times New Roman", 11), fg="#555").pack(side=tk.LEFT, padx=10)
+        tk.Button(tb, text="📋 Копіювати PNG",
+                  font=("Times New Roman",11),
+                  command=self._copy_heatmap).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb,
+                 text=f"Метод: {'Пірсон' if method=='pearson' else 'Спірмен'}  "
+                      f"|  Поправка: {corr_label}  |  α = {alpha}",
+                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
 
         fig_frame = tk.Frame(win); fig_frame.pack(fill=tk.BOTH, expand=True)
         self._draw_heatmap(fig_frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, gs)
-        self._hm_data = (labels, r_mat, p_mat, n_mat, alpha, method, corr_label)
+        self._hm_data  = (labels, r_mat, p_mat, n_mat, alpha, method, corr_label)
         self._hm_frame = fig_frame
 
     def _restyle(self, win, labels, r_mat, p_mat, n_mat, alpha, method, corr_label):
@@ -1632,67 +1722,121 @@ class CorrelationWindow:
         if dlg.result:
             self.gs = dlg.result
             for w in self._hm_frame.winfo_children(): w.destroy()
-            self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, self.gs)
+            self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat,
+                               alpha, method, corr_label, self.gs)
 
     def _draw_heatmap(self, frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, gs):
         n = len(labels)
-        cell_size = max(1.0, min(1.4, 9.0 / n))
-        fig_sz = max(5, n * cell_size + 1.8)
-        fig = Figure(figsize=(min(fig_sz, 12), min(fig_sz, 12)), dpi=100)
-        ax = fig.add_subplot(111)
+        cell = max(1.0, min(1.5, 10.0/n))
+        sz   = max(5, n*cell + 2.0)
+        fig  = Figure(figsize=(min(sz,13), min(sz,13)), dpi=100)
+        ax   = fig.add_subplot(111)
 
-        cmap_name = gs.get("heatmap_cmap", "RdYlGn")
-        fsize  = gs.get("heatmap_font_size", 9)
-        acol   = gs.get("heatmap_annot_color", "#000000")
-        ff     = gs.get("font_family", "Times New Roman")
+        cmap_name = gs.get("heatmap_cmap","RdYlGn")
+        fsize     = gs.get("heatmap_font_size", 9)
+        acol      = gs.get("heatmap_annot_color","#000000")
+        ff        = gs.get("font_family","Times New Roman")
 
-        try: cmap = matplotlib.cm.get_cmap(cmap_name)
-        except Exception: cmap = matplotlib.cm.get_cmap("RdYlGn")
+        try:    cmap = matplotlib.cm.get_cmap(cmap_name)
+        except: cmap = matplotlib.cm.get_cmap("RdYlGn")
 
         masked = np.ma.array(r_mat, mask=np.isnan(r_mat))
         im = ax.imshow(masked, cmap=cmap, vmin=-1, vmax=1, aspect="auto")
 
+        meth_full = "Пірсон" if method=="pearson" else "Спірмен"
+        ax.set_title(f"Кореляційна матриця ({meth_full}, {corr_label}, α={alpha})\n"
+                     f"Клітинки: r / p-скор / n",
+                     fontsize=fsize+1, fontfamily=ff)
         ax.set_xticks(range(n))
         ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=fsize, fontfamily=ff)
         ax.set_yticks(range(n))
         ax.set_yticklabels(labels, fontsize=fsize, fontfamily=ff)
-        meth_full = "Пірсон" if method == "pearson" else "Спірмен"
-        ax.set_title(f"Кореляційна матриця ({meth_full}, {corr_label}, α={alpha})\n"
-                     f"У клітинках: r / p / n",
-                     fontsize=fsize + 1, fontfamily=ff)
 
         for i in range(n):
             for j in range(n):
-                r_ = r_mat[i, j]; p_ = p_mat[i, j]
+                r_ = r_mat[i,j]; p_ = p_mat[i,j]
                 if i == j:
-                    ax.text(j, i, "—", ha="center", va="center",
-                            fontsize=fsize, color=acol, fontfamily=ff)
+                    ax.text(j,i,"—",ha="center",va="center",
+                            fontsize=fsize,color=acol,fontfamily=ff)
                     continue
                 if math.isnan(r_): continue
-                # significance mark on corrected p
-                p_disp = p_ if not math.isnan(p_) else np.nan
-                mark = sig_mark(p_disp) if not math.isnan(p_disp) else ""
-                n_ij = int(n_mat[i, j]) if n_mat is not None else 0
-                # format: r / p / n (3 lines)
-                p_str = fmt(p_disp, 3) if not math.isnan(p_disp) else "н/д"
-                cell_txt = f"{r_:.2f}{mark}\np={p_str}\nn={n_ij}"
-                ax.text(j, i, cell_txt, ha="center", va="center",
-                        fontsize=max(6, fsize - 1), color=acol, fontfamily=ff,
-                        linespacing=1.3)
+                mark   = sig_mark(p_) if not math.isnan(p_) else ""
+                p_str  = fmt(p_,3) if not math.isnan(p_) else "н/д"
+                n_ij   = int(n_mat[i,j]) if n_mat is not None else 0
+                txt_   = f"{r_:.2f}{mark}\np={p_str}\nn={n_ij}"
+                ax.text(j,i,txt_,ha="center",va="center",
+                        fontsize=max(6,fsize-1),color=acol,fontfamily=ff,linespacing=1.3)
 
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cbar.set_label("r", fontsize=fsize, fontfamily=ff)
         fig.tight_layout()
-
         self._hm_fig = fig
+
         cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        def copy_hm():
-            ok, msg = _copy_fig_to_clipboard(self._hm_fig)
-            if ok: messagebox.showinfo("", "Скопійовано.")
-            else:  messagebox.showwarning("", f"Помилка: {msg}")
-        tk.Button(frame, text="📋 Копіювати PNG", command=copy_hm).pack(pady=4)
+    # ── Матриця діаграм розсіювання ───────────────────────────
+    def _show_scatter_matrix(self, labels, arrays, method):
+        if not HAS_MPL: return
+        n = len(labels)
+        # При > 8 показниках обмежуємо до 6 для читабельності
+        if n > 8: labels = labels[:6]; arrays = arrays[:6]; n = 6
+        if n < 2: return
+
+        win = tk.Toplevel(self.win)
+        win.title("Матриця діаграм розсіювання"); win.geometry("980x800"); set_icon(win)
+        top = tk.Frame(win, padx=6, pady=4); top.pack(fill=tk.X)
+        tk.Label(top, text="Матриця діаграм розсіювання",
+                 font=("Times New Roman",12,"bold")).pack(side=tk.LEFT)
+
+        fig  = Figure(figsize=(min(10,n*2.0+0.5), min(10,n*2.0+0.5)), dpi=100)
+        cols_sc = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
+
+        for i in range(n):
+            for j in range(n):
+                ax = fig.add_subplot(n, n, i*n+j+1)
+                if i == j:
+                    a = arrays[i][~np.isnan(arrays[i])]
+                    if len(a) > 0:
+                        ax.hist(a, bins=max(4,int(np.sqrt(len(a)))),
+                                color=cols_sc[i%len(cols_sc)], alpha=0.75, edgecolor="white")
+                    ax.set_title(labels[i], fontsize=7, pad=2)
+                else:
+                    xi = arrays[j]; yi = arrays[i]
+                    mn = min(len(xi),len(yi))
+                    xi=xi[:mn]; yi=yi[:mn]
+                    mask=~(np.isnan(xi)|np.isnan(yi))
+                    xi=xi[mask]; yi=yi[mask]
+                    ax.scatter(xi, yi, s=14, alpha=0.75,
+                               color=cols_sc[i%len(cols_sc)], edgecolors="none")
+                    if len(xi) >= 3:
+                        try:
+                            z = np.polyfit(xi,yi,1)
+                            xl = np.linspace(xi.min(),xi.max(),50)
+                            ax.plot(xl, np.poly1d(z)(xl),"r-",lw=0.9,alpha=0.8)
+                        except Exception: pass
+                ax.tick_params(labelsize=5)
+                if j==0: ax.set_ylabel(labels[i], fontsize=6)
+                if i==n-1: ax.set_xlabel(labels[j], fontsize=6)
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+
+        meth_full = "Пірсон" if method=="pearson" else "Спірмен"
+        fig.suptitle(f"Матриця діаграм розсіювання ({meth_full})",
+                     fontsize=10, y=1.0)
+        fig.tight_layout()
+        self._sc_fig = fig
+
+        cv = FigureCanvasTkAgg(fig, master=win); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        def copy_sc():
+            ok_, msg = _copy_fig_to_clipboard(self._sc_fig)
+            if ok_: messagebox.showinfo("","Скопійовано.")
+            else:   messagebox.showwarning("",f"Помилка: {msg}")
+        tk.Button(win, text="📋 Копіювати PNG", font=("Times New Roman",11),
+                  command=copy_sc).pack(pady=4)
+
 
 
 # ═══════════════════════════════════════════════════════════════
