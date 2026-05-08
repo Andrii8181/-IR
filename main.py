@@ -3786,61 +3786,208 @@ class RegressionWindow:
               "Логарифмічна:  y = a + b·ln(x)",
               "Логістична (4-пар.):  y = d + (a-d)/(1+(x/c)ᵇ)"]
 
+    HELP_TEXT = """
+РЕГРЕСІЙНИЙ АНАЛІЗ — ПОКРОКОВА ІНСТРУКЦІЯ
+══════════════════════════════════════════
+
+КРОК 1. ВВЕДЕННЯ ДАНИХ
+  • Ліве поле: значення незалежної змінної x
+    (фактор, що ви змінюєте — доза добрива, час, температура тощо)
+  • Праве поле: значення залежної змінної y
+    (показник, що вимірюєте — врожайність, висота, маса тощо)
+  • Вводьте по одному значенню на рядок або через кому
+  • Або натисніть «Вставити дані» — два стовпці з Excel (x | y)
+  • Мінімум: 4 пари значень
+
+КРОК 2. ВИБІР МОДЕЛІ
+  Лінійна (y = a + bx):
+    Коли залежність пряма — з ростом x, y рівномірно росте або спадає.
+    Найпоширеніша. Починайте з неї.
+
+  Квадратична (y = a + bx + cx²):
+    Коли є оптимум — крива з одним піком або западиною.
+    Типово для доз добрив, щільності посіву — є оптимальна доза.
+
+  Кубічна (y = a + bx + cx² + dx³):
+    Складніша крива з S-подібним характером.
+    Використовуйте якщо квадратична дає погану підгонку.
+
+  Степенева (y = a·xᵇ):
+    Вимагає x > 0. Для алометричних залежностей (маса-розмір).
+
+  Експоненційна (y = a·eᵇˣ):
+    Для процесів росту (b > 0) або спаду (b < 0).
+
+  Логарифмічна (y = a + b·ln(x)):
+    Вимагає x > 0. Коли ефект насичується з ростом x.
+
+  Логістична 4-параметрична:
+    S-подібна крива. Для доза-відповідь, росту популяцій.
+    Параметри: a = верхня асимптота, d = нижня,
+               c = точка перегину, b = крутизна.
+
+КРОК 3. ВИКОНАННЯ АНАЛІЗУ
+  Натисніть «▶ Виконати» і переглядайте результати.
+
+КРОК 4. ІНТЕРПРЕТАЦІЯ РЕЗУЛЬТАТІВ
+
+  Рівняння регресії:
+    Математична формула залежності y від x.
+    Підставте будь-яке значення x щоб отримати прогноз y.
+
+  R² (коефіцієнт детермінації):
+    Від 0 до 1. Показує яку частку варіації y пояснює модель.
+    R² = 0.85 → модель пояснює 85% мінливості y.
+    R² > 0.90 → відмінна підгонка для агрономічних даних.
+    R² < 0.50 → модель слабка, шукайте інші фактори.
+
+  R²adj (скоригований R²):
+    Враховує кількість параметрів моделі.
+    При порівнянні моделей з різною кількістю параметрів
+    орієнтуйтесь саме на R²adj, а не на R².
+    Якщо R²adj < R² — модель надто складна для ваших даних.
+
+  RMSE (середньоквадратична похибка):
+    В одиницях вимірювання y.
+    Середнє відхилення прогнозу від факту.
+    Менше RMSE → точніший прогноз.
+    Наприклад: RMSE = 0.3 т/га означає що модель
+    помиляється в середньому на ±0.3 т/га.
+
+  F-тест (значущість моделі):
+    p < 0.05 → модель значуща, залежність існує ✓
+    p ≥ 0.05 → модель незначуща (можливо замало даних
+               або залежності взагалі немає) ✗
+
+  Shapiro–Wilk залишків:
+    Перевіряє нормальність відхилень від моделі.
+    p > 0.05 → залишки нормальні → модель коректна ✓
+    p ≤ 0.05 → залишки ненормальні → перевірте наявність
+               викидів або спробуйте іншу модель.
+
+КРОК 5. ОЦІНКА ГРАФІКІВ
+
+  Графік «Точкові дані + Крива регресії»:
+    Точки — ваші спостереження.
+    Червона лінія — підібрана модель.
+    Рожева смуга — 95% довірчий інтервал прогнозу.
+    Чим ближче точки до лінії → краща підгонка.
+
+  Графік «Залишки vs Підібрані значення»:
+    Залишки = різниця між фактом і прогнозом.
+    Ідеальний випадок: точки хаотично розкидані
+    навколо нуля без жодного патерну.
+    ⚠ Якщо є патерн (дуга, воронка) → модель некоректна!
+
+КРОК 6. ПОРІВНЯННЯ КІЛЬКОХ МОДЕЛЕЙ
+  Запустіть аналіз послідовно для різних моделей.
+  Оберіть ту де:
+  1. R²adj найвищий
+  2. RMSE найменший
+  3. Залишки нормальні (SW p > 0.05)
+  4. Немає патерну на графіку залишків
+"""
+
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Регресійний аналіз")
-        self.win.geometry("920x680"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent)
+        self.win.title("Регресійний аналіз")
+        self.win.geometry("940x700"); set_icon(self.win)
+        self.gs = gs
+        self._fig = None   # зберігаємо фігуру для копіювання
+        self._build()
 
     def _build(self):
+        # ── Панель інструментів ──────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Label(top, text="Модель:", font=("Times New Roman",12)).pack(side=tk.LEFT)
         self.model_var = tk.StringVar(value=self.MODELS[0])
         ttk.Combobox(top, textvariable=self.model_var, values=self.MODELS,
-                     state="readonly", width=44, font=("Times New Roman",11)).pack(side=tk.LEFT, padx=6)
+                     state="readonly", width=44,
+                     font=("Times New Roman",11)).pack(side=tk.LEFT, padx=6)
         tk.Label(top, text="α:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
                   font=("Times New Roman",13), command=self._run).pack(side=tk.LEFT, padx=10)
-        tk.Button(top, text="Вставити дані", command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="Вставити дані",
+                  font=("Times New Roman",11), command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📋 Копіювати графік",
+                  font=("Times New Roman",11), command=self._copy_graph).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11), command=self._show_help).pack(side=tk.LEFT, padx=4)
 
-        # data entry
-        mid = tk.Frame(self.win); mid.pack(fill=tk.X, padx=8)
-        for j, nm in enumerate(["x (незалежна змінна)", "y (залежна змінна)"]):
-            tk.Label(mid, text=nm, font=("Times New Roman",11,"bold")).grid(row=0, column=j, padx=4)
-        self.tx = tk.Text(mid, width=36, height=14, font=("Times New Roman",11)); self.tx.grid(row=1,column=0,padx=4,pady=2)
-        self.ty = tk.Text(mid, width=36, height=14, font=("Times New Roman",11)); self.ty.grid(row=1,column=1,padx=4,pady=2)
-        tk.Label(mid, text="Вводьте одне значення на рядок або через кому",
-                 font=("Times New Roman",10), fg="#666").grid(row=2,column=0,columnspan=2,sticky="w",padx=4)
+        # ── Поля введення даних ───────────────────────────────
+        mid = tk.Frame(self.win, padx=8); mid.pack(fill=tk.X)
+        tk.Label(mid, text="x  (незалежна змінна)",
+                 font=("Times New Roman",11,"bold")).grid(row=0, column=0, padx=4, pady=(4,2))
+        tk.Label(mid, text="y  (залежна змінна)",
+                 font=("Times New Roman",11,"bold")).grid(row=0, column=1, padx=4, pady=(4,2))
+        self.tx = tk.Text(mid, width=36, height=13, font=("Times New Roman",11))
+        self.tx.grid(row=1, column=0, padx=4, pady=2)
+        self.ty = tk.Text(mid, width=36, height=13, font=("Times New Roman",11))
+        self.ty.grid(row=1, column=1, padx=4, pady=2)
+        tk.Label(mid, text="Одне значення на рядок або через кому. "
+                 "«Вставити дані» — два стовпці з Excel (x ліворуч, y праворуч).",
+                 font=("Times New Roman",9), fg="#666",
+                 wraplength=700, justify="left"
+                 ).grid(row=2, column=0, columnspan=2, sticky="w", padx=4)
 
-        # result area
-        self.res_frame = tk.Frame(self.win, padx=8, pady=4); self.res_frame.pack(fill=tk.BOTH, expand=True)
+        # ── Зона результатів ──────────────────────────────────
+        self.res_frame = tk.Frame(self.win, padx=8, pady=4)
+        self.res_frame.pack(fill=tk.BOTH, expand=True)
 
+    # ── Утиліти ──────────────────────────────────────────────
     def _paste(self):
         try: data = self.win.clipboard_get()
         except Exception: return
-        lines = [l.strip() for l in data.splitlines() if l.strip()]
+        lines_ = [l.strip() for l in data.splitlines() if l.strip()]
         xs, ys = [], []
-        for line in lines:
+        for line in lines_:
             parts = line.replace(",",".").split()
             if len(parts) >= 2:
-                try: xs.append(parts[0]); ys.append(parts[1])
-                except Exception: pass
-        self.tx.delete("1.0",tk.END); self.tx.insert("1.0","\n".join(xs))
-        self.ty.delete("1.0",tk.END); self.ty.insert("1.0","\n".join(ys))
+                xs.append(parts[0]); ys.append(parts[1])
+        self.tx.delete("1.0", tk.END); self.tx.insert("1.0", "\n".join(xs))
+        self.ty.delete("1.0", tk.END); self.ty.insert("1.0", "\n".join(ys))
 
     def _parse_col(self, widget):
         import re
-        txt = widget.get("1.0",tk.END).replace(",",".")
-        return np.array([float(x) for x in re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?",txt)], dtype=float)
+        txt = widget.get("1.0", tk.END).replace(",",".")
+        return np.array([float(v) for v in
+                         re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", txt)], dtype=float)
 
+    def _copy_graph(self):
+        if self._fig is None:
+            messagebox.showwarning("", "Спочатку виконайте аналіз."); return
+        ok, msg = _copy_fig_to_clipboard(self._fig)
+        if ok: messagebox.showinfo("", "Графік скопійовано (PNG).\nВставте у Word через Ctrl+V.")
+        else:   messagebox.showwarning("", f"Помилка копіювання: {msg}")
+
+    def _show_help(self):
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — Регресійний аналіз")
+        win.geometry("680x620"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT, bg="#fafafa",
+                      padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip())
+        txt.configure(state="disabled")
+        txt.bind("<MouseWheel>", lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
+    # ── Виконання аналізу ─────────────────────────────────────
     def _run(self):
-        from scipy.optimize import curve_fit
-        from scipy.stats import f as f_dist_
         alpha = float(self.alpha_var.get())
         x = self._parse_col(self.tx); y = self._parse_col(self.ty)
-        n = min(len(x),len(y)); x = x[:n]; y = y[:n]
-        if n < 4: messagebox.showwarning("Замало даних","Потрібно ≥ 4 точки даних."); return
+        n = min(len(x), len(y)); x = x[:n]; y = y[:n]
+        if n < 4:
+            messagebox.showwarning("Замало даних",
+                "Потрібно ≥ 4 пари значень (x, y)."); return
 
         model_name = self.model_var.get().split(":")[0].strip()
         result = self._fit_model(model_name, x, y, alpha)
@@ -3849,144 +3996,220 @@ class RegressionWindow:
 
     def _fit_model(self, name, x, y, alpha):
         from scipy.optimize import curve_fit
-        # Зіставлення назви моделі (підтримує укр. назви з combobox)
         n_ = name.strip().lower()
         try:
             if "лінійна" in n_ or n_ == "linear":
+                # ── Лінійна ─────────────────────────────────
                 X = np.column_stack([np.ones(len(x)), x])
-                beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
+                # lstsq повертає (beta, residuals_sum, rank, sv) — 4 значення
+                beta = np.linalg.lstsq(X, y, rcond=None)[0]
                 yhat = X @ beta
                 params = {"a": beta[0], "b": beta[1]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x"
+                k = 2
+
             elif "квадратична" in n_ or n_ == "quadratic":
+                # ── Квадратична ──────────────────────────────
                 X = np.column_stack([np.ones(len(x)), x, x**2])
-                beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
+                beta = np.linalg.lstsq(X, y, rcond=None)[0]
                 yhat = X @ beta
                 params = {"a": beta[0], "b": beta[1], "c": beta[2]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x + {fmt(beta[2],4)}·x²"
+                k = 3
+
             elif "кубічна" in n_ or n_ == "cubic":
+                # ── Кубічна ──────────────────────────────────
                 X = np.column_stack([np.ones(len(x)), x, x**2, x**3])
-                beta, _, res, _, _ = np.linalg.lstsq(X, y, rcond=None)
+                beta = np.linalg.lstsq(X, y, rcond=None)[0]
                 yhat = X @ beta
                 params = {"a": beta[0], "b": beta[1], "c": beta[2], "d": beta[3]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·x + {fmt(beta[2],4)}·x² + {fmt(beta[3],4)}·x³"
+                k = 4
+
             elif "степенева" in n_ or n_ == "power":
-                if np.any(x <= 0): messagebox.showwarning("","Степенева модель вимагає x > 0."); return None
-                lx, ly = np.log(x), np.log(y)
+                # ── Степенева ────────────────────────────────
+                if np.any(x <= 0):
+                    messagebox.showwarning("Обмеження моделі",
+                        "Степенева модель вимагає x > 0 для всіх спостережень."); return None
+                lx = np.log(x); ly = np.log(np.abs(y) + 1e-12)
                 X = np.column_stack([np.ones(len(lx)), lx])
-                beta, *_ = np.linalg.lstsq(X, ly, rcond=None)
+                beta = np.linalg.lstsq(X, ly, rcond=None)[0]
                 a, b = math.exp(beta[0]), beta[1]
                 yhat = a * x**b
                 params = {"a": a, "b": b}
                 eq = f"y = {fmt(a,4)}·x^{fmt(b,4)}"
+                k = 2
+
             elif "експоненційна" in n_ or n_ == "exponential":
+                # ── Експоненційна ─────────────────────────────
                 X = np.column_stack([np.ones(len(x)), x])
-                beta, *_ = np.linalg.lstsq(X, np.log(np.abs(y)+1e-10), rcond=None)
+                ly = np.log(np.abs(y) + 1e-12)
+                beta = np.linalg.lstsq(X, ly, rcond=None)[0]
                 a, b = math.exp(beta[0]), beta[1]
                 yhat = a * np.exp(b * x)
                 params = {"a": a, "b": b}
                 eq = f"y = {fmt(a,4)}·e^({fmt(b,4)}·x)"
+                k = 2
+
             elif "логарифмічна" in n_ or n_ == "logarithmic":
-                if np.any(x <= 0): messagebox.showwarning("","Логарифмічна модель вимагає x > 0."); return None
+                # ── Логарифмічна ──────────────────────────────
+                if np.any(x <= 0):
+                    messagebox.showwarning("Обмеження моделі",
+                        "Логарифмічна модель вимагає x > 0 для всіх спостережень."); return None
                 X = np.column_stack([np.ones(len(x)), np.log(x)])
-                beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+                beta = np.linalg.lstsq(X, y, rcond=None)[0]
                 yhat = X @ beta
                 params = {"a": beta[0], "b": beta[1]}
                 eq = f"y = {fmt(beta[0],4)} + {fmt(beta[1],4)}·ln(x)"
+                k = 2
+
             elif "логістична" in n_ or "logistic" in n_:
+                # ── Логістична 4-параметрична ─────────────────
                 def logistic4(xx, a, b, c, d):
-                    return d + (a - d) / (1 + (xx/c)**b)
-                p0 = [max(y), 1, np.median(x), min(y)]
-                popt, _ = curve_fit(logistic4, x, y, p0=p0, maxfev=10000)
+                    return d + (a - d) / (1 + (xx / c) ** b)
+                p0 = [float(np.max(y)), 1.0, float(np.median(x)), float(np.min(y))]
+                popt, _ = curve_fit(logistic4, x, y, p0=p0, maxfev=15000)
                 yhat = logistic4(x, *popt)
-                params = {"a":popt[0],"b":popt[1],"c":popt[2],"d":popt[3]}
-                eq = f"y = {fmt(popt[3],4)} + ({fmt(popt[0],4)}-{fmt(popt[3],4)})/(1+(x/{fmt(popt[2],4)})^{fmt(popt[1],4)})"
+                params = {"a": popt[0], "b": popt[1], "c": popt[2], "d": popt[3]}
+                eq = (f"y = {fmt(popt[3],4)} + ({fmt(popt[0],4)}−{fmt(popt[3],4)})"
+                      f"/(1+(x/{fmt(popt[2],4)})^{fmt(popt[1],4)})")
+                k = 4
+
             else:
                 messagebox.showerror("Невідома модель",
                     f"Модель '{name}' не розпізнана.\nОберіть модель зі списку."); return None
 
-            residuals = y - yhat; sse = float(np.sum(residuals**2))
+            # ── Загальна статистика ───────────────────────────
+            residuals = y - yhat
+            sse = float(np.sum(residuals**2))
             sst = float(np.sum((y - np.mean(y))**2))
-            R2 = 1 - sse/sst if sst > 0 else np.nan
-            n = len(x); k = len(params)
-            R2_adj = 1 - (1-R2)*(n-1)/(n-k-1) if n > k+1 else np.nan
-            mse = sse/(n-k) if n > k else np.nan
-            rmse = math.sqrt(mse) if not math.isnan(mse) else np.nan
-            # F-test
-            msm = (sst - sse)/k if k > 0 else np.nan
-            F = msm/mse if (not math.isnan(mse) and mse > 0) else np.nan
-            p_F = float(1-f_dist.cdf(F,k,n-k-1)) if (not math.isnan(F) and n>k+1) else np.nan
-            # Normality of residuals
-            try: _, sw_p = shapiro(residuals)
-            except Exception: sw_p = np.nan
-            return {"equation":eq,"params":params,"R2":R2,"R2_adj":R2_adj,
-                    "RMSE":rmse,"F":F,"p_F":p_F,"sw_p":sw_p,
-                    "residuals":residuals,"yhat":yhat,"sse":sse,"sst":sst,"n":n,"k":k}
+            n_obs = len(x)
+            R2     = 1 - sse / sst if sst > 0 else np.nan
+            R2_adj = 1 - (1 - R2) * (n_obs - 1) / (n_obs - k - 1) if n_obs > k + 1 else np.nan
+            mse    = sse / (n_obs - k) if n_obs > k else np.nan
+            rmse   = math.sqrt(mse) if not math.isnan(mse) else np.nan
+            # F-тест
+            msm = (sst - sse) / k if k > 0 else np.nan
+            F   = msm / mse if (not math.isnan(mse) and mse > 1e-12) else np.nan
+            p_F = float(1 - f_dist.cdf(F, k, n_obs - k - 1)) \
+                  if (not math.isnan(F) and n_obs > k + 1) else np.nan
+            # Нормальність залишків
+            try:
+                _, sw_p = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
+            except Exception:
+                sw_p = np.nan
+
+            return {"equation": eq, "params": params,
+                    "R2": R2, "R2_adj": R2_adj,
+                    "RMSE": rmse, "F": F, "p_F": p_F, "sw_p": sw_p,
+                    "residuals": residuals, "yhat": yhat,
+                    "sse": sse, "sst": sst, "n": n_obs, "k": k}
+
         except Exception as ex:
             messagebox.showerror("Помилка підгонки", str(ex)); return None
 
+    # ── Відображення результатів ──────────────────────────────
     def _show_result(self, r, x, y, model_name, alpha):
         for w in self.res_frame.winfo_children(): w.destroy()
 
-        # text summary
-        info = (f"Модель: {model_name}\n"
-                f"Рівняння: {r['equation']}\n"
-                f"R² = {fmt(r['R2'],4)}   R²adj = {fmt(r['R2_adj'],4)}   RMSE = {fmt(r['RMSE'],4)}\n"
-                f"F = {fmt(r['F'],4)},  p = {fmt(r['p_F'],4)} {'✓ значуще' if r['p_F'] is not None and not math.isnan(r['p_F']) and r['p_F'] < alpha else '✗ незначуще'}\n"
-                f"Shapiro–Wilk (residuals): p = {fmt(r['sw_p'],4)}  "
-                f"{'✓ залишки нормальні' if r['sw_p'] is not None and not math.isnan(r['sw_p']) and r['sw_p'] > 0.05 else '⚠ залишки НЕ нормальні'}")
-
+        # ── Текстовий підсумок ───────────────────────────────
+        p_F_ok = (r['p_F'] is not None and not math.isnan(r['p_F']) and r['p_F'] < alpha)
+        sw_ok  = (r['sw_p'] is not None and not math.isnan(r['sw_p']) and r['sw_p'] > 0.05)
+        info = (
+            f"Модель: {model_name}   |   n = {r['n']}\n"
+            f"Рівняння: {r['equation']}\n"
+            f"R² = {fmt(r['R2'],4)}   "
+            f"R²скор = {fmt(r['R2_adj'],4)}   "
+            f"RMSE = {fmt(r['RMSE'],4)}\n"
+            f"F = {fmt(r['F'],4)},  p = {fmt(r['p_F'],4)}  "
+            f"{'✓ модель значуща' if p_F_ok else '✗ модель незначуща'}\n"
+            f"Shapiro–Wilk залишків: p = {fmt(r['sw_p'],4)}  "
+            f"{'✓ залишки нормальні' if sw_ok else '⚠ залишки НЕ нормальні — перевірте викиди або модель'}"
+        )
         tk.Label(self.res_frame, text=info, font=("Times New Roman",11),
-                 justify="left", anchor="w").pack(anchor="w")
+                 justify="left", anchor="w",
+                 bg="#f8f8f8", relief=tk.FLAT, padx=8, pady=6
+                 ).pack(fill=tk.X, pady=(0,4))
 
-        # plot
-        if HAS_MPL:
-            fig = Figure(figsize=(10, 3.8), dpi=100)
-            ax1 = fig.add_subplot(121); ax2 = fig.add_subplot(122)
-            x_sort = np.sort(x); idx_sort = np.argsort(x)
-            # scatter + fit
-            ax1.scatter(x, y, s=25, color="#4c72b0", zorder=3, label="Спостереження")
-            ax1.plot(x_sort, r["yhat"][idx_sort], "r-", lw=2, label="Підгонка")
-            # 95% довірча смуга (confidence band) ★
-            n_pts = len(x)
-            if n_pts > r.get("k", 0) + 2 and not math.isnan(r.get("RMSE", float("nan"))):
-                try:
-                    x_pred = np.linspace(x.min(), x.max(), 200)
-                    # Для лінійної/квадратичної моделі — аналітична смуга
-                    # Для інших — апроксимація через bootstrap-like SE
-                    rmse_ = r.get("RMSE", 0); dfe_ = n_pts - r.get("k", 0) - 1
-                    if dfe_ > 0:
-                        t_crit_ = float(t_dist.ppf(0.975, dfe_))
-                        x_mean_ = np.mean(x)
-                        # Спрощена формула для предикційного інтервалу середнього
-                        se_fit = rmse_ * np.sqrt(1/n_pts + (x_pred - x_mean_)**2 /
-                                                  np.sum((x - x_mean_)**2))
-                        # Інтерполюємо yhat на x_pred
-                        yhat_pred = np.interp(x_pred, x_sort, r["yhat"][idx_sort])
-                        ax1.fill_between(x_pred,
-                                         yhat_pred - t_crit_ * se_fit,
-                                         yhat_pred + t_crit_ * se_fit,
-                                         alpha=0.15, color="#c62828",
-                                         label="95% довірча смуга")
-                except Exception: pass
-            ax1.set_xlabel("x"); ax1.set_ylabel("y")
-            ax1.set_title(f"Підгонка моделі:  R²={fmt(r['R2'],3)}"); ax1.legend(fontsize=9)
-            ax1.yaxis.grid(True, alpha=0.3)
-            # residuals
-            ax2.scatter(r["yhat"], r["residuals"], s=25, color="#dd8452")
-            ax2.axhline(0, color="k", lw=0.8)
-            ax2.set_xlabel("Підігнані значення"); ax2.set_ylabel("Залишки")
-            ax2.set_title("Залишки vs Підігнані"); ax2.yaxis.grid(True, alpha=0.3)
-            fig.tight_layout()
-            cv = FigureCanvasTkAgg(fig, master=self.res_frame)
-            cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        # ── Графіки ──────────────────────────────────────────
+        if not HAS_MPL:
+            messagebox.showwarning("", "matplotlib недоступний — графіки не будуть показані.")
+            return
 
-        # outlier check
+        fig = Figure(figsize=(10, 4), dpi=100)
+        ax1 = fig.add_subplot(121)
+        ax2 = fig.add_subplot(122)
+
+        x_sort    = np.sort(x)
+        idx_sort  = np.argsort(x)
+
+        # ── Графік 1: Точки + Крива регресії + 95% ДІ ───────
+        ax1.scatter(x, y, s=30, color="#4c72b0", zorder=3,
+                    label="Спостереження", edgecolors="white", linewidths=0.5)
+        ax1.plot(x_sort, r["yhat"][idx_sort], "r-", lw=2, label="Регресійна крива")
+
+        # 95% довірча смуга для лінійних моделей (аналітична)
+        n_pts = r["n"]; k = r.get("k", 2); rmse_ = r.get("RMSE", np.nan)
+        if n_pts > k + 2 and not math.isnan(rmse_):
+            try:
+                x_pred   = np.linspace(x.min(), x.max(), 300)
+                dfe_     = n_pts - k - 1
+                t_crit_  = float(t_dist.ppf(0.975, dfe_))
+                x_mean_  = float(np.mean(x))
+                ss_xx    = float(np.sum((x - x_mean_)**2))
+                if ss_xx > 0:
+                    se_fit   = rmse_ * np.sqrt(1/n_pts + (x_pred - x_mean_)**2 / ss_xx)
+                    yhat_p   = np.interp(x_pred, x_sort, r["yhat"][idx_sort])
+                    ax1.fill_between(x_pred,
+                                     yhat_p - t_crit_ * se_fit,
+                                     yhat_p + t_crit_ * se_fit,
+                                     alpha=0.12, color="#c62828",
+                                     label="95% довірчий інтервал")
+            except Exception:
+                pass
+
+        ax1.set_xlabel("x", fontsize=10)
+        ax1.set_ylabel("y", fontsize=10)
+        ax1.set_title(f"{model_name}:  R² = {fmt(r['R2'],3)}", fontsize=10)
+        ax1.legend(fontsize=8)
+        ax1.yaxis.grid(True, linestyle="--", alpha=0.35)
+        ax1.spines["top"].set_visible(False)
+        ax1.spines["right"].set_visible(False)
+
+        # ── Графік 2: Залишки vs Підібрані значення ──────────
+        ax2.scatter(r["yhat"], r["residuals"], s=28,
+                    color="#dd8452", edgecolors="white", linewidths=0.5, zorder=3)
+        ax2.axhline(0, color="#333", lw=0.9, linestyle="--")
+        # Горизонтальний коридор ±RMSE
+        if not math.isnan(rmse_):
+            ax2.axhline( rmse_, color="#aaa", lw=0.6, linestyle=":")
+            ax2.axhline(-rmse_, color="#aaa", lw=0.6, linestyle=":",
+                        label=f"±RMSE = {fmt(rmse_,3)}")
+            ax2.legend(fontsize=8)
+        ax2.set_xlabel("Підібрані значення (ŷ)", fontsize=10)
+        ax2.set_ylabel("Залишки (y − ŷ)", fontsize=10)
+        ax2.set_title("Аналіз залишків", fontsize=10)
+        ax2.yaxis.grid(True, linestyle="--", alpha=0.35)
+        ax2.spines["top"].set_visible(False)
+        ax2.spines["right"].set_visible(False)
+
+        fig.tight_layout()
+        self._fig = fig   # зберігаємо для кнопки «Копіювати»
+
+        cv = FigureCanvasTkAgg(fig, master=self.res_frame)
+        cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # ── Виявлення викидів у залишках ─────────────────────
         out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
         if out_idx is not None:
             tk.Label(self.res_frame,
-                     text=f"⚠ Викид виявлено (тест Граббса) у залишках: спостереження #{out_idx+1}  (G={fmt(G,3)})",
-                     fg="#c62828", font=("Times New Roman",11)).pack(anchor="w")
+                     text=(f"⚠ Тест Граббса: підозрілий викид у залишках — "
+                           f"спостереження №{out_idx+1}  (G = {fmt(G,3)}).\n"
+                           f"   Перевірте це значення у вхідних даних."),
+                     fg="#c62828", font=("Times New Roman",11),
+                     justify="left", padx=6).pack(anchor="w", pady=2)
+
+
 
 
 # ═══════════════════════════════════════════════════════════════
