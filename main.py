@@ -1245,8 +1245,10 @@ class ScatterSettingsDlg(tk.Toplevel):
         })
         self.destroy()
 
-
-
+# ═══════════════════════════════════════════════════════════════
+# CORRELATION ANALYSIS WINDOW
+# ═══════════════════════════════════════════════════════════════
+class CorrelationWindow:
 
     HELP_TEXT = """
 КОРЕЛЯЦІЙНИЙ АНАЛІЗ — ПОКРОКОВА ІНСТРУКЦІЯ
