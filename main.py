@@ -5251,142 +5251,541 @@ class ClusterWindow:
 # PCA MODULE
 # ═══════════════════════════════════════════════════════════════
 class PCAWindow:
+    """Аналіз головних компонент (PCA)."""
+
+    HELP_TEXT = """
+PCA — ПОКРОКОВА ІНСТРУКЦІЯ
+══════════════════════════════════════════
+
+ЩО ТАКЕ PCA?
+  PCA (Principal Component Analysis) — Аналіз головних компонент.
+  Стискає багато змінних (показників) до кількох «узагальнених»
+  показників (головних компонент, ГК), зберігаючи максимум інформації.
+
+КОЛИ ЗАСТОСОВУВАТИ?
+  ✓ У вас 5+ показників для кожного об'єкта (сорту, зразка)
+  ✓ Хочете виявити природне групування об'єктів
+  ✓ Хочете зрозуміти які показники «ходять разом»
+  ✓ Як попередній крок перед MANOVA (якщо n ≤ p)
+  ✓ Для виявлення викидів (об'єкти далеко від центру biplot)
+
+КРОК 1. СТРУКТУРА ДАНИХ
+
+  Перший стовпець: Мітка об'єкта (назва сорту, зразка — текст)
+                   Необов'язково — якщо числове, вважається показником.
+  Решта стовпців: Числові показники (змінні).
+
+  Перший рядок: Назви показників (заголовки, синій рядок).
+
+  Приклад (4 сорти, 4 показники):
+  | Сорт    | Врожайн. | Висота | Маса зерна | Вміст білку |
+  | Сорт А  |   5.8    |  95.3  |    38.2    |    12.5     |
+  | Сорт Б  |   4.9    |  88.5  |    35.1    |    14.2     |
+
+  Мінімум: 2 об'єкти, 2 показники.
+
+КРОК 2. ПІДГОТОВКА І ВИКОНАННЯ
+  Перейменуйте заголовки (подвійний клік на синій клітинці).
+  Введіть дані або вставте з Excel.
+  Натисніть «▶ Виконати PCA».
+
+  Програма автоматично СТАНДАРТИЗУЄ дані (z-оцінки)
+  щоб показники з різними одиницями мали однаковий вплив.
+
+КРОК 3. SCREE PLOT (Графік відсіювання)
+
+  Стовпчики: % дисперсії пояснений кожною ГК.
+  Червона лінія: кумулятивний % (зростаючий).
+  Пунктир: 80% поріг.
+
+  Скільки ГК залишити?
+  «Правило ліктя»: знайдіть де графік різко стає пологим
+  → точка вище = оптимальна кількість ГК.
+  Зазвичай ГК1 + ГК2 пояснюють 70-85% → достатньо.
+  Власне значення > 1 (Критерій Кайзера) → включайте.
+
+КРОК 4. BIPLOT (ГК1 × ГК2)
+
+  Точки = об'єкти (сорти, зразки):
+    Близькі точки = схожі об'єкти за всіма показниками.
+    Далекі точки = дуже різні.
+    Кластери = природні групи.
+
+  Червоні стрілки = показники (змінні):
+    Довга стрілка = показник добре описаний цими ГК.
+    Стрілки в одному напрямку = показники корелюють.
+    Стрілки протилежних напрямків = обернена кореляція.
+    Стрілки під кутом 90° = незалежні показники.
+    Об'єкт близько до стрілки = великe значення цього показника.
+
+КРОК 5. ТАБЛИЦЯ НАВАНТАЖЕНЬ (Loadings)
+
+  Теплова карта: як кожен показник пов'язаний з кожною ГК.
+  |Навантаження| > 0.5 вважається значущим.
+  Темно-зелений: сильна позитивна кореляція з ГК.
+  Темно-червоний: сильна негативна кореляція.
+
+КРОК 6. ТАБЛИЦЯ КОМПОНЕНТ
+
+  Власне значення: дисперсія пояснена кожною ГК.
+  % дисперсії: відносний внесок.
+  Кумулятивний %: наростаючий підсумок.
+"""
+
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Аналіз головних компонент (PCA)")
-        self.win.geometry("960x660"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent)
+        self.win.title("Аналіз головних компонент (PCA)")
+        self.win.geometry("1000x680"); set_icon(self.win)
+        self.gs = gs
+        self._pca_fig = None
+        self._pca_gs  = {
+            "point_color":   "#dd8452",
+            "arrow_color":   "#c62828",
+            "bar_color":     "#4c72b0",
+            "cum_color":     "#c62828",
+            "heatmap_cmap":  "RdYlGn",
+            "font_family":   "Times New Roman",
+            "font_size":     9,
+            "point_size":    30,
+            "arrow_scale":   0.7,
+            "annotate_obj":  True,
+            "annotate_var":  True,
+        }
+        self._build()
 
     def _build(self):
+        # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Запустити PCA", bg="#c62828", fg="white",
-                  font=("Times New Roman",13), command=self._run).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Вставити дані", command=self._paste).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="Перший рядок = назви змінних; перша колонка = мітки об'єктів (необов'язково)",
-                 font=("Times New Roman",10), fg="#666").pack(side=tk.LEFT, padx=8)
+        tk.Button(top, text="▶ Виконати PCA", bg="#c62828", fg="white",
+                  font=("Times New Roman",13),
+                  command=self._run).pack(side=tk.LEFT, padx=4)
 
+        # Налаштування — спадне меню
+        mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
+                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=4)
+        sm = tk.Menu(mb2, tearoff=0)
+        sm.add_command(label="Додати рядок",      command=self._add_row)
+        sm.add_command(label="Видалити рядок",    command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="Додати стовпець",   command=self._add_col)
+        sm.add_command(label="Видалити стовпець", command=self._del_col)
+        sm.add_separator()
+        sm.add_command(label="Налаштування графіків PCA", command=self._restyle_pca)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        mb2["menu"] = sm
+
+        tk.Button(top, text="Вставити з буфера",
+                  font=("Times New Roman",11),
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(top,
+                 text="Подвійний клік на заголовку → перейменувати показник",
+                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=10)
+
+        # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
-        self.rows_n = 20; self.cols_n = 10
-        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
-        self.entries = []
+        self.rows_n = 18; self.cols_n = 8
+        self._canvas = tk.Canvas(mid)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=self._canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(self._canvas)
+        self._canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>",
+                        lambda e: self._canvas.config(scrollregion=self._canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        self.header_labels = []; self.header_vars = []
+        default_headers = ["Мітка об'єкта"] + [f"Показник {j}" for j in range(1, self.cols_n)]
         for j in range(self.cols_n):
-            tk.Label(self.inner, text=f"{'Label' if j==0 else f'Var{j}'}",
-                     relief=tk.RIDGE, width=11, bg="#f0f0f0",
-                     font=("Times New Roman",11)).grid(row=0,column=j,padx=1,pady=1,sticky="nsew")
+            var = tk.StringVar(value=default_headers[j] if j < len(default_headers) else f"П{j}")
+            self.header_vars.append(var)
+            lbl = tk.Label(self.inner, textvariable=var, relief=tk.RIDGE, width=13,
+                           bg="#1a4b8c", fg="white", cursor="hand2",
+                           font=("Times New Roman",11,"bold"))
+            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+            lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
+            self.header_labels.append(lbl)
+
+        self.entries = []
         for i in range(self.rows_n):
             row_ = []
             for j in range(self.cols_n):
-                e = tk.Entry(self.inner, width=11, font=("Times New Roman",11))
-                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
-                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
-                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
-                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
-                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
-                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
+                e = tk.Entry(self.inner, width=13, font=("Times New Roman",11),
+                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e.grid(row=i+1, column=j, padx=1, pady=1)
+                row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
 
-    def _paste(self):
-        w = self.win.focus_get()
-        if not isinstance(w, tk.Entry): return
-        try: data = self.win.clipboard_get()
-        except Exception: return
-        for i, line in enumerate(data.splitlines()):
-            if i >= len(self.entries): break
-            for j, val in enumerate(line.split("\t")):
-                if j < self.cols_n:
-                    self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,val)
+    # ── Перейменування заголовка ──────────────────────────────
+    def _rename_col(self, idx):
+        dlg = tk.Toplevel(self.win); dlg.title("Перейменувати")
+        dlg.resizable(False, False); dlg.grab_set()
+        tk.Label(dlg, text=f"Назва показника {idx+1}:",
+                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+        var = tk.StringVar(value=self.header_vars[idx].get())
+        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
+        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
+        def apply():
+            nm = var.get().strip()
+            if nm: self.header_vars[idx].set(nm)
+            dlg.destroy()
+        tk.Button(dlg, text="OK", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+        dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
 
+    # ── Управління таблицею ───────────────────────────────────
+    def _add_row(self):
+        i = self.rows_n; row_ = []
+        for j in range(self.cols_n):
+            e = tk.Entry(self.inner, width=13, font=("Times New Roman",11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=j, padx=1, pady=1)
+            row_.append(e)
+        self.entries.append(row_); self.rows_n += 1
+        _bind_nav(self.entries, self.win)
+
+    def _del_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.rows_n -= 1
+
+    def _add_col(self):
+        ci = self.cols_n; self.cols_n += 1
+        var = tk.StringVar(value=f"Показник {ci}")
+        self.header_vars.append(var)
+        lbl = tk.Label(self.inner, textvariable=var, relief=tk.RIDGE, width=13,
+                       bg="#1a4b8c", fg="white", cursor="hand2",
+                       font=("Times New Roman",11,"bold"))
+        lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
+        lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
+        self.header_labels.append(lbl)
+        for i, row_ in enumerate(self.entries):
+            e = tk.Entry(self.inner, width=13, font=("Times New Roman",11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=ci, padx=1, pady=1)
+            row_.append(e)
+        _bind_nav(self.entries, self.win)
+
+    def _del_col(self):
+        if self.cols_n <= 3: return
+        self.header_labels.pop().destroy(); self.header_vars.pop()
+        for row_ in self.entries: row_.pop().destroy()
+        self.cols_n -= 1
+
+    def _clear_table(self):
+        if not messagebox.askyesno("Очистити",
+                "Видалити всі дані? (Заголовки залишаться)"): return
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+    # ── Вставка / Довідка ────────────────────────────────────
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
+        pos = (0, 0)
+        w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos=(i,j); break
+        r0, c0 = pos
+        for ir, line in enumerate(data.splitlines()):
+            if not line.strip(): continue
+            while r0+ir >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                cc = c0+jc
+                if cc >= self.cols_n: continue
+                self.entries[r0+ir][cc].delete(0,tk.END)
+                self.entries[r0+ir][cc].insert(0, val.strip())
+
+    def _show_help(self):
+        win = tk.Toplevel(self.win); win.title("Довідка — PCA")
+        win.geometry("700x660"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
+    # ── Налаштування графіків PCA ─────────────────────────────
+    def _restyle_pca(self):
+        dlg = tk.Toplevel(self.win); dlg.title("Налаштування графіків PCA")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        gs = self._pca_gs
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        rb_f = ("Times New Roman",12)
+
+        ff_v  = tk.StringVar(value=gs["font_family"])
+        fz_v  = tk.IntVar(value=gs["font_size"])
+        ps_v  = tk.IntVar(value=gs["point_size"])
+        sc_v  = tk.DoubleVar(value=gs["arrow_scale"])
+        ao_v  = tk.BooleanVar(value=gs["annotate_obj"])
+        av_v  = tk.BooleanVar(value=gs["annotate_var"])
+        cm_v  = tk.StringVar(value=gs["heatmap_cmap"])
+        col_refs = {k: gs[k] for k in ("point_color","arrow_color","bar_color","cum_color")}
+        col_btns = {}
+
+        rows_cfg = [
+            ("Шрифт:",               "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Розмір шрифту:",       "spin",   fz_v, (6,18)),
+            ("Розмір точок (biplot):","spin",  ps_v, (5,80)),
+            ("Масштаб стрілок:",     "scale",  sc_v, (0.2,1.5)),
+            ("Підписи об'єктів:",    "check",  ao_v, None),
+            ("Підписи змінних:",     "check",  av_v, None),
+            ("Палітра теплової карти:","combo",cm_v, ["RdYlGn","coolwarm","RdBu","viridis","plasma"]),
+        ]
+        for ri, (lbl, wt, var, opts) in enumerate(rows_cfg):
+            tk.Label(frm, text=lbl, font=rb_f).grid(row=ri, column=0, sticky="w", pady=4)
+            if wt=="combo":
+                ttk.Combobox(frm, textvariable=var, values=opts,
+                             state="readonly", width=20).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="spin":
+                tk.Spinbox(frm, from_=opts[0], to=opts[1], textvariable=var,
+                           width=7).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="scale":
+                tk.Scale(frm, from_=opts[0], to=opts[1], resolution=0.05,
+                         orient="horizontal", variable=var,
+                         length=160).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="check":
+                tk.Checkbutton(frm, variable=var).grid(row=ri, column=1, sticky="w", padx=8)
+
+        col_names = [("Колір точок (biplot):","point_color"),
+                     ("Колір стрілок:","arrow_color"),
+                     ("Колір стовпців (scree):","bar_color"),
+                     ("Колір кривої кумул.:","cum_color")]
+        base_r = len(rows_cfg)
+        for ri, (lbl, key) in enumerate(col_names):
+            tk.Label(frm, text=lbl, font=rb_f).grid(row=base_r+ri, column=0, sticky="w", pady=4)
+            btn = tk.Button(frm, width=6, relief=tk.SUNKEN, bg=col_refs[key])
+            btn.grid(row=base_r+ri, column=1, sticky="w", padx=8)
+            def _pick(k=key, b=btn, refs=col_refs):
+                ch = colorchooser.askcolor(color=refs[k], parent=dlg)
+                if ch and ch[1]: refs[k]=ch[1]; b.configure(bg=ch[1])
+            btn.configure(command=_pick); col_btns[key] = btn
+
+        def apply():
+            self._pca_gs.update({
+                "font_family": ff_v.get(), "font_size": fz_v.get(),
+                "point_size":  ps_v.get(), "arrow_scale": sc_v.get(),
+                "annotate_obj": ao_v.get(), "annotate_var": av_v.get(),
+                "heatmap_cmap": cm_v.get(),
+                **col_refs
+            })
+            dlg.destroy()
+            messagebox.showinfo("",
+                "Налаштування збережено.\nЗастосуються при наступному виконанні PCA.")
+
+        bf = tk.Frame(frm); bf.grid(row=base_r+len(col_names), column=0,
+                                    columnspan=2, pady=(14,0))
+        tk.Button(bf, text="OK", bg="#c62828", fg="white",
+                  font=rb_f, command=apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rb_f, command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    # ── Виконання PCA ─────────────────────────────────────────
     def _run(self):
         raw = [[e.get().strip() for e in row] for row in self.entries]
         raw = [r for r in raw if any(v for v in r)]
-        if not raw: messagebox.showwarning("","Немає даних."); return
+        if not raw:
+            messagebox.showwarning("Немає даних","Введіть дані у таблицю."); return
 
-        obj_names = []; var_names = []; data_rows = []
-        # detect if first col is labels (non-numeric)
+        # Визначаємо чи перша колонка = мітки
         has_labels = False
         try: float(raw[0][0].replace(",",".")); has_labels = False
         except ValueError: has_labels = True
 
         start_col = 1 if has_labels else 0
+        obj_names = []; data_rows = []
         for i, row in enumerate(raw):
-            obj_names.append(row[0] if has_labels else f"Obs{i+1}")
+            nm = row[0].strip() if has_labels else f"Об'єкт {i+1}"
+            if not nm: nm = f"Об'єкт {i+1}"
+            obj_names.append(nm)
             vals = []
             for v in row[start_col:]:
                 if not v: continue
                 try: vals.append(float(v.replace(",",".")))
                 except Exception: continue
             if vals: data_rows.append(vals)
+        obj_names = obj_names[:len(data_rows)]
 
-        if not data_rows: messagebox.showwarning("","No numeric data."); return
+        if len(data_rows) < 2:
+            messagebox.showwarning("Замало об'єктів",
+                "Потрібно щонайменше 2 об'єкти (рядки з числовими даними)."); return
         min_c = min(len(r) for r in data_rows)
+        if min_c < 2:
+            messagebox.showwarning("Замало показників",
+                "Потрібно щонайменше 2 числові показники."); return
+
+        # Назви змінних з заголовків
+        var_names = []
+        for j in range(start_col, self.cols_n):
+            if j < len(self.header_vars):
+                var_names.append(self.header_vars[j].get().strip() or f"П{j}")
+            else:
+                var_names.append(f"П{j}")
+        var_names = var_names[:min_c]
+
         X = np.array([r[:min_c] for r in data_rows], dtype=float)
 
-        # Standardize
+        # Стандартизація
         from scipy.stats import zscore
         X_std = zscore(X, axis=0, ddof=1); X_std = np.nan_to_num(X_std)
 
-        # SVD-based PCA
-        cov = np.cov(X_std.T)
-        eigenvalues, eigenvectors = np.linalg.eigh(cov)
-        idx = np.argsort(eigenvalues)[::-1]
-        eigenvalues = eigenvalues[idx]; eigenvectors = eigenvectors[:, idx]
-        explained = eigenvalues / np.sum(eigenvalues) * 100
-        scores = X_std @ eigenvectors
-        n_comp = min(len(eigenvalues), X.shape[1])
+        # PCA через власні вектори
+        cov_m = np.cov(X_std.T)
+        eigenvalues, eigenvectors = np.linalg.eigh(cov_m)
+        idx_s = np.argsort(eigenvalues)[::-1]
+        eigenvalues = eigenvalues[idx_s]; eigenvectors = eigenvectors[:, idx_s]
+        # Тільки невід'ємні власні значення
+        eigenvalues = np.maximum(eigenvalues, 0)
+        total_var = np.sum(eigenvalues)
+        explained  = eigenvalues / total_var * 100 if total_var > 0 else eigenvalues*0
+        scores     = X_std @ eigenvectors
+        n_comp     = len(eigenvalues)
 
-        if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
-        win = tk.Toplevel(self.win); win.title("PCA — Результати"); win.geometry("1100x700")
+        if not HAS_MPL:
+            messagebox.showwarning("","matplotlib недоступний."); return
 
-        fig = Figure(figsize=(11, 6), dpi=100)
-        # Scree plot
+        self._show_pca_results(obj_names, var_names, eigenvalues, eigenvectors,
+                               explained, scores, n_comp, min_c)
+
+    def _show_pca_results(self, obj_names, var_names, eigenvalues,
+                          eigenvectors, explained, scores, n_comp, min_c):
+        gs = self._pca_gs
+        win = tk.Toplevel(self.win); win.title("PCA — Результати")
+        win.geometry("1200x800"); set_icon(win)
+
+        # ── Toolbar результатів ─────────────────────────────
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати графіки", font=("Times New Roman",11),
+                  command=lambda: self._copy_pca()).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування графіків", font=("Times New Roman",11),
+                  command=self._restyle_pca).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb, text="Для перебудови графіків зі змінами — закрийте вікно і запустіть PCA знову",
+                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+
+        # ── Основна область ─────────────────────────────────
+        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+
+        # Графіки
+        fig = Figure(figsize=(12, 5.5), dpi=100)
+
+        ff  = gs["font_family"]; fz = gs["font_size"]
+        pc  = gs["point_color"]; ac = gs["arrow_color"]
+        bc  = gs["bar_color"];   cc = gs["cum_color"]
+        ps  = gs["point_size"];  sc = gs["arrow_scale"]
+
+        # ── Scree plot ───────────────────────────────────────
         ax1 = fig.add_subplot(131)
-        ax1.bar(range(1, n_comp+1), explained[:n_comp], color="#4c72b0", alpha=0.8)
-        ax1.plot(range(1, n_comp+1), np.cumsum(explained[:n_comp]), "ro-", markersize=4)
-        ax1.set_xlabel("ГК"); ax1.set_ylabel("Пояснена дисперсія (%)")
-        ax1.set_title("Графік відсіювання (Scree)")
+        ax1.bar(range(1, n_comp+1), explained[:n_comp], color=bc, alpha=0.8)
+        ax1.plot(range(1, n_comp+1), np.cumsum(explained[:n_comp]),
+                 "o-", color=cc, markersize=4)
+        ax1.set_xlabel("ГК", fontsize=fz, fontfamily=ff)
+        ax1.set_ylabel("Пояснена дисперсія (%)", fontsize=fz, fontfamily=ff)
+        ax1.set_title("Графік відсіювання (Scree)", fontsize=fz+1, fontfamily=ff)
         ax1.axhline(80, color="gray", lw=0.8, ls="--")
+        ax1.yaxis.grid(True, alpha=0.3)
+        ax1.spines["top"].set_visible(False); ax1.spines["right"].set_visible(False)
 
-        # Biplot (PC1 vs PC2)
+        # ── Biplot ───────────────────────────────────────────
         ax2 = fig.add_subplot(132)
-        ax2.scatter(scores[:, 0], scores[:, 1], s=30, color="#dd8452", zorder=3)
-        for i, nm in enumerate(obj_names[:len(scores)]):
-            ax2.annotate(nm, (scores[i,0], scores[i,1]), fontsize=7, alpha=0.8)
-        # loadings arrows
-        scale = max(np.max(np.abs(scores[:,0])), np.max(np.abs(scores[:,1]))) * 0.9
+        ax2.scatter(scores[:,0], scores[:,1], s=ps, color=pc, zorder=3,
+                    edgecolors="white", linewidths=0.5)
+        if gs["annotate_obj"]:
+            for i, nm in enumerate(obj_names[:len(scores)]):
+                ax2.annotate(nm, (scores[i,0], scores[i,1]),
+                             fontsize=max(6, fz-1), alpha=0.85, fontfamily=ff)
+        # Стрілки навантажень
+        max_score = max(np.max(np.abs(scores[:,0])), np.max(np.abs(scores[:,1])), 1e-6)
         for j in range(min_c):
-            lx, ly = eigenvectors[j,0]*scale*0.7, eigenvectors[j,1]*scale*0.7
+            lx = eigenvectors[j,0] * max_score * sc
+            ly = eigenvectors[j,1] * max_score * sc
             ax2.annotate("", xy=(lx,ly), xytext=(0,0),
-                         arrowprops=dict(arrowstyle="->", color="#c62828", lw=1.2))
-            ax2.text(lx*1.05, ly*1.05, f"Var{j+1}" if not var_names else var_names[j],
-                     fontsize=7, color="#c62828")
-        ax2.set_xlabel(f"ГК1 ({fmt(explained[0],1)}%)")
-        ax2.set_ylabel(f"ГК2 ({fmt(explained[1],1)}%)" if n_comp > 1 else "ГК2")
-        ax2.set_title("Biplot (ГК1 × ГК2)"); ax2.axhline(0,color="k",lw=0.5); ax2.axvline(0,color="k",lw=0.5)
+                         arrowprops=dict(arrowstyle="->", color=ac, lw=1.3))
+            if gs["annotate_var"]:
+                nm_j = var_names[j] if j < len(var_names) else f"П{j+1}"
+                ax2.text(lx*1.07, ly*1.07, nm_j,
+                         fontsize=max(6, fz-1), color=ac, fontfamily=ff)
+        ax2.axhline(0, color="#888", lw=0.5); ax2.axvline(0, color="#888", lw=0.5)
+        ax2.set_xlabel(f"ГК1 ({fmt(explained[0],1)}%)", fontsize=fz, fontfamily=ff)
+        ax2.set_ylabel(f"ГК2 ({fmt(explained[1],1)}%)" if n_comp>1 else "ГК2",
+                       fontsize=fz, fontfamily=ff)
+        ax2.set_title("Biplot (ГК1 × ГК2)", fontsize=fz+1, fontfamily=ff)
+        ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
 
-        # Loadings heatmap
+        # ── Теплова карта навантажень ─────────────────────────
         ax3 = fig.add_subplot(133)
-        load_mat = eigenvectors[:, :min(4, n_comp)]
-        im = ax3.imshow(load_mat, cmap="RdYlGn", vmin=-1, vmax=1, aspect="auto")
-        ax3.set_xticks(range(load_mat.shape[1]))
-        ax3.set_xticklabels([f"ГК{i+1}" for i in range(load_mat.shape[1])], fontsize=8)
+        n_show = min(4, n_comp)
+        load_mat = eigenvectors[:, :n_show]
+        try:    cmap_ = matplotlib.cm.get_cmap(gs["heatmap_cmap"])
+        except: cmap_ = matplotlib.cm.get_cmap("RdYlGn")
+        im = ax3.imshow(load_mat, cmap=cmap_, vmin=-1, vmax=1, aspect="auto")
+        ax3.set_xticks(range(n_show))
+        ax3.set_xticklabels([f"ГК{i+1}" for i in range(n_show)],
+                            fontsize=fz, fontfamily=ff)
         ax3.set_yticks(range(min_c))
-        ax3.set_yticklabels([f"Var{j+1}" for j in range(min_c)], fontsize=8)
-        ax3.set_title("Навантаження")
+        ax3.set_yticklabels(var_names[:min_c] if var_names else [f"П{j+1}" for j in range(min_c)],
+                            fontsize=fz, fontfamily=ff)
+        ax3.set_title("Навантаження факторів", fontsize=fz+1, fontfamily=ff)
         for i in range(min_c):
-            for j in range(load_mat.shape[1]):
-                ax3.text(j, i, fmt(load_mat[i,j],2), ha="center", va="center", fontsize=7)
+            for j in range(n_show):
+                ax3.text(j, i, fmt(load_mat[i,j],2),
+                         ha="center", va="center", fontsize=max(6, fz-1), fontfamily=ff)
+        fig.colorbar(im, ax=ax3, fraction=0.046, pad=0.04)
 
         fig.tight_layout()
-        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self._pca_fig = fig
+        cv = FigureCanvasTkAgg(fig, master=main); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True, side=tk.TOP)
 
-        # Summary table
-        summary_rows = [[f"ГК{i+1}", fmt(eigenvalues[i],4), fmt(explained[i],2),
-                         fmt(float(np.sum(explained[:i+1])),2)] for i in range(n_comp)]
-        frm, _ = make_tv(win, ["Компонент","Власне значення","% дисперсії","Кумулятивний %"], summary_rows)
-        frm.pack(fill=tk.X, padx=8, pady=4)
+        # ── Таблиця компонент ────────────────────────────────
+        summary_rows = [[f"ГК{i+1}",
+                         fmt(eigenvalues[i],4),
+                         fmt(explained[i],2),
+                         fmt(float(np.sum(explained[:i+1])),2),
+                         "✓ включити" if eigenvalues[i] >= 1.0 else "розглянути"]
+                        for i in range(n_comp)]
+        frm_t, _ = make_tv(win,
+            ["Компонент","Власне значення","% дисперсії","Кумулятивний %","Критерій Кайзера (λ≥1)"],
+            summary_rows)
+        frm_t.pack(fill=tk.X, padx=8, pady=4)
+
+        # ── Таблиця навантажень ──────────────────────────────
+        n_show2 = min(6, n_comp)
+        load_headers = ["Показник"] + [f"ГК{i+1}" for i in range(n_show2)]
+        load_rows = []
+        for j in range(min_c):
+            nm_j = var_names[j] if j < len(var_names) else f"П{j+1}"
+            load_rows.append([nm_j] + [fmt(eigenvectors[j,k],4) for k in range(n_show2)])
+        frm_l, _ = make_tv(win, load_headers, load_rows)
+        frm_l.pack(fill=tk.X, padx=8, pady=(0,8))
+
+    def _copy_pca(self):
+        if self._pca_fig is None:
+            messagebox.showwarning("","Спочатку виконайте PCA."); return
+        ok, msg = _copy_fig_to_clipboard(self._pca_fig)
+        if ok: messagebox.showinfo("","Графіки PCA скопійовано.\nВставте у Word через Ctrl+V.")
+        else:   messagebox.showwarning("",f"Помилка: {msg}")
+
+
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -6808,12 +7207,30 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         win = tk.Toplevel(self.win); win.title("MANOVA — Результати")
         win.geometry("1180x820"); set_icon(win)
 
+        # ── Toolbar результатів ─────────────────────────────
+        self._manova_figs = {}   # зберігаємо фігури для копіювання
+        self._manova_colors = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
+
+        tb_res = tk.Frame(win, padx=6, pady=5); tb_res.pack(fill=tk.X)
+        tk.Button(tb_res, text="📋 Копіювати звіт (текст)", font=("Times New Roman",11),
+                  command=lambda: self._copy_manova_text(win)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb_res, text="📋 Копіювати графік 1", font=("Times New Roman",11),
+                  command=lambda: self._copy_manova_fig(1)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb_res, text="📋 Копіювати графік 2", font=("Times New Roman",11),
+                  command=lambda: self._copy_manova_fig(2)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb_res, text="⚙ Налаштування графіків", font=("Times New Roman",11),
+                  command=lambda: self._restyle_manova(win, dv_names, groups_data,
+                                                        group_levels, univ_rows,
+                                                        alpha, p_pillai)).pack(side=tk.LEFT, padx=4)
+
+        # ── Прокручуване тіло ────────────────────────────────
         main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(main, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas = tk.Canvas(main, yscrollcommand=vsb.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.config(command=canvas.yview)
-        body = tk.Frame(canvas); canvas.create_window((0,0), window=body, anchor="nw")
+        self._manova_body = body = tk.Frame(canvas)
+        canvas.create_window((0,0), window=body, anchor="nw")
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
@@ -6986,6 +7403,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                 ax.spines["right"].set_visible(False)
             fig1.suptitle("Групові середні (±СП) по залежних змінних", fontsize=10)
             fig1.tight_layout()
+            self._manova_figs[1] = fig1
             cv1 = FigureCanvasTkAgg(fig1, master=body); cv1.draw()
             cv1.get_tk_widget().pack(fill=tk.X, padx=10, pady=4)
 
@@ -7013,8 +7431,105 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             ax2.spines["top"].set_visible(False)
             ax2.spines["right"].set_visible(False)
             fig2.tight_layout()
+            self._manova_figs[2] = fig2
             cv2 = FigureCanvasTkAgg(fig2, master=body); cv2.draw()
             cv2.get_tk_widget().pack(fill=tk.X, padx=10, pady=(0,10))
+
+    # ── Допоміжні методи для результатів MANOVA ───────────────
+    def _copy_manova_text(self, win):
+        """Збирає весь текст зі звіту і копіює у буфер."""
+        lines = []
+        def _collect(w):
+            if isinstance(w, tk.Label):
+                t = w.cget("text")
+                if t: lines.append(t)
+            for ch in w.winfo_children(): _collect(ch)
+        try:
+            _collect(self._manova_body)
+        except Exception: pass
+        text = "\n".join(lines)
+        win.clipboard_clear(); win.clipboard_append(text)
+        messagebox.showinfo("Скопійовано",
+            "Текст звіту скопійовано у буфер обміну.\nВставте у Word через Ctrl+V.")
+
+    def _copy_manova_fig(self, n):
+        fig = self._manova_figs.get(n)
+        if fig is None:
+            messagebox.showwarning("","Графік не знайдено. Спочатку виконайте аналіз."); return
+        ok, msg = _copy_fig_to_clipboard(fig)
+        if ok: messagebox.showinfo("","Графік скопійовано.\nВставте у Word через Ctrl+V.")
+        else:   messagebox.showwarning("",f"Помилка: {msg}")
+
+    def _restyle_manova(self, win, dv_names, groups_data, group_levels,
+                        univ_rows, alpha, p_pillai):
+        """Діалог налаштувань кольорів/розмірів графіків MANOVA."""
+        if not hasattr(self, '_manova_gs'):
+            self._manova_gs = {
+                "colors": ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"],
+                "bar_alpha": 0.85, "lw": 2.0, "ms": 7,
+                "font_family": "Times New Roman", "font_size": 9,
+            }
+        dlg = tk.Toplevel(win); dlg.title("Налаштування графіків MANOVA")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        gs = self._manova_gs
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        ff_v  = tk.StringVar(value=gs["font_family"])
+        fz_v  = tk.IntVar(value=gs["font_size"])
+        al_v  = tk.DoubleVar(value=gs["bar_alpha"])
+        lw_v  = tk.DoubleVar(value=gs["lw"])
+        ms_v  = tk.IntVar(value=gs["ms"])
+        rb_f  = ("Times New Roman",12)
+        rows_cfg = [
+            ("Шрифт:",         "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Розмір шрифту:", "spin",   fz_v, (7, 18)),
+            ("Прозорість стовпців:", "scale", al_v, (0.3, 1.0)),
+            ("Товщина ліній:", "scale",  lw_v, (0.5, 4.0)),
+            ("Розмір точок:",  "spin",   ms_v, (3, 20)),
+        ]
+        for ri, (lbl, wt, var, opts) in enumerate(rows_cfg):
+            tk.Label(frm, text=lbl, font=rb_f).grid(row=ri, column=0, sticky="w", pady=5)
+            if wt == "combo":
+                ttk.Combobox(frm, textvariable=var, values=opts,
+                             state="readonly", width=20).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt == "spin":
+                tk.Spinbox(frm, from_=opts[0], to=opts[1], textvariable=var,
+                           width=7).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt == "scale":
+                tk.Scale(frm, from_=opts[0], to=opts[1], resolution=0.05,
+                         orient="horizontal", variable=var,
+                         length=160).grid(row=ri, column=1, sticky="w", padx=8)
+        # Colour pickers for groups
+        col_refs = list(gs["colors"])
+        tk.Label(frm, text="Кольори груп:", font=rb_f).grid(
+            row=len(rows_cfg), column=0, sticky="w", pady=5)
+        col_frm = tk.Frame(frm); col_frm.grid(row=len(rows_cfg), column=1, sticky="w")
+        col_btns = []
+        for ci, grp in enumerate(group_levels[:6]):
+            c = col_refs[ci] if ci < len(col_refs) else "#999999"
+            btn = tk.Button(col_frm, width=4, relief=tk.SUNKEN, bg=c,
+                            text=str(ci+1), font=("Times New Roman",9))
+            btn.pack(side=tk.LEFT, padx=2)
+            def _pick(idx=ci, b=btn, refs=col_refs):
+                ch = colorchooser.askcolor(color=refs[idx], parent=dlg)
+                if ch and ch[1]: refs[idx]=ch[1]; b.configure(bg=ch[1])
+            btn.configure(command=_pick)
+            col_btns.append(btn)
+
+        def apply():
+            self._manova_gs.update({
+                "colors": col_refs, "bar_alpha": al_v.get(),
+                "lw": lw_v.get(), "ms": ms_v.get(),
+                "font_family": ff_v.get(), "font_size": fz_v.get(),
+            })
+            self._manova_colors = col_refs
+            dlg.destroy()
+            messagebox.showinfo("","Налаштування збережено.\n"
+                "Вони застосуються при наступному виконанні аналізу.")
+        bf = tk.Frame(frm); bf.grid(row=len(rows_cfg)+1, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="OK", bg="#c62828", fg="white",
+                  font=rb_f, command=apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rb_f, command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
 
 
 
