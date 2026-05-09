@@ -1411,7 +1411,7 @@ class CorrelationWindow:
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         self._settings_btn["menu"] = sm
 
-        tk.Button(tb, text="Вставити з Excel",
+        tk.Button(tb, text="Вставити з буфера",
                   font=("Times New Roman", 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
@@ -1560,24 +1560,34 @@ class CorrelationWindow:
 
     # ── Вставка, збереження, завантаження ────────────────────
     def _paste(self):
-        w = self.win.focus_get()
-        if not isinstance(w, tk.Entry): return
+        """Вставити дані з буфера обміну.
+        Якщо активна клітинка Entry — вставляємо з неї.
+        Інакше — з клітинки (0,0)."""
         try: data = self.win.clipboard_get()
-        except Exception: return
-        pos = None
-        for i, row_ in enumerate(self.entries):
-            for j, e in enumerate(row_):
-                if e is w: pos = (i, j); break
-            if pos: break
-        if not pos: pos = (0, 0)
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Буфер обміну порожній або не містить тексту.\n"
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
+        w = self.win.focus_get()
+        pos = (0, 0)
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos = (i, j); break
+                if pos != (0, 0): break
         r0, c0 = pos
         for ir, rt in enumerate(data.splitlines()):
+            if not rt.strip(): continue
             for jc, val in enumerate(rt.split("\t")):
                 rr = r0+ir; cc = c0+jc
                 while rr >= len(self.entries): self.add_row()
                 if cc >= self.cols: continue
                 self.entries[rr][cc].delete(0, tk.END)
                 self.entries[rr][cc].insert(0, val.strip())
+        # Фокус на першу вставлену клітинку
+        if self.entries and pos[0] < len(self.entries):
+            self.entries[pos[0]][pos[1]].focus_set()
 
     def _save_proj(self):
         path = filedialog.asksaveasfilename(
@@ -3974,7 +3984,7 @@ class DescriptiveWindow:
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         mb2["menu"] = sm
 
-        tk.Button(tb, text="Вставити з Excel",
+        tk.Button(tb, text="Вставити з буфера",
                   font=("Times New Roman", 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
@@ -4084,6 +4094,13 @@ class DescriptiveWindow:
 
     # ── Вставка і завантаження ───────────────────────────────
     def _paste(self):
+        """Вставити з буфера обміну. Починає з активної клітинки або (0,0)."""
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Буфер обміну порожній або не містить тексту.\n"
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
         w = self.win.focus_get()
         # Знаходимо позицію активної клітинки
         pos = (0, 0)
@@ -4264,11 +4281,61 @@ class DescriptiveWindow:
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def _restyle_bp(self, win, arrays, names):
-        dlg = GraphSettingsDlg(win, self._bp_gs, show_heatmap=False)
-        win.wait_window(dlg)
-        if dlg.result:
-            self._bp_gs.update(dlg.result)
+        """Dedicated boxplot settings dialog — no KeyError on missing DEF_GS keys."""
+        dlg = tk.Toplevel(win); dlg.title("Налаштування боксплоту")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        gs = self._bp_gs
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        rb_f = ("Times New Roman", 12)
+
+        ff_var = tk.StringVar(value=gs.get("font_family","Times New Roman"))
+        fz_var = tk.IntVar(value=gs.get("font_size", 11))
+        col_box = [gs.get("box_color",    "#ffffff")]
+        col_med = [gs.get("median_color", "#c62828")]
+        col_wh  = [gs.get("whisker_color","#000000")]
+        col_fl  = [gs.get("flier_color",  "#555555")]
+
+        tk.Label(frm, text="Шрифт:", font=rb_f).grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Combobox(frm, textvariable=ff_var,
+                     values=["Times New Roman","Arial","Calibri","Georgia","Verdana"],
+                     state="readonly", width=22).grid(row=0, column=1, sticky="w", padx=8)
+        tk.Label(frm, text="Розмір шрифту:", font=rb_f).grid(row=1, column=0, sticky="w", pady=5)
+        tk.Spinbox(frm, from_=7, to=24, textvariable=fz_var, width=6).grid(row=1, column=1, sticky="w", padx=8)
+
+        btn_refs = {}
+        color_cfg = [
+            ("Колір коробки:", col_box, "box"),
+            ("Колір медіани:", col_med, "med"),
+            ("Колір вусів:",   col_wh,  "wh"),
+            ("Колір викидів:", col_fl,  "fl"),
+        ]
+        for ri, (lbl, col_lst, key) in enumerate(color_cfg):
+            tk.Label(frm, text=lbl, font=rb_f).grid(row=2+ri, column=0, sticky="w", pady=5)
+            btn = tk.Button(frm, width=6, relief=tk.SUNKEN, bg=col_lst[0])
+            btn.grid(row=2+ri, column=1, sticky="w", padx=8)
+            btn_refs[key] = (btn, col_lst)
+            def _pick(c=col_lst, b=btn):
+                ch = colorchooser.askcolor(color=c[0], parent=dlg, title="Виберіть колір")
+                if ch and ch[1]: c[0] = ch[1]; b.configure(bg=ch[1])
+            btn.configure(command=_pick)
+
+        def apply():
+            self._bp_gs.update({
+                "font_family":   ff_var.get(),
+                "font_size":     fz_var.get(),
+                "box_color":     col_box[0],
+                "median_color":  col_med[0],
+                "whisker_color": col_wh[0],
+                "flier_color":   col_fl[0],
+            })
             self._draw_boxes(self._bp_frame, arrays, names)
+            dlg.destroy()
+
+        bf = tk.Frame(frm); bf.grid(row=6, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="OK", bg="#c62828", fg="white",
+                  font=rb_f, command=apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rb_f, command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
 
     # ── QQ-графіки ───────────────────────────────────────────
     def _plot_qq(self, arrays, names):
@@ -4670,7 +4737,7 @@ class RegressionWindow:
                      state="readonly", width=7).pack(side=tk.LEFT)
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
                   font=("Times New Roman",13), command=self._run).pack(side=tk.LEFT, padx=10)
-        tk.Button(top, text="Вставити дані",
+        tk.Button(top, text="Вставити з буфера",
                   font=("Times New Roman",11), command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📋 Копіювати графік",
                   font=("Times New Roman",11), command=self._copy_graph).pack(side=tk.LEFT, padx=4)
@@ -4700,15 +4767,27 @@ class RegressionWindow:
     # ── Утиліти ──────────────────────────────────────────────
     def _paste(self):
         try: data = self.win.clipboard_get()
-        except Exception: return
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Буфер обміну порожній.\n"
+                "Скопіюйте два стовпці (x і y) з Excel через Ctrl+C і спробуйте знову."); return
         lines_ = [l.strip() for l in data.splitlines() if l.strip()]
+        if not lines_:
+            messagebox.showwarning("Немає даних", "У буфері немає текстових даних."); return
         xs, ys = [], []
         for line in lines_:
             parts = line.replace(",",".").split()
             if len(parts) >= 2:
                 xs.append(parts[0]); ys.append(parts[1])
+            elif len(parts) == 1:
+                xs.append(parts[0])  # single column → goes to x
+        if not xs:
+            messagebox.showwarning("Не вдалося розпізнати",
+                "Не вдалося розпізнати числові дані.\n"
+                "Переконайтесь що скопіювали два стовпці: x (ліворуч) і y (праворуч)."); return
         self.tx.delete("1.0", tk.END); self.tx.insert("1.0", "\n".join(xs))
-        self.ty.delete("1.0", tk.END); self.ty.insert("1.0", "\n".join(ys))
+        if ys:
+            self.ty.delete("1.0", tk.END); self.ty.insert("1.0", "\n".join(ys))
 
     def _parse_col(self, widget):
         import re
@@ -5586,17 +5665,92 @@ class StabilityWindow:
 # ANCOVA — Analysis of Covariance
 # ═══════════════════════════════════════════════════════════════
 class AncovaWindow:
-    """
-    ANCOVA: ANOVA with one or more continuous covariates.
-    Methodological pipeline:
-      1. Check covariate is continuous and numeric
-      2. Test homogeneity of regression slopes (factor × covariate interaction)
-         → if significant: slopes differ, ANCOVA assumption violated → block or warn
-      3. Test normality of residuals (Shapiro–Wilk)
-      4. Test homogeneity of variances (Levene)
-      5. Run ANCOVA (GLM with covariate)
-      6. Report: ANOVA table, adjusted means (LS means), SS Type III
-    """
+    """ANCOVA — Коваріаційний аналіз."""
+
+    HELP_TEXT = """
+ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
+══════════════════════════════════════════
+
+ЩО ТАКЕ ANCOVA?
+  ANCOVA (Коваріаційний аналіз) = ANOVA + контроль неперервної змінної.
+  Порівнює групи за залежною змінною (Y), виключаючи вплив
+  однієї або кількох коваріат (змінних що ви вимірюєте але не контролюєте).
+
+КОЛИ ВИКОРИСТОВУВАТИ?
+  Коли між групами є відмінності у вихідних умовах:
+  • Порівняння врожайності сортів, але pH ґрунту різний на ділянках
+  • Порівняння приросту, але початкова маса рослин різна
+  • Вплив обробки, але температура чи вологість відрізнялась
+
+КРОК 1. СТРУКТУРА ТАБЛИЦІ ДАНИХ
+
+  Стовпці мають бути у такому порядку:
+  [Група] | [Коваріата 1] | [Коваріата 2] | ... | [Залежна Y]
+
+  Перейменуйте заголовки (сині/блакитні клітинки зверху):
+    Перший стовпець = Назва групи/фактора (текстові мітки!)
+    Останній стовпець = Залежна змінна Y (числа)
+    Між ними = Коваріати (числа)
+
+  Приклад (порівняння сортів, коваріата = pH):
+  | Сорт     | pH ґрунту | Врожайність |
+  | Сорт А   |    6.2    |    5.8      |
+  | Сорт А   |    5.9    |    5.4      |
+  | Сорт Б   |    6.5    |    6.2      |
+
+  Мінімум: 6 спостережень, 2 групи, 2 спостереження в кожній групі.
+
+КРОК 2. РІВЕНЬ ЗНАЧУЩОСТІ α
+  Стандарт: 0.05.
+  Строже: 0.01 (при множинних порівняннях).
+
+КРОК 3. ВИКОНАННЯ АНАЛІЗУ
+  Натисніть «▶ Виконати» та дочекайтесь результатів.
+
+КРОК 4. АВТОМАТИЧНІ ПЕРЕВІРКИ ПЕРЕДУМОВ
+
+  Програма автоматично перевіряє і БЛОКУЄ аналіз при порушеннях:
+
+  ① Паралельність ліній регресії (КЛЮЧОВА ПЕРЕДУМОВА):
+    ANCOVA передбачає що вплив коваріати на Y ОДНАКОВИЙ у всіх групах.
+    Тест: взаємодія Група×Коваріата.
+    p ≥ 0.05 → лінії паралельні → ANCOVA коректна ✓
+    p < 0.05 → лінії НЕ паралельні → ANCOVA ЗАБЛОКОВАНА ✗
+    (→ використайте звичайну ANOVA з коваріатою як фактором)
+
+  ② Нормальність залишків (Shapiro-Wilk):
+    p > 0.05 → залишки нормальні ✓
+    p ≤ 0.05 → програма запитає підтвердження
+
+  ③ Однорідність дисперсій (тест Левена):
+    p ≥ 0.05 → дисперсії рівні ✓
+    p < 0.05 → програма запитає підтвердження
+
+  ④ Мультиколінеарність коваріат (r > 0.95):
+    При дуже сильному зв'язку між коваріатами — попередження
+
+КРОК 5. ІНТЕРПРЕТАЦІЯ РЕЗУЛЬТАТІВ
+
+  Таблиця ANCOVA (Тип III SS):
+    Джерело «Група» → p < 0.05: групи відрізняються після контролю коваріати
+    Джерело «Коваріата» → p < 0.05: коваріата суттєво впливає на Y
+    R² → частка варіації Y пояснена всією моделлю
+
+  Скориговані середні (LS Means):
+    Це ГОЛОВНИЙ результат ANCOVA!
+    Прогнозоване середнє кожної групи за умови що всі групи
+    мають ОДНАКОВЕ значення коваріати (= загальне середнє).
+    Порівнюйте СКОРИГОВАНІ, а не нескориговані середні!
+
+  Пост-хок (Бонферроні):
+    p < 0.05 → пара груп значуще відрізняється за скоригованим середнім
+
+КРОК 6. ГРАФІКИ ЗАЛИШКІВ
+  Residuals vs Fitted: точки мають бути хаотично навколо нуля
+  QQ-графік залишків: точки мають лежати на прямій
+  ⚠ Патерн або вигин → модель порушена
+"""
+
     def __init__(self, parent, gs):
         self.win = tk.Toplevel(parent)
         self.win.title("ANCOVA — Коваріаційний аналіз")
@@ -5604,33 +5758,32 @@ class AncovaWindow:
         self.gs = gs; self._build()
 
     def _build(self):
-        # ── Menu ──
-        mb = tk.Menu(self.win); self.win.config(menu=mb)
-        hm = tk.Menu(mb, tearoff=0)
-        hm.add_command(label="Що таке ANCOVA?", command=self._help)
-        mb.add_cascade(label="Довідка", menu=hm)
-
-        # ── Toolbar ──
+        # ── Панель інструментів (наш стандарт) ──────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Виконати ANCOVA", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13), command=self._run).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
+                  command=self._run).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="Вставити з буфера",
+                  font=("Times New Roman", 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(12, 2))
+        tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(10, 2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman", 11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=8)
 
-        # ── Instructions ──
+        # ── Інформаційний рядок ──────────────────────────────
         info = tk.Frame(self.win, bg="#f0f4ff", padx=8, pady=4)
         info.pack(fill=tk.X, padx=8, pady=(0, 4))
         tk.Label(info, text=(
-            "Column layout:  [Group/Factor]  [Covariate 1]  [Covariate 2 ...]  [Dependent variable]\n"
-            "First row = column headers.  Group column must contain text labels.  "
-            "Covariate and DV columns must be numeric."),
+            "Порядок стовпців:  [Група/Фактор]  [Коваріата 1]  [Коваріата 2 ...]  [Залежна Y]\n"
+            "Заголовки стовпців (блакитні) можна редагувати.  "
+            "Перший стовпець — текстові мітки груп.  Решта — числа."),
             font=("Times New Roman", 10), bg="#f0f4ff", justify="left").pack(anchor="w")
 
-        # ── Data table ──
+        # ── Таблиця даних ────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
         self.n_rows = 24; self.n_cols = 6
         canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -5640,46 +5793,62 @@ class AncovaWindow:
         self.inner = tk.Frame(canvas)
         canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         col_hints = ["Група", "Коваріата 1", "Коваріата 2", "Коваріата 3", "Коваріата 4", "Залежна Y"]
         self.header_entries = []
         for j in range(self.n_cols):
-            e = tk.Entry(self.inner, width=14, bg="#dce8ff", font=("Times New Roman", 11))
-            e.insert(0, col_hints[j] if j < len(col_hints) else f"Col{j+1}")
+            e = tk.Entry(self.inner, width=14, bg="#1a4b8c", fg="white",
+                         font=("Times New Roman", 11, "bold"),
+                         insertbackground="white")
+            e.insert(0, col_hints[j] if j < len(col_hints) else f"Стовп{j+1}")
             e.grid(row=0, column=j, padx=1, pady=1)
             self.header_entries.append(e)
         self.entries = []
         for i in range(self.n_rows):
             row_ = []
             for j in range(self.n_cols):
-                e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11))
+                e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
+                             highlightthickness=1, highlightbackground="#c0c0c0")
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
 
+    def _show_help(self):
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — ANCOVA")
+        win.geometry("700x640"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip())
+        txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman", 11)).pack(pady=6)
+
     def _help(self):
-        messagebox.showinfo("Що таке ANCOVA?",
-            "Analysis of Covariance (ANCOVA) combines ANOVA and linear regression.\n\n"
-            "It tests group differences on a dependent variable while statistically\n"
-            "controlling for the effect of one or more continuous covariates.\n\n"
-            "KEY ASSUMPTION — Homogeneity of regression slopes:\n"
-            "The relationship between the covariate and DV must be the same\n"
-            "across all groups (parallel regression lines).\n"
-            "If slopes differ significantly → ANCOVA is not appropriate.\n\n"
-            "Typical uses in agronomy:\n"
-            "• Comparing yields while controlling for initial plant height/weight\n"
-            "• Adjusting for soil pH differences between plots\n"
-            "• Controlling for pre-treatment measurements")
+        self._show_help()   # залишаємо для сумісності
 
     def _paste(self):
         try: data = self.win.clipboard_get()
-        except Exception: return
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
         rows = [r for r in data.splitlines() if r.strip()]
         for i, line in enumerate(rows[:self.n_rows]):
             for j, val in enumerate(line.split("\t")[:self.n_cols]):
                 self.entries[i][j].delete(0, tk.END)
                 self.entries[i][j].insert(0, val.strip())
+
+
 
     def _run(self):
         alpha = float(self.alpha_var.get())
