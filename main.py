@@ -1396,19 +1396,20 @@ class CorrelationWindow:
                   font=("Times New Roman", 13),
                   command=self._run_analysis).pack(side=tk.LEFT, padx=4)
 
-        # Управління таблицею
-        tk.Button(tb, text="+ Рядок", font=("Times New Roman", 11),
-                  command=self.add_row).pack(side=tk.LEFT, padx=2)
-        tk.Button(tb, text="– Рядок", font=("Times New Roman", 11),
-                  command=self.del_row).pack(side=tk.LEFT, padx=2)
-        tk.Button(tb, text="+ Стовпець", font=("Times New Roman", 11),
-                  command=self.add_col).pack(side=tk.LEFT, padx=2)
-        tk.Button(tb, text="– Стовпець", font=("Times New Roman", 11),
-                  command=self.del_col).pack(side=tk.LEFT, padx=2)
-        tk.Button(tb, text="🗑 Очистити", font=("Times New Roman", 11),
-                  command=self._clear_table).pack(side=tk.LEFT, padx=4)
-
-        ttk.Separator(tb, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
+        # Налаштування — спадне меню з управлінням таблицею
+        self._settings_btn = tk.Menubutton(tb, text="⚙ Налаштування ▾",
+                                           font=("Times New Roman", 11),
+                                           relief=tk.RAISED, bd=2)
+        self._settings_btn.pack(side=tk.LEFT, padx=4)
+        sm = tk.Menu(self._settings_btn, tearoff=0)
+        sm.add_command(label="Додати рядок",      command=self.add_row)
+        sm.add_command(label="Видалити рядок",    command=self.del_row)
+        sm.add_separator()
+        sm.add_command(label="Додати стовпець",   command=self.add_col)
+        sm.add_command(label="Видалити стовпець", command=self.del_col)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        self._settings_btn["menu"] = sm
 
         tk.Button(tb, text="Вставити з Excel",
                   font=("Times New Roman", 11),
@@ -3826,58 +3827,280 @@ def export_report_pdf(text_lines, filepath):
 # DESCRIPTIVE STATISTICS — standalone module
 # ═══════════════════════════════════════════════════════════════
 class DescriptiveWindow:
-    """Standalone descriptive statistics module."""
-    def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Описова статистика")
-        self.win.geometry("1100x680"); set_icon(self.win)
-        self.gs = gs; self._build()
+    """Описова статистика — окремий модуль."""
 
+    HELP_TEXT = """
+ОПИСОВА СТАТИСТИКА — ПОКРОКОВА ІНСТРУКЦІЯ
+══════════════════════════════════════════
+
+ЩО ЦЕ І НАВІЩО?
+  Описова статистика — перший крок будь-якого аналізу.
+  Вона описує ваші дані числовими характеристиками і
+  допомагає виявити аномалії до проведення статистичних тестів.
+
+КРОК 1. ПІДГОТОВКА ДАНИХ
+  Кожен стовпець = один показник (змінна).
+  Кожен рядок = одне спостереження.
+  Двічі клікніть на синій заголовок стовпця щоб задати
+  назву показника (наприклад: «Врожайність, т/га»).
+
+  Приклад:
+  | Врожайність | Висота | Маса 1000 зерен |
+  |    4.2      |  98.5  |      38.2       |
+  |    5.1      | 103.2  |      41.5       |
+
+КРОК 2. ЗАПУСК
+  Натисніть «▶ Аналіз».
+  Мінімум: 2 значення у стовпці для розрахунку SD і SE.
+
+КРОК 3. ІНТЕРПРЕТАЦІЯ ТАБЛИЦІ РЕЗУЛЬТАТІВ
+
+  n — кількість числових значень у стовпці.
+    Менше 5 — результати ненадійні.
+
+  Середнє (Mean) — середньоарифметичне.
+    Чутливе до викидів: одне екстремальне значення
+    може суттєво змінити середнє.
+
+  SD (стандартне відхилення) — середнє відхилення
+    від середнього. Велике SD = великий розкид.
+
+  СП (SE, стандартна похибка середнього):
+    SE = SD / √n
+    Показує точність оцінки середнього.
+    Чим більше n, тим менше SE.
+
+  Мін / Макс — найменше і найбільше значення.
+    Перевіряйте на помилки введення!
+
+  Медіана — середнє значення впорядкованого ряду.
+    Стійка до викидів. Якщо Середнє >> Медіани —
+    розподіл правоскошений.
+
+  Q1 / Q3 — 25-й і 75-й перцентилі.
+    IQR = Q3 - Q1 (міжквартильний розмах).
+
+  CV% (коефіцієнт варіації):
+    CV = SD/Середнє × 100%
+    Оцінка точності польового досліду:
+    < 10%: відмінна | 10-15%: хороша
+    15-20%: задовільна | > 20%: низька
+
+  Асиметрія (Skewness):
+    = 0: симетричний розподіл
+    > 0: правостороня асиметрія (хвіст праворуч)
+    < 0: лівостороня асиметрія
+
+  Ексцес (Kurtosis):
+    = 0: нормальний розподіл
+    > 0: гостроверхий (більше значень поблизу середнього)
+    < 0: пласковерхий
+
+  95% ДІ — довірчий інтервал середнього.
+    З ймовірністю 95% «справжнє» середнє знаходиться
+    в цьому діапазоні.
+
+  SW p (Shapiro-Wilk):
+    Тест нормальності розподілу.
+    p > 0.05: розподіл нормальний ✓
+    p ≤ 0.05: розподіл ненормальний ⚠
+    При n > 50 тест може бути надто чутливим —
+    оцінюйте QQ-графік візуально.
+
+КРОК 4. ГРАФІКИ
+
+  Боксплот (коробка з вусами):
+    Показує розподіл кожного показника.
+    Коробка: Q1 - Q3 | Лінія: медіана
+    Вуса: Q1-1.5×IQR до Q3+1.5×IQR
+    Точки поза вусами: викиди (outliers)
+
+  QQ-графік (квантиль-квантиль):
+    Перевірка нормальності візуально.
+    Точки лежать на прямій → нормальний розподіл ✓
+    Точки відхиляються від прямої → ненормальний ⚠
+"""
+
+    def __init__(self, parent, gs):
+        self.win = tk.Toplevel(parent)
+        self.win.title("Описова статистика")
+        self.win.geometry("1000x640"); set_icon(self.win)
+        self.gs = dict(gs)
+        self._bp_fig  = None   # боксплот
+        self._qq_fig  = None   # QQ-графіки
+        self._bp_gs   = {      # налаштування боксплоту
+            "font_family": gs.get("font_family","Times New Roman"),
+            "font_size": 11,
+            "box_color":    gs.get("box_color","#ffffff"),
+            "median_color": gs.get("median_color","#c62828"),
+            "whisker_color":gs.get("whisker_color","#000000"),
+            "flier_color":  gs.get("flier_color","#555555"),
+        }
+        self._qq_gs   = {      # налаштування QQ
+            "font_family": gs.get("font_family","Times New Roman"),
+            "font_size": 9,
+            "pt_color":    "#4c72b0",
+            "line_color":  "#c62828",
+        }
+        self._build()
+
+    # ── Побудова вікна ───────────────────────────────────────
     def _build(self):
+        # ── Меню ──
         mb = tk.Menu(self.win); self.win.config(menu=mb)
         fm = tk.Menu(mb, tearoff=0)
-        fm.add_command(label="Load Excel", command=self._load_excel)
-        fm.add_command(label="Paste from clipboard", command=self._paste)
-        mb.add_cascade(label="File", menu=fm)
+        fm.add_command(label="Завантажити Excel", command=self._load_excel)
+        mb.add_cascade(label="Файл", menu=fm)
 
-        top = tk.Frame(self.win, padx=6, pady=4); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=self._analyze).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="Перший рядок = назви змінних  |  Кожен стовпець = один показник",
-                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=8)
+        # ── Панель інструментів ──
+        tb = tk.Frame(self.win, padx=6, pady=5); tb.pack(fill=tk.X)
 
-        # data table
+        tk.Button(tb, text="▶ Аналіз", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
+                  command=self._analyze).pack(side=tk.LEFT, padx=4)
+
+        # Налаштування — спадне меню
+        mb2 = tk.Menubutton(tb, text="⚙ Налаштування ▾",
+                            font=("Times New Roman", 11),
+                            relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=4)
+        sm = tk.Menu(mb2, tearoff=0)
+        sm.add_command(label="Додати рядок",      command=self._add_row)
+        sm.add_command(label="Видалити рядок",    command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="Додати стовпець",   command=self._add_col)
+        sm.add_command(label="Видалити стовпець", command=self._del_col)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        mb2["menu"] = sm
+
+        tk.Button(tb, text="Вставити з Excel",
+                  font=("Times New Roman", 11),
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman", 11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb,
+                 text="Двічі клікніть синій заголовок щоб перейменувати показник",
+                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT, padx=10)
+
+        # ── Таблиця ──
         tf = tk.Frame(self.win); tf.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
         self.rows = 20; self.cols = 8
         canvas = tk.Canvas(tf); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb = ttk.Scrollbar(tf, orient="vertical", command=canvas.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner = tk.Frame(canvas)
+        canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+        self.win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
         self._canvas = canvas
-        self.entries = []
+
+        # Заголовки (сині, з перейменуванням)
+        self.header_vars   = []
+        self.header_labels = []
         for j in range(self.cols):
-            lbl = tk.Label(self.inner, text=f"Var {j+1}", relief=tk.RIDGE, width=12,
-                           bg="#f0f0f0", font=("Times New Roman",11))
-            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+            var = tk.StringVar(value=f"Показник {j+1}")
+            self.header_vars.append(var)
+            lbl = tk.Label(self.inner, textvariable=var,
+                           relief=tk.RIDGE, width=13, cursor="hand2",
+                           bg="#1a4b8c", fg="white",
+                           font=("Times New Roman", 11, "bold"))
+            lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
+            lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
+            self.header_labels.append(lbl)
+
+        self.entries = []
         for i in range(self.rows):
             row_ = []
             for j in range(self.cols):
-                e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
-                e.grid(row=i+1, column=j, padx=1, pady=1)
+                e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
+                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e.grid(row=i+1, column=j, padx=2, pady=2)
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
 
+    # ── Перейменування стовпця ───────────────────────────────
+    def _rename_col(self, idx):
+        dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
+        dlg.resizable(False, False); dlg.grab_set()
+        tk.Label(dlg, text=f"Назва показника {idx+1}:",
+                 font=("Times New Roman", 12)).pack(padx=16, pady=(14, 4))
+        var = tk.StringVar(value=self.header_vars[idx].get())
+        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman", 12), width=28)
+        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
+        def apply():
+            nm = var.get().strip()
+            if nm: self.header_vars[idx].set(nm)
+            dlg.destroy()
+        tk.Button(dlg, text="ОК", bg="#c62828", fg="white",
+                  font=("Times New Roman", 12), command=apply).pack(pady=(4, 14))
+        dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
+
+    # ── Управління таблицею ───────────────────────────────────
+    def _add_row(self):
+        i = len(self.entries); row_ = []
+        for j in range(self.cols):
+            e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=j, padx=2, pady=2); row_.append(e)
+        self.entries.append(row_); self.rows += 1
+        _bind_nav(self.entries, self.win)
+        self._canvas.config(scrollregion=self._canvas.bbox("all"))
+
+    def _del_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.rows -= 1
+        self._canvas.config(scrollregion=self._canvas.bbox("all"))
+
+    def _add_col(self):
+        ci = self.cols; self.cols += 1
+        var = tk.StringVar(value=f"Показник {ci+1}")
+        self.header_vars.append(var)
+        lbl = tk.Label(self.inner, textvariable=var, relief=tk.RIDGE, width=13,
+                       cursor="hand2", bg="#1a4b8c", fg="white",
+                       font=("Times New Roman", 11, "bold"))
+        lbl.grid(row=0, column=ci, padx=2, pady=2, sticky="nsew")
+        lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
+        self.header_labels.append(lbl)
+        for i, row_ in enumerate(self.entries):
+            e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=ci, padx=2, pady=2); row_.append(e)
+        _bind_nav(self.entries, self.win)
+
+    def _del_col(self):
+        if self.cols <= 1: return
+        self.header_labels.pop().destroy(); self.header_vars.pop()
+        for row_ in self.entries: row_.pop().destroy()
+        self.cols -= 1
+
+    def _clear_table(self):
+        if not messagebox.askyesno("Очистити", "Видалити всі числові дані?\n(Назви стовпців залишаться)"): return
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+    # ── Вставка і завантаження ───────────────────────────────
     def _paste(self):
         w = self.win.focus_get()
-        if not isinstance(w, tk.Entry): return
+        # Знаходимо позицію активної клітинки
+        pos = (0, 0)
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos = (i, j); break
         try: data = self.win.clipboard_get()
         except Exception: return
-        for i, line in enumerate(data.splitlines()):
-            if not line: continue
-            for j, val in enumerate(line.split("\t")):
-                if i < len(self.entries) and j < self.cols:
-                    self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,val)
+        r0, c0 = pos
+        for ir, line in enumerate(data.splitlines()):
+            for jc, val in enumerate(line.split("\t")):
+                rr = r0+ir; cc = c0+jc
+                while rr >= len(self.entries): self._add_row()
+                if cc >= self.cols: continue
+                self.entries[rr][cc].delete(0, tk.END)
+                self.entries[rr][cc].insert(0, val.strip())
 
     def _load_excel(self):
         if not HAS_OPENPYXL: messagebox.showerror("","pip install openpyxl"); return
@@ -3885,63 +4108,71 @@ class DescriptiveWindow:
         if not path: return
         try:
             wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-            ws = wb.active
-            raw = [[cell for cell in row] for row in ws.iter_rows(values_only=True)]
-            wb.close()
-            while len(self.entries) < len(raw):
-                i = len(self.entries); row_ = []
-                for j in range(self.cols):
-                    e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
-                    e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
-                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
-                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
-                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
-                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
-                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
-                self.entries.append(row_); self.rows += 1
-            for i, row in enumerate(raw):
-                for j, v in enumerate(row):
-                    if i < len(self.entries) and j < self.cols:
-                        self.entries[i][j].delete(0,tk.END)
-                        self.entries[i][j].insert(0,"" if v is None else str(v))
-        except Exception as ex: messagebox.showerror("",str(ex))
+            raw = list(wb.active.iter_rows(values_only=True)); wb.close()
+        except Exception as ex: messagebox.showerror("", str(ex)); return
+        if not raw: return
+        nc = max(len(r) for r in raw)
+        while self.cols < nc: self._add_col()
+        while len(self.entries) < len(raw): self._add_row()
+        for i, row in enumerate(raw):
+            for j, v in enumerate(row):
+                if j >= self.cols: break
+                self.entries[i][j].delete(0, tk.END)
+                self.entries[i][j].insert(0, "" if v is None else str(v).replace(",","."))
 
+    # ── Довідка ──────────────────────────────────────────────
+    def _show_help(self):
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — Описова статистика")
+        win.geometry("700x640"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip())
+        txt.configure(state="disabled")
+        txt.bind("<MouseWheel>", lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman", 11)).pack(pady=6)
+
+    # ── Аналіз ───────────────────────────────────────────────
     def _analyze(self):
-        # read data: first row = names
-        raw = [[e.get().strip() for e in row] for row in self.entries]
-        # find names row (first non-empty)
+        from scipy.stats import skew, kurtosis
+        # Назви беремо з заголовків; дані — з клітинок
         names = []; data_cols = []
         for j in range(self.cols):
-            col_vals = []; col_name = ""
-            for i, row in enumerate(raw):
-                v = row[j] if j < len(row) else ""
+            col_name = self.header_vars[j].get().strip() or f"Показник {j+1}"
+            col_vals = []
+            for row in self.entries:
+                v = row[j].get().strip() if j < len(row) else ""
                 if not v: continue
-                if not col_name:
-                    try: float(v.replace(",",".")); col_name = f"Var{j+1}"; col_vals.append(float(v.replace(",",".")))
-                    except ValueError: col_name = v
-                else:
-                    try: col_vals.append(float(v.replace(",",".")))
-                    except Exception: continue
-            if col_name and col_vals:
-                names.append(col_name); data_cols.append(np.array(col_vals, dtype=float))
+                try: col_vals.append(float(v.replace(",",".")))
+                except Exception: continue
+            if len(col_vals) >= 2:
+                names.append(col_name)
+                data_cols.append(np.array(col_vals, dtype=float))
 
-        if not data_cols: messagebox.showwarning("","Числових даних не знайдено."); return
+        if not data_cols:
+            messagebox.showwarning("Замало даних",
+                "Не знайдено числових даних.\n"
+                "Переконайтесь що введено числа і кожен стовпець містить ≥ 2 значення."); return
 
-        # compute stats
-        from scipy.stats import skew, kurtosis
-        headers = ["Variable","n","Mean","SD","SE","Min","Max","Median",
-                   "Q1","Q3","CV%","Skewness","Kurtosis","95% CI low","95% CI high","SW p"]
+        headers = ["Показник","n","Середнє","SD","СП","Мін","Макс","Медіана",
+                   "Q1","Q3","CV%","Асиметрія","Ексцес","95% ДІ нижній","95% ДІ верхній","SW p"]
         rows = []
         for nm, arr in zip(names, data_cols):
             a = arr[~np.isnan(arr)]; n = len(a)
             if n < 2: rows.append([nm, n] + ["–"]*14); continue
-            m = float(np.mean(a)); sd = float(np.std(a, ddof=1))
+            m  = float(np.mean(a)); sd = float(np.std(a, ddof=1))
             se = sd / math.sqrt(n)
             ci_lo = m - float(t_dist.ppf(0.975, n-1)) * se
             ci_hi = m + float(t_dist.ppf(0.975, n-1)) * se
             sk = float(skew(a)); ku = float(kurtosis(a))
-            q1, q3 = float(np.percentile(a,25)), float(np.percentile(a,75))
-            cv = sd/m*100 if m != 0 else np.nan
+            q1  = float(np.percentile(a, 25)); q3 = float(np.percentile(a, 75))
+            cv  = sd/m*100 if m != 0 else np.nan
             try: _, sw_p = shapiro(a)
             except Exception: sw_p = np.nan
             rows.append([nm, n, fmt(m,3), fmt(sd,3), fmt(se,3),
@@ -3952,50 +4183,199 @@ class DescriptiveWindow:
 
         self._show_result(headers, rows, data_cols, names)
 
+    # ── Результати ───────────────────────────────────────────
     def _show_result(self, headers, rows, arrays, names):
-        win = tk.Toplevel(self.win); win.title("Описова статистика — Результати")
-        win.geometry("1300x600"); set_icon(win)
-        top = tk.Frame(win, padx=6, pady=4); top.pack(fill=tk.X)
-        def export_docx():
-            p = filedialog.asksaveasfilename(defaultextension=".docx",filetypes=[("Word","*.docx")])
-            if not p: return
-            try:
-                export_report_docx([{"kind":"heading","text":"Описова статистика","level":1},
-                                     {"kind":"table","headers":headers,"rows":rows}], [], p)
-                messagebox.showinfo("","Збережено.")
-            except Exception as ex: messagebox.showerror("",str(ex))
-        tk.Button(top, text="Експорт у Word", command=export_docx).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Побудувати боксплоти", command=lambda: self._plot_boxes(arrays, names)).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="QQ-графіки", command=lambda: self._plot_qq(arrays, names)).pack(side=tk.LEFT, padx=4)
+        win = tk.Toplevel(self.win)
+        win.title("Описова статистика — Результати")
+        win.geometry("1340x600"); set_icon(win)
+
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати таблицю",
+                  font=("Times New Roman", 11),
+                  command=lambda: self._copy_table(win, headers, rows)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📊 Боксплоти",
+                  font=("Times New Roman", 11),
+                  command=lambda: self._plot_boxes(arrays, names)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📈 QQ-графіки",
+                  font=("Times New Roman", 11),
+                  command=lambda: self._plot_qq(arrays, names)
+                  ).pack(side=tk.LEFT, padx=4)
 
         frm, _ = make_tv(win, headers, rows, min_col=80)
         frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
+    def _copy_table(self, win, headers, rows):
+        """Копіює таблицю у буфер обміну у форматі TSV (для вставки у Excel/Word)."""
+        lines = ["\t".join(str(h) for h in headers)]
+        for row in rows:
+            lines.append("\t".join("" if v is None else str(v) for v in row))
+        text = "\n".join(lines)
+        win.clipboard_clear(); win.clipboard_append(text)
+        messagebox.showinfo("Скопійовано",
+            "Таблицю скопійовано у буфер обміну.\n"
+            "Вставте у Word або Excel через Ctrl+V.")
+
+    # ── Боксплот ─────────────────────────────────────────────
     def _plot_boxes(self, arrays, names):
         if not HAS_MPL: return
-        win = tk.Toplevel(self.win); win.title("Боксплоти"); win.geometry("900x550")
-        fig = Figure(figsize=(max(6, len(arrays)*0.9+1), 5), dpi=100)
-        ax = fig.add_subplot(111)
-        ax.boxplot([a[~np.isnan(a)] for a in arrays], labels=names, patch_artist=True)
-        ax.set_ylabel("Value"); fig.tight_layout()
-        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        win = tk.Toplevel(self.win)
+        win.title("Боксплоти"); win.geometry("920x580"); set_icon(win)
 
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати PNG",
+                  font=("Times New Roman", 11),
+                  command=lambda: self._copy_fig(self._bp_fig)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування",
+                  font=("Times New Roman", 11),
+                  command=lambda: self._restyle_bp(win, arrays, names)
+                  ).pack(side=tk.LEFT, padx=4)
+
+        self._bp_frame = tk.Frame(win); self._bp_frame.pack(fill=tk.BOTH, expand=True)
+        self._bp_arrays = arrays; self._bp_names = names
+        self._draw_boxes(self._bp_frame, arrays, names)
+
+    def _draw_boxes(self, frame, arrays, names):
+        for w in frame.winfo_children(): w.destroy()
+        gs = self._bp_gs
+        ff  = gs.get("font_family", "Times New Roman")
+        fz  = gs.get("font_size", 11)
+        n   = len(arrays)
+        fig = Figure(figsize=(max(6, n*1.1+1), 5), dpi=100)
+        ax  = fig.add_subplot(111)
+        bp  = ax.boxplot([a[~np.isnan(a)] for a in arrays],
+                         labels=names, patch_artist=True, widths=0.55)
+        for patch in bp["boxes"]:    patch.set(facecolor=gs.get("box_color","#ffffff"))
+        for line  in bp["medians"]:  line.set(color=gs.get("median_color","#c62828"), linewidth=2)
+        for line  in bp["whiskers"]+bp["caps"]:
+            line.set(color=gs.get("whisker_color","#000000"))
+        for fl    in bp["fliers"]:
+            fl.set(markerfacecolor=gs.get("flier_color","#555555"), marker="o", markersize=4)
+        ax.set_ylabel("Значення", fontsize=fz, fontfamily=ff)
+        ax.set_title("Boxplot показників", fontsize=fz+1, fontfamily=ff)
+        ax.tick_params(axis="x", labelsize=max(8, fz-1))
+        ax.yaxis.grid(True, linestyle="--", alpha=0.4)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        self._bp_fig = fig
+        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _restyle_bp(self, win, arrays, names):
+        dlg = GraphSettingsDlg(win, self._bp_gs, show_heatmap=False)
+        win.wait_window(dlg)
+        if dlg.result:
+            self._bp_gs.update(dlg.result)
+            self._draw_boxes(self._bp_frame, arrays, names)
+
+    # ── QQ-графіки ───────────────────────────────────────────
     def _plot_qq(self, arrays, names):
         if not HAS_MPL: return
         from scipy.stats import probplot
-        n = len(arrays); cols = min(n, 4); rows_n = math.ceil(n/cols)
-        win = tk.Toplevel(self.win); win.title("QQ-графіки"); win.geometry("1000x600")
-        fig = Figure(figsize=(cols*2.5+0.5, rows_n*2.5+0.5), dpi=100)
+        n = len(arrays); cols_ = min(n, 4); rows_n = math.ceil(n / cols_)
+        win = tk.Toplevel(self.win)
+        win.title("QQ-графіки"); win.geometry("1000x640"); set_icon(win)
+
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати PNG",
+                  font=("Times New Roman", 11),
+                  command=lambda: self._copy_fig(self._qq_fig)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування",
+                  font=("Times New Roman", 11),
+                  command=lambda: self._restyle_qq(win, arrays, names)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb,
+                 text="Точки на прямій → нормальний розподіл ✓   |   "
+                      "Відхилення від прямої → ненормальний ⚠",
+                 font=("Times New Roman", 9), fg="#555").pack(side=tk.LEFT, padx=8)
+
+        self._qq_frame   = tk.Frame(win); self._qq_frame.pack(fill=tk.BOTH, expand=True)
+        self._qq_arrays  = arrays; self._qq_names = names
+        self._draw_qq(self._qq_frame, arrays, names)
+
+    def _draw_qq(self, frame, arrays, names):
+        from scipy.stats import probplot
+        for w in frame.winfo_children(): w.destroy()
+        gs    = self._qq_gs
+        ff    = gs.get("font_family", "Times New Roman")
+        fz    = gs.get("font_size", 9)
+        pt_c  = gs.get("pt_color",   "#4c72b0")
+        ln_c  = gs.get("line_color", "#c62828")
+        n     = len(arrays); cols_ = min(n, 4); rows_n = math.ceil(n / cols_)
+        fig   = Figure(figsize=(cols_*2.5+0.5, rows_n*2.5+0.5), dpi=100)
         for i, (arr, nm) in enumerate(zip(arrays, names)):
             a = arr[~np.isnan(arr)]
             if len(a) < 3: continue
-            ax = fig.add_subplot(rows_n, cols, i+1)
+            ax  = fig.add_subplot(rows_n, cols_, i+1)
             res = probplot(a, dist="norm")
-            ax.plot(res[0][0], res[0][1], 'o', markersize=3, color='#4c72b0')
-            ax.plot(res[0][0], res[1][1] + res[1][0]*res[0][0], 'r-', lw=1)
-            ax.set_title(nm, fontsize=9); ax.set_xlabel("Theoretical"); ax.set_ylabel("Sample")
+            ax.plot(res[0][0], res[0][1], "o", markersize=4, color=pt_c, alpha=0.8)
+            ax.plot(res[0][0], res[1][1] + res[1][0]*res[0][0], "-", color=ln_c, lw=1.5)
+            ax.set_title(nm, fontsize=fz+1, fontfamily=ff)
+            ax.set_xlabel("Теоретичні квантилі", fontsize=fz, fontfamily=ff)
+            ax.set_ylabel("Вибіркові квантилі",  fontsize=fz, fontfamily=ff)
+            ax.yaxis.grid(True, linestyle="--", alpha=0.35)
+            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         fig.tight_layout()
-        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self._qq_fig = fig
+        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _restyle_qq(self, win, arrays, names):
+        """Простий діалог налаштувань QQ-графіків."""
+        dlg = tk.Toplevel(win); dlg.title("Налаштування QQ-графіків")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        rb_f = ("Times New Roman", 12)
+
+        ff_var  = tk.StringVar(value=self._qq_gs.get("font_family","Times New Roman"))
+        fz_var  = tk.IntVar(value=self._qq_gs.get("font_size", 9))
+        pt_col  = [self._qq_gs.get("pt_color","#4c72b0")]
+        ln_col  = [self._qq_gs.get("line_color","#c62828")]
+
+        tk.Label(frm, text="Шрифт:", font=rb_f).grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Combobox(frm, textvariable=ff_var,
+                     values=["Times New Roman","Arial","Calibri","Georgia"],
+                     state="readonly", width=20).grid(row=0, column=1, sticky="w", padx=8)
+        tk.Label(frm, text="Розмір шрифту:", font=rb_f).grid(row=1, column=0, sticky="w", pady=4)
+        tk.Spinbox(frm, from_=6, to=18, textvariable=fz_var, width=6).grid(row=1, column=1, sticky="w", padx=8)
+
+        pt_btn = tk.Button(frm, width=6, relief=tk.SUNKEN, bg=pt_col[0])
+        ln_btn = tk.Button(frm, width=6, relief=tk.SUNKEN, bg=ln_col[0])
+
+        def pick_pt():
+            c = colorchooser.askcolor(color=pt_col[0], parent=dlg, title="Колір точок")
+            if c and c[1]: pt_col[0]=c[1]; pt_btn.configure(bg=c[1])
+        def pick_ln():
+            c = colorchooser.askcolor(color=ln_col[0], parent=dlg, title="Колір лінії")
+            if c and c[1]: ln_col[0]=c[1]; ln_btn.configure(bg=c[1])
+
+        tk.Label(frm, text="Колір точок:", font=rb_f).grid(row=2, column=0, sticky="w", pady=4)
+        pt_btn.configure(command=pick_pt); pt_btn.grid(row=2, column=1, sticky="w", padx=8)
+        tk.Label(frm, text="Колір лінії:", font=rb_f).grid(row=3, column=0, sticky="w", pady=4)
+        ln_btn.configure(command=pick_ln); ln_btn.grid(row=3, column=1, sticky="w", padx=8)
+
+        def apply():
+            self._qq_gs.update({"font_family": ff_var.get(), "font_size": fz_var.get(),
+                                 "pt_color": pt_col[0], "line_color": ln_col[0]})
+            self._draw_qq(self._qq_frame, arrays, names); dlg.destroy()
+        bf = tk.Frame(frm); bf.grid(row=4, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="OK", bg="#c62828", fg="white",
+                  font=rb_f, command=apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rb_f, command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    # ── Копіювання PNG ───────────────────────────────────────
+    def _copy_fig(self, fig):
+        if fig is None:
+            messagebox.showwarning("", "Спочатку побудуйте графік."); return
+        ok, msg = _copy_fig_to_clipboard(fig)
+        if ok: messagebox.showinfo("", "Графік скопійовано.\nВставте у Word через Ctrl+V.")
+        else:   messagebox.showwarning("", f"Помилка: {msg}")
+
+
 
 
 # ═══════════════════════════════════════════════════════════════
