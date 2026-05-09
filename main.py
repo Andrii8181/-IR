@@ -5763,6 +5763,19 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
                   font=("Times New Roman", 13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
+
+        # Налаштування — спадне меню
+        mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
+                            font=("Times New Roman", 11),
+                            relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=4)
+        sm = tk.Menu(mb2, tearoff=0)
+        sm.add_command(label="Додати рядок",      command=self._add_row)
+        sm.add_command(label="Видалити рядок",    command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        mb2["menu"] = sm
+
         tk.Button(top, text="Вставити з буфера",
                   font=("Times New Roman", 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
@@ -5847,6 +5860,29 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             for j, val in enumerate(line.split("\t")[:self.n_cols]):
                 self.entries[i][j].delete(0, tk.END)
                 self.entries[i][j].insert(0, val.strip())
+
+    def _add_row(self):
+        i = self.n_rows; row_ = []
+        for j in range(self.n_cols):
+            e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=j, padx=1, pady=1)
+            row_.append(e)
+        self.entries.append(row_); self.n_rows += 1
+        _bind_nav(self.entries, self.win)
+        self.inner.update_idletasks()
+
+    def _del_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.n_rows -= 1
+
+    def _clear_table(self):
+        if not messagebox.askyesno("Очистити таблицю",
+                "Видалити всі числові дані?\n(Заголовки залишаться)"):
+            return
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
 
 
 
@@ -6215,16 +6251,108 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 # MANOVA — Multivariate Analysis of Variance
 # ═══════════════════════════════════════════════════════════════
 class ManovaWindow:
-    """
-    MANOVA: simultaneously tests group differences across multiple DVs.
-    Reports: Wilks' Lambda, Pillai's Trace, Hotelling-Lawley, Roy's GCR.
-    Prerequisite checks:
-      1. n > p (obs > variables) per group
-      2. Multivariate normality (Mardia's skewness + kurtosis)
-      3. Homogeneity of covariance matrices (Box's M approximation)
-      4. Absence of multicollinearity (r > 0.95 among DVs)
-    Post-hoc: univariate ANOVAs with Bonferroni correction.
-    """
+    """MANOVA — Багатовимірний дисперсійний аналіз."""
+
+    HELP_TEXT = """
+MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
+══════════════════════════════════════════
+
+ЩО ТАКЕ MANOVA?
+  MANOVA (Багатовимірний дисперсійний аналіз) перевіряє чи відрізняються
+  групи одночасно за КІЛЬКОМА залежними змінними (показниками).
+
+НАВІЩО НЕ КІЛЬКА ANOVA?
+  Якщо провести окремі ANOVA для кожного показника:
+  При 5 показниках і α=0.05 → ймовірність хоча б одного хибного
+  результату = 1-(0.95)⁵ = 23%!
+  MANOVA контролює цю сімейну помилку.
+  Крім того MANOVA може виявити ефект який окремі ANOVA пропустять
+  (коли ефект є у комбінації показників але не в кожному окремо).
+
+КОЛИ ВИКОРИСТОВУВАТИ?
+  ✓ Порівняння сортів за комплексом показників якості
+    (врожайність + маса + цукристість + кислотність одночасно)
+  ✓ Порівняння варіантів обробки за кількома параметрами росту
+  ✓ Будь-коли коли у вас 2+ залежних показники і 2+ групи
+
+КРОК 1. СТРУКТУРА ТАБЛИЦІ
+
+  Перший стовпець: Група (текстові мітки: «Сорт А», «Контроль» тощо)
+  Решта стовпців: Залежні змінні — по одній на стовпець (числа)
+
+  Приклад (порівняння 3 сортів за 3 показниками):
+  | Сорт    | Врожайність | Висота | Маса зерна |
+  | Сорт А  |    5.8      |  95.3  |    38.2    |
+  | Сорт А  |    6.1      |  98.1  |    40.5    |
+  | Сорт Б  |    4.9      |  88.5  |    35.1    |
+  | Сорт Б  |    5.2      |  91.2  |    36.8    |
+  | Сорт В  |    6.8      | 102.4  |    43.7    |
+  | Сорт В  |    7.1      | 105.8  |    45.2    |
+
+  Мінімум: 2 залежних змінних, 2 групи.
+
+КРОК 2. КРИТИЧНА ВИМОГА: n > p У КОЖНІЙ ГРУПІ
+
+  n = кількість спостережень у групі
+  p = кількість залежних змінних
+
+  Якщо у групі 3 спостереження і 4 показники → n ≤ p → MANOVA неможлива!
+  Програма ЗАБЛОКУЄ аналіз і пояснить що робити.
+
+  Правило: на кожну залежну змінну потрібно щонайменше 10 спостережень.
+  Наприклад: 3 ЗЗ → мінімум 10-15 спостережень на групу.
+
+КРОК 3. АВТОМАТИЧНІ ПЕРЕВІРКИ
+
+  Програма перевіряє 5 передумов:
+
+  ① n > p у кожній групі (критична — блокування)
+  ② ≥ 2 залежних змінних
+  ③ Мультиколінеарність ЗЗ (|r| > 0.90 → попередження)
+  ④ Багатовимірна нормальність (тест Мардіа):
+     Перевіряє нормальність векторів спостережень одночасно.
+     При порушенні → Pillai's Trace є найнадійнішою статистикою.
+  ⑤ Однорідність коваріаційних матриць (Box's M тест):
+     Аналог тесту Левена але для матриць, а не дисперсій.
+
+КРОК 4. ІНТЕРПРЕТАЦІЯ РЕЗУЛЬТАТІВ
+
+  Чотири тестові статистики:
+
+  Wilks' Lambda (Λ):
+    Найпоширеніша. Від 0 до 1. Менше → сильніший ефект.
+    Рекомендується при нормальності і рівних коваріаційних матрицях.
+
+  Pillai's Trace (V): ★ НАЙНАДІЙНІША
+    Найробустніша до порушень передумов.
+    При порушенні нормальності або Box's M → використовуйте її!
+    Програма позначає автоматично.
+
+  Hotelling-Lawley Trace (T):
+    Потужна коли один ефект домінує над іншими.
+
+  Roy's GCR:
+    Найпотужніша але найменш надійна.
+    p-значення — верхня межа, не точне.
+
+  Якщо всі 4 статистики дають p < α → впевнений результат ✓
+  Якщо результати суперечливі → орієнтуйтесь на Pillai's Trace
+
+КРОК 5. ПРАВИЛЬНА ПОСЛІДОВНІСТЬ ІНТЕРПРЕТАЦІЇ
+
+  1. Перевірте передумови → при порушеннях читайте попередження
+  2. Оцініть Pillai's Trace (p < α → групи відрізняються)
+  3. ЯКЩО MANOVA ЗНАЧУЩИЙ → переходьте до univariate ANOVA
+  4. Univariate ANOVA використовують поправку Бонферроні: α / кількість ЗЗ
+     (наприклад при 4 ЗЗ: 0.05/4 = 0.0125)
+  5. ЯКЩО MANOVA НЕЗНАЧУЩИЙ → univariate тести НЕ інтерпретуються!
+
+КРОК 6. РОЗМІР ЕФЕКТУ (partial η²)
+  Виводиться у univariate результатах:
+  < 0.01: дуже слабкий | 0.01-0.06: слабкий
+  0.06-0.14: середній  | > 0.14: сильний
+"""
+
     def __init__(self, parent, gs):
         self.win = tk.Toplevel(parent)
         self.win.title("MANOVA — Багатовимірний дисперсійний аналіз")
@@ -6232,84 +6360,142 @@ class ManovaWindow:
         self.gs = gs; self._build()
 
     def _build(self):
-        mb = tk.Menu(self.win); self.win.config(menu=mb)
-        hm = tk.Menu(mb, tearoff=0)
-        hm.add_command(label="Що таке MANOVA?", command=self._help)
-        mb.add_cascade(label="Довідка", menu=hm)
-
+        # ── Панель інструментів (наш стандарт) ──────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Виконати MANOVA", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13), command=self._run).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Вставити з буфера", command=self._paste).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(12,2))
+        tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
+                  command=self._run).pack(side=tk.LEFT, padx=4)
+
+        # Налаштування — спадне меню
+        mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
+                            font=("Times New Roman", 11),
+                            relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=4)
+        sm = tk.Menu(mb2, tearoff=0)
+        sm.add_command(label="Додати рядок",      command=self._add_row)
+        sm.add_command(label="Видалити рядок",    command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        mb2["menu"] = sm
+
+        tk.Button(top, text="Вставити з буфера",
+                  font=("Times New Roman", 11),
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(10, 2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman", 11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=8)
 
+        # ── Інформаційний рядок ──────────────────────────────
         info = tk.Frame(self.win, bg="#f0f4ff", padx=8, pady=4)
-        info.pack(fill=tk.X, padx=8, pady=(0,4))
+        info.pack(fill=tk.X, padx=8, pady=(0, 4))
         tk.Label(info, text=(
-            "Column layout:  [Group/Factor]  [DV 1]  [DV 2]  [DV 3]  ...\n"
-            "First row = column headers.  Group column = text labels.  DV columns = numeric.  "
-            "Minimum: 1 group column + 2 DV columns."),
+            "Порядок стовпців:  [Група/Фактор]  [Залежна змінна 1]  [Залежна змінна 2]  ...\n"
+            "Заголовки (блакитні) можна редагувати.  Перший стовпець — текстові мітки груп.  "
+            "Мінімум: 1 група + 2 залежних змінних.  Критично: n > p у кожній групі."),
             font=("Times New Roman", 10), bg="#f0f4ff", justify="left").pack(anchor="w")
 
+        # ── Таблиця даних ────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
         self.n_rows = 24; self.n_cols = 8
-        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+        self._canvas = tk.Canvas(mid)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=self._canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(self._canvas)
+        self._canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>",
+                        lambda e: self._canvas.config(scrollregion=self._canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
-        col_hints = ["Група","ЗЗ 1","ЗЗ 2","ЗЗ 3","ЗЗ 4","ЗЗ 5","ЗЗ 6","ЗЗ 7"]
+        col_hints = ["Група","Показник 1","Показник 2","Показник 3",
+                     "Показник 4","Показник 5","Показник 6","Показник 7"]
         self.header_entries = []
         for j in range(self.n_cols):
-            e = tk.Entry(self.inner, width=13, bg="#dce8ff", font=("Times New Roman",11))
-            e.insert(0, col_hints[j] if j < len(col_hints) else f"DV{j}")
+            e = tk.Entry(self.inner, width=13, bg="#1a4b8c", fg="white",
+                         font=("Times New Roman", 11, "bold"),
+                         insertbackground="white")
+            e.insert(0, col_hints[j] if j < len(col_hints) else f"Показник {j}")
             e.grid(row=0, column=j, padx=1, pady=1)
             self.header_entries.append(e)
+
         self.entries = []
         for i in range(self.n_rows):
             row_ = []
             for j in range(self.n_cols):
-                e = tk.Entry(self.inner, width=13, font=("Times New Roman",11))
-                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
-                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
-                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
-                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
-                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
-                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
+                e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
+                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e.grid(row=i+1, column=j, padx=1, pady=1)
+                row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
 
-    def _help(self):
-        messagebox.showinfo("Що таке MANOVA?",
-            "Multivariate Analysis of Variance (MANOVA) simultaneously tests\n"
-            "whether group means differ across multiple dependent variables.\n\n"
-            "Advantages over multiple ANOVAs:\n"
-            "• Controls Type I error inflation (no need for Bonferroni on DVs)\n"
-            "• Detects effects that individual ANOVAs may miss\n"
-            "• Accounts for correlations among DVs\n\n"
-            "KEY ASSUMPTIONS:\n"
-            "1. Multivariate normality of DV vector within groups\n"
-            "2. Homogeneity of covariance matrices across groups (Box's M)\n"
-            "3. No perfect multicollinearity among DVs\n"
-            "4. n > p: observations must exceed number of DVs per group\n\n"
-            "Test statistics (all equivalent, differ in power):\n"
-            "• Wilks' Lambda: most commonly reported\n"
-            "• Pillai's Trace: most robust to assumption violations\n"
-            "• Hotelling-Lawley Trace: powerful when one root dominates\n"
-            "• Roy's GCR: most powerful but least robust\n\n"
-            "Post-hoc: if MANOVA significant → run separate ANOVAs per DV\n"
-            "with Bonferroni correction (α / number of DVs).")
+    # ── Довідка ───────────────────────────────────────────────
+    def _show_help(self):
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — MANOVA")
+        win.geometry("720x660"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip())
+        txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman", 11)).pack(pady=6)
 
+    def _help(self):
+        self._show_help()
+
+    # ── Управління таблицею ───────────────────────────────────
+    def _add_row(self):
+        i = self.n_rows; row_ = []
+        for j in range(self.n_cols):
+            e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=j, padx=1, pady=1)
+            row_.append(e)
+        self.entries.append(row_); self.n_rows += 1
+        _bind_nav(self.entries, self.win)
+        self.inner.update_idletasks()
+
+    def _del_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.n_rows -= 1
+
+    def _clear_table(self):
+        if not messagebox.askyesno("Очистити таблицю",
+                "Видалити всі числові дані?\n(Заголовки залишаться)"):
+            return
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+    # ── Вставка з буфера ──────────────────────────────────────
     def _paste(self):
         try: data = self.win.clipboard_get()
-        except Exception: return
-        for i, line in enumerate(data.splitlines()[:self.n_rows]):
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
+        for i, line in enumerate(data.splitlines()):
+            if not line.strip(): continue
+            if i >= len(self.entries): self._add_row()
             for j, val in enumerate(line.split("\t")[:self.n_cols]):
-                self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,val.strip())
+                self.entries[i][j].delete(0, tk.END)
+                self.entries[i][j].insert(0, val.strip())
+
+
 
     def _mardia_test(self, X):
         """Mardia's multivariate normality: skewness and kurtosis tests."""
