@@ -5371,8 +5371,6 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         sm.add_command(label="Додати стовпець",   command=self._add_col)
         sm.add_command(label="Видалити стовпець", command=self._del_col)
         sm.add_separator()
-        sm.add_command(label="Налаштування графіків PCA", command=self._restyle_pca)
-        sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         mb2["menu"] = sm
 
@@ -5526,7 +5524,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                   font=("Times New Roman",11)).pack(pady=6)
 
     # ── Налаштування графіків PCA ─────────────────────────────
-    def _restyle_pca(self):
+    def _restyle_pca(self, callback=None):
         dlg = tk.Toplevel(self.win); dlg.title("Налаштування графіків PCA")
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         gs = self._pca_gs
@@ -5590,8 +5588,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                 **col_refs
             })
             dlg.destroy()
-            messagebox.showinfo("",
-                "Налаштування збережено.\nЗастосуються при наступному виконанні PCA.")
+            if callback: callback()
 
         bf = tk.Frame(frm); bf.grid(row=base_r+len(col_names), column=0,
                                     columnspan=2, pady=(14,0))
@@ -5678,12 +5675,13 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         tk.Button(tb, text="📋 Копіювати графіки", font=("Times New Roman",11),
                   command=lambda: self._copy_pca()).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="⚙ Налаштування графіків", font=("Times New Roman",11),
-                  command=self._restyle_pca).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb, text="Для перебудови графіків зі змінами — закрийте вікно і запустіть PCA знову",
-                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+                  command=lambda: self._restyle_pca_live(
+                      win, obj_names, var_names, eigenvalues, eigenvectors,
+                      explained, scores, n_comp, min_c)).pack(side=tk.LEFT, padx=4)
 
         # ── Основна область ─────────────────────────────────
         main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        self._pca_main_frame = main   # зберігаємо для перебудови
 
         # Графіки
         fig = Figure(figsize=(12, 5.5), dpi=100)
@@ -5753,22 +5751,35 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         fig.tight_layout()
         self._pca_fig = fig
-        cv = FigureCanvasTkAgg(fig, master=main); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+        self._pca_canvas_frame = tk.Frame(main)
+        self._pca_canvas_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+        cv = FigureCanvasTkAgg(fig, master=self._pca_canvas_frame); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         # ── Таблиця компонент ────────────────────────────────
-        summary_rows = [[f"ГК{i+1}",
+        # Додаємо пояснення що таке ГК
+        tk.Label(win,
+                 text="ГК = Головна компонента — «узагальнений показник» "
+                      "що об'єднує кілька вихідних змінних. ГК1 пояснює найбільше варіації.",
+                 font=("Times New Roman",10), fg="#555", anchor="w"
+                 ).pack(fill=tk.X, padx=12, pady=(2,0))
+        summary_rows = [[f"ГК{i+1}  (Головна компонента {i+1})",
                          fmt(eigenvalues[i],4),
                          fmt(explained[i],2),
                          fmt(float(np.sum(explained[:i+1])),2),
                          "✓ включити" if eigenvalues[i] >= 1.0 else "розглянути"]
                         for i in range(n_comp)]
         frm_t, _ = make_tv(win,
-            ["Компонент","Власне значення","% дисперсії","Кумулятивний %","Критерій Кайзера (λ≥1)"],
+            ["Компонент","Власне значення (λ)","% дисперсії","Кумулятивний %","Критерій Кайзера (λ≥1)"],
             summary_rows)
         frm_t.pack(fill=tk.X, padx=8, pady=4)
 
         # ── Таблиця навантажень ──────────────────────────────
+        tk.Label(win,
+                 text="Навантаження (loadings): кореляція показника з кожною ГК. "
+                      "|Навантаження| > 0.5 — значуща роль показника у цій компоненті.",
+                 font=("Times New Roman",10), fg="#555", anchor="w"
+                 ).pack(fill=tk.X, padx=12, pady=(0,0))
         n_show2 = min(6, n_comp)
         load_headers = ["Показник"] + [f"ГК{i+1}" for i in range(n_show2)]
         load_rows = []
@@ -5777,6 +5788,76 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
             load_rows.append([nm_j] + [fmt(eigenvectors[j,k],4) for k in range(n_show2)])
         frm_l, _ = make_tv(win, load_headers, load_rows)
         frm_l.pack(fill=tk.X, padx=8, pady=(0,8))
+
+
+    def _restyle_pca_live(self, win, obj_names, var_names, eigenvalues,
+                           eigenvectors, explained, scores, n_comp, min_c):
+        """Відкриває діалог налаштувань і одразу перебудовує графік."""
+        self._restyle_pca(callback=lambda: self._rebuild_pca_fig(
+            obj_names, var_names, eigenvalues, eigenvectors,
+            explained, scores, n_comp, min_c))
+
+    def _rebuild_pca_fig(self, obj_names, var_names, eigenvalues,
+                          eigenvectors, explained, scores, n_comp, min_c):
+        """Перебудовує лише графік у вже відкритому вікні результатів."""
+        if not hasattr(self, '_pca_canvas_frame'): return
+        for w in self._pca_canvas_frame.winfo_children(): w.destroy()
+        gs = self._pca_gs
+        ff=gs["font_family"]; fz=gs["font_size"]
+        pc=gs["point_color"]; ac=gs["arrow_color"]
+        bc=gs["bar_color"];   cc_=gs["cum_color"]
+        ps=gs["point_size"];  sc=gs["arrow_scale"]
+        fig = Figure(figsize=(12, 5.5), dpi=100)
+        # Scree
+        ax1=fig.add_subplot(131)
+        ax1.bar(range(1,n_comp+1),explained[:n_comp],color=bc,alpha=0.8)
+        ax1.plot(range(1,n_comp+1),np.cumsum(explained[:n_comp]),"o-",color=cc_,markersize=4)
+        ax1.set_xlabel("ГК",fontsize=fz,fontfamily=ff)
+        ax1.set_ylabel("Пояснена дисперсія (%)",fontsize=fz,fontfamily=ff)
+        ax1.set_title("Графік відсіювання (Scree)",fontsize=fz+1,fontfamily=ff)
+        ax1.axhline(80,color="gray",lw=0.8,ls="--")
+        ax1.yaxis.grid(True,alpha=0.3)
+        ax1.spines["top"].set_visible(False); ax1.spines["right"].set_visible(False)
+        # Biplot
+        ax2=fig.add_subplot(132)
+        ax2.scatter(scores[:,0],scores[:,1],s=ps,color=pc,zorder=3,edgecolors="white",linewidths=0.5)
+        if gs["annotate_obj"]:
+            for i,nm in enumerate(obj_names[:len(scores)]):
+                ax2.annotate(nm,(scores[i,0],scores[i,1]),fontsize=max(6,fz-1),alpha=0.85,fontfamily=ff)
+        max_s=max(np.max(np.abs(scores[:,0])),np.max(np.abs(scores[:,1])),1e-6)
+        for j in range(min_c):
+            lx=eigenvectors[j,0]*max_s*sc; ly=eigenvectors[j,1]*max_s*sc
+            ax2.annotate("",xy=(lx,ly),xytext=(0,0),
+                         arrowprops=dict(arrowstyle="->",color=ac,lw=1.3))
+            if gs["annotate_var"]:
+                nm_j=var_names[j] if j<len(var_names) else f"П{j+1}"
+                ax2.text(lx*1.07,ly*1.07,nm_j,fontsize=max(6,fz-1),color=ac,fontfamily=ff)
+        ax2.axhline(0,color="#888",lw=0.5); ax2.axvline(0,color="#888",lw=0.5)
+        ax2.set_xlabel(f"ГК1 ({fmt(explained[0],1)}%)",fontsize=fz,fontfamily=ff)
+        ax2.set_ylabel(f"ГК2 ({fmt(explained[1],1)}%)" if n_comp>1 else "ГК2",fontsize=fz,fontfamily=ff)
+        ax2.set_title("Biplot (ГК1 × ГК2)",fontsize=fz+1,fontfamily=ff)
+        ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
+        # Loadings heatmap
+        ax3=fig.add_subplot(133)
+        n_sh=min(4,n_comp)
+        lm=eigenvectors[:,:n_sh]
+        try: cmap_=matplotlib.cm.get_cmap(gs["heatmap_cmap"])
+        except: cmap_=matplotlib.cm.get_cmap("RdYlGn")
+        im=ax3.imshow(lm,cmap=cmap_,vmin=-1,vmax=1,aspect="auto")
+        ax3.set_xticks(range(n_sh))
+        ax3.set_xticklabels([f"ГК{i+1}" for i in range(n_sh)],fontsize=fz,fontfamily=ff)
+        ax3.set_yticks(range(min_c))
+        ax3.set_yticklabels(var_names[:min_c] if var_names else [f"П{j+1}" for j in range(min_c)],
+                            fontsize=fz,fontfamily=ff)
+        ax3.set_title("Навантаження факторів",fontsize=fz+1,fontfamily=ff)
+        for i in range(min_c):
+            for j in range(n_sh):
+                ax3.text(j,i,fmt(lm[i,j],2),ha="center",va="center",fontsize=max(6,fz-1),fontfamily=ff)
+        fig.colorbar(im,ax=ax3,fraction=0.046,pad=0.04)
+        fig.tight_layout()
+        self._pca_fig=fig
+        cv=FigureCanvasTkAgg(fig,master=self._pca_canvas_frame); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
 
     def _copy_pca(self):
         if self._pca_fig is None:
@@ -6817,14 +6898,17 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         col_hints = ["Група","Показник 1","Показник 2","Показник 3",
                      "Показник 4","Показник 5","Показник 6","Показник 7"]
-        self.header_entries = []
+        self.header_vars = []
+        self.header_entries = []   # for compatibility (used in _run via header_entries)
         for j in range(self.n_cols):
-            e = tk.Entry(self.inner, width=13, bg="#1a4b8c", fg="white",
-                         font=("Times New Roman", 11, "bold"),
-                         insertbackground="white")
-            e.insert(0, col_hints[j] if j < len(col_hints) else f"Показник {j}")
-            e.grid(row=0, column=j, padx=1, pady=1)
-            self.header_entries.append(e)
+            var = tk.StringVar(value=col_hints[j] if j < len(col_hints) else f"Показник {j}")
+            self.header_vars.append(var)
+            lbl = tk.Label(self.inner, textvariable=var, width=13,
+                           bg="#1a4b8c", fg="white", cursor="hand2",
+                           font=("Times New Roman",11,"bold"), relief=tk.RIDGE)
+            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+            lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_manova_col(idx))
+            self.header_entries.append(lbl)   # dummy for _run compatibility
 
         self.entries = []
         for i in range(self.n_rows):
@@ -6878,14 +6962,14 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
     def _add_col(self):
         ci = self.n_cols; self.n_cols += 1
-        # Header
-        e_h = tk.Entry(self.inner, width=13, bg="#1a4b8c", fg="white",
-                       font=("Times New Roman", 11, "bold"),
-                       insertbackground="white")
-        e_h.insert(0, f"Показник {ci}")
-        e_h.grid(row=0, column=ci, padx=1, pady=1)
-        self.header_entries.append(e_h)
-        # Data cells
+        var = tk.StringVar(value=f"Показник {ci}")
+        self.header_vars.append(var)
+        lbl = tk.Label(self.inner, textvariable=var, width=13,
+                       bg="#1a4b8c", fg="white", cursor="hand2",
+                       font=("Times New Roman",11,"bold"), relief=tk.RIDGE)
+        lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
+        lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_manova_col(idx))
+        self.header_entries.append(lbl)
         for i, row_ in enumerate(self.entries):
             e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
                          highlightthickness=1, highlightbackground="#c0c0c0")
@@ -6894,8 +6978,9 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         _bind_nav(self.entries, self.win)
 
     def _del_col(self):
-        if self.n_cols <= 3: return  # мінімум Група + 2 ЗЗ
+        if self.n_cols <= 3: return
         self.header_entries.pop().destroy()
+        self.header_vars.pop()
         for row_ in self.entries: row_.pop().destroy()
         self.n_cols -= 1
 
@@ -6973,8 +7058,14 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
     def _run(self):
         alpha = float(self.alpha_var.get())
-        headers = [e.get().strip() or f"Показник {j}"
-                   for j, e in enumerate(self.header_entries)]
+        # Заголовки з header_vars (tk.StringVar) або header_entries (tk.Entry/Label)
+        headers = []
+        for j in range(self.n_cols):
+            if hasattr(self,'header_vars') and j < len(self.header_vars):
+                headers.append(self.header_vars[j].get().strip() or f"Показник {j}")
+            else:
+                e = self.header_entries[j]
+                headers.append(e.get().strip() if hasattr(e,'get') else f"Показник {j}")
 
         # ── Зчитування даних ─────────────────────────────────
         raw = [[e.get().strip() for e in row] for row in self.entries]
@@ -7404,8 +7495,10 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             fig1.suptitle("Групові середні (±СП) по залежних змінних", fontsize=10)
             fig1.tight_layout()
             self._manova_figs[1] = fig1
-            cv1 = FigureCanvasTkAgg(fig1, master=body); cv1.draw()
-            cv1.get_tk_widget().pack(fill=tk.X, padx=10, pady=4)
+            self._manova_frame1 = tk.Frame(body)
+            self._manova_frame1.pack(fill=tk.X, padx=10, pady=4)
+            cv1 = FigureCanvasTkAgg(fig1, master=self._manova_frame1); cv1.draw()
+            cv1.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
             # Графік 2: профільний (нормовані середні)
             fig2 = Figure(figsize=(max(6, n_dv*0.9+2), 4), dpi=100)
@@ -7432,10 +7525,81 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             ax2.spines["right"].set_visible(False)
             fig2.tight_layout()
             self._manova_figs[2] = fig2
-            cv2 = FigureCanvasTkAgg(fig2, master=body); cv2.draw()
-            cv2.get_tk_widget().pack(fill=tk.X, padx=10, pady=(0,10))
+            self._manova_frame2 = tk.Frame(body)
+            self._manova_frame2.pack(fill=tk.X, padx=10, pady=(0,10))
+            cv2 = FigureCanvasTkAgg(fig2, master=self._manova_frame2); cv2.draw()
+            cv2.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     # ── Допоміжні методи для результатів MANOVA ───────────────
+
+    def _rebuild_manova_graphs(self, dv_names, groups_data, group_levels,
+                                univ_rows, alpha, p_pillai):
+        """Перебудовує лише графіки у вже відкритому вікні MANOVA."""
+        if not hasattr(self, '_manova_frame1'): return
+        bonf_alpha = alpha / max(len(dv_names),1)
+        colors_ = self._manova_gs.get("colors", self._manova_colors)
+        bar_alpha = self._manova_gs.get("bar_alpha", 0.85)
+        lw_ = self._manova_gs.get("lw", 2.0)
+        ms_ = self._manova_gs.get("ms", 7)
+        ff_ = self._manova_gs.get("font_family","Times New Roman")
+        fz_ = self._manova_gs.get("font_size", 9)
+        n_dv = len(dv_names)
+
+        # Перебудовуємо графік 1
+        for w in self._manova_frame1.winfo_children(): w.destroy()
+        fig1 = Figure(figsize=(min(12,n_dv*1.9+0.8),4.2),dpi=100)
+        for di,dv_nm in enumerate(dv_names):
+            ax=fig1.add_subplot(1,n_dv,di+1)
+            gm=[float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
+            gs_=[float(np.std(groups_data[lv][:,di],ddof=1)/math.sqrt(len(groups_data[lv])))
+                 for lv in group_levels]
+            xpos=range(len(group_levels))
+            ax.bar(xpos,gm,yerr=gs_,capsize=4,
+                   color=[colors_[i%len(colors_)] for i in range(len(group_levels))],
+                   alpha=bar_alpha,error_kw={"ecolor":"#333","lw":1.5})
+            try:
+                p_uv=float(univ_rows[di][2]) if univ_rows and di<len(univ_rows) else float("nan")
+                mark="*" if p_uv<bonf_alpha else ""
+                ax.set_title(f"{dv_nm}\n(p={fmt(p_uv,3)}{mark})",fontsize=fz_,fontfamily=ff_)
+            except Exception:
+                ax.set_title(dv_nm,fontsize=fz_,fontfamily=ff_)
+            ax.set_xticks(list(xpos))
+            ax.set_xticklabels(group_levels,rotation=30,ha="right",fontsize=max(6,fz_-1))
+            ax.set_ylabel("Середнє ± СП" if di==0 else "",fontsize=fz_)
+            ax.yaxis.grid(True,alpha=0.3)
+            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig1.suptitle("Групові середні (±СП) по залежних змінних",fontsize=fz_+1)
+        fig1.tight_layout()
+        self._manova_figs[1]=fig1
+        cv1=FigureCanvasTkAgg(fig1,master=self._manova_frame1); cv1.draw()
+        cv1.get_tk_widget().pack(fill=tk.BOTH,expand=True)
+
+        # Перебудовуємо графік 2
+        for w in self._manova_frame2.winfo_children(): w.destroy()
+        fig2=Figure(figsize=(max(6,n_dv*0.9+2),4),dpi=100)
+        ax2=fig2.add_subplot(111)
+        all_means=np.array([[float(np.mean(groups_data[lv][:,j])) for j in range(n_dv)]
+                             for lv in group_levels])
+        mn_col=all_means.min(axis=0); mx_col=all_means.max(axis=0)
+        rng=np.where(mx_col>mn_col,mx_col-mn_col,1.)
+        normed=(all_means-mn_col)/rng
+        for gi,lv in enumerate(group_levels):
+            ax2.plot(list(range(n_dv)),normed[gi],"o-",
+                     color=colors_[gi%len(colors_)],
+                     label=str(lv),linewidth=lw_,markersize=ms_)
+        ax2.set_xticks(list(range(n_dv)))
+        ax2.set_xticklabels(dv_names,rotation=20,ha="right",fontsize=fz_,fontfamily=ff_)
+        ax2.set_ylabel("Нормоване середнє (0–1)",fontsize=fz_,fontfamily=ff_)
+        ax2.set_title("Профільний графік груп (нормовані середні по ЗЗ)",fontsize=fz_+1,fontfamily=ff_)
+        ax2.legend(title="Група",fontsize=fz_,title_fontsize=fz_)
+        ax2.yaxis.grid(True,linestyle="--",alpha=0.4)
+        ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
+        fig2.tight_layout()
+        self._manova_figs[2]=fig2
+        cv2=FigureCanvasTkAgg(fig2,master=self._manova_frame2); cv2.draw()
+        cv2.get_tk_widget().pack(fill=tk.BOTH,expand=True)
+
+
     def _copy_manova_text(self, win):
         """Збирає весь текст зі звіту і копіює у буфер."""
         lines = []
@@ -7517,14 +7681,15 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         def apply():
             self._manova_gs.update({
-                "colors": col_refs, "bar_alpha": al_v.get(),
+                "colors": list(col_refs), "bar_alpha": al_v.get(),
                 "lw": lw_v.get(), "ms": ms_v.get(),
                 "font_family": ff_v.get(), "font_size": fz_v.get(),
             })
-            self._manova_colors = col_refs
+            self._manova_colors = list(col_refs)
             dlg.destroy()
-            messagebox.showinfo("","Налаштування збережено.\n"
-                "Вони застосуються при наступному виконанні аналізу.")
+            # Перебудовуємо графіки одразу
+            self._rebuild_manova_graphs(dv_names, groups_data, group_levels,
+                                         univ_rows, alpha, p_pillai)
         bf = tk.Frame(frm); bf.grid(row=len(rows_cfg)+1, column=0, columnspan=2, pady=(14,0))
         tk.Button(bf, text="OK", bg="#c62828", fg="white",
                   font=rb_f, command=apply).pack(side=tk.LEFT, padx=4)
