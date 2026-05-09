@@ -5853,51 +5853,106 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
     def _run(self):
         alpha = float(self.alpha_var.get())
 
-        # ── Read headers ──
-        headers = [e.get().strip() or f"Col{j+1}" for j, e in enumerate(self.header_entries)]
-        group_col = headers[0]
-        dv_col    = headers[-1]
-        cov_cols  = headers[1:-1]  # everything between group and DV
+        # ── Зчитування заголовків ─────────────────────────────
+        headers = [e.get().strip() or f"Col{j+1}"
+                   for j, e in enumerate(self.header_entries)]
 
-        # ── Read data ──
+        # ── Зчитування даних ─────────────────────────────────
         raw = [[e.get().strip() for e in row] for row in self.entries]
         raw = [r for r in raw if any(v for v in r)]
         if not raw:
-            messagebox.showwarning("Немає даних", "Please enter data first."); return
+            messagebox.showwarning("Немає даних",
+                "Будь ласка, введіть дані у таблицю."); return
 
-        groups = []; cov_data = [[] for _ in cov_cols]; y_data = []
+        # Визначаємо які стовпці реально заповнені числами
+        # Перший стовпець = Група (текст)
+        # Останній заповнений числовий стовпець = Залежна Y
+        # Між ними = Коваріати (лише заповнені стовпці)
+
+        # Знаходимо останній стовпець з числовими даними
+        n_data_cols = self.n_cols
+        # Знаходимо реально заповнені числові стовпці (1..n_cols-1)
+        filled_numeric_cols = []
+        for j in range(1, self.n_cols):
+            has_num = False
+            for row in raw:
+                v = row[j] if j < len(row) else ""
+                if v:
+                    try: float(v.replace(",",".")); has_num = True; break
+                    except ValueError: pass
+            if has_num:
+                filled_numeric_cols.append(j)
+
+        if not filled_numeric_cols:
+            messagebox.showwarning("Немає числових даних",
+                "Не знайдено числових даних у стовпцях 2 і далі.\n"
+                "Переконайтесь що введено значення коваріати та залежної змінної."); return
+
+        # Останній заповнений числовий стовпець = залежна Y
+        dv_col_idx  = filled_numeric_cols[-1]
+        # Всі інші заповнені числові стовпці = коваріати
+        cov_col_idxs = filled_numeric_cols[:-1]
+
+        group_col = headers[0]
+        dv_col    = headers[dv_col_idx]
+        cov_cols  = [headers[j] for j in cov_col_idxs]
+
+        if not cov_col_idxs:
+            messagebox.showwarning("Немає коваріат",
+                "ANCOVA потребує хоча б одну коваріату.\n\n"
+                "Структура таблиці:\n"
+                "  Стовпець 1: Група (текстові мітки)\n"
+                "  Стовпець 2: Коваріата (числові значення)\n"
+                "  Стовпець 3 або далі: Залежна змінна Y\n\n"
+                "Якщо у вас одна коваріата — заповніть стовпці 1, 2 і 3.\n"
+                "Стовпці 4, 5, 6 залиште порожніми."); return
+
+        # Зчитуємо рядки використовуючи лише знайдені стовпці
+        groups = []; cov_data = [[] for _ in cov_col_idxs]; y_data = []
         skipped = 0
         for row in raw:
-            if len(row) < self.n_cols: row += [""] * (self.n_cols - len(row))
-            grp = row[0]
+            while len(row) < self.n_cols: row.append("")
+            grp = row[0].strip()
             if not grp: skipped += 1; continue
+            # Перевіряємо чи грp не є числом (захист від плутанини)
             try:
-                covs = [float(row[j+1].replace(",",".")) for j in range(len(cov_cols))]
-                yval = float(row[-1].replace(",","."))
+                float(grp.replace(",","."))
+                skipped += 1; continue  # перший стовпець має бути текстом
+            except ValueError:
+                pass
+            try:
+                covs = [float(row[j].replace(",",".")) for j in cov_col_idxs]
+                yval = float(row[dv_col_idx].replace(",","."))
             except (ValueError, IndexError):
                 skipped += 1; continue
             groups.append(grp)
-            for j, cv in enumerate(covs): cov_data[j].append(cv)
+            for j_idx, cv in enumerate(covs): cov_data[j_idx].append(cv)
             y_data.append(yval)
 
         if skipped > 0:
-            messagebox.showinfo("Note", f"{skipped} row(s) skipped (missing or non-numeric values).")
+            messagebox.showinfo("Пропущені рядки",
+                f"Пропущено {skipped} рядків (порожні або нечислові значення).")
 
         n = len(y_data)
-        # ── Guard 1: minimum observations ──
+        # ── Guard 1: мінімум спостережень ──
         if n < 6:
             messagebox.showwarning("Замало спостережень",
-                f"ANCOVA requires at least 6 complete observations.\nFound: {n}."); return
+                f"ANCOVA потребує щонайменше 6 повних спостережень.\n"
+                f"Знайдено: {n}.\n\n"
+                f"Перевірте:\n"
+                f"  • Перший стовпець містить текстові назви груп\n"
+                f"  • Числові дані введені у правильні стовпці\n"
+                f"  • Немає порожніх клітинок у заповнених рядках"); return
 
-        # ── Guard 2: at least 2 groups ──
+        # ── Guard 2: щонайменше 2 групи ──
         group_levels = first_seen(groups)
         k = len(group_levels)
         if k < 2:
             messagebox.showwarning("Лише одна група",
-                "ANCOVA requires at least 2 groups.\n"
-                "Check that the Group column contains different labels."); return
+                "ANCOVA потребує щонайменше 2 групи.\n"
+                "Перевірте що перший стовпець містить різні текстові мітки."); return
 
-        # ── Guard 3: minimum n per group ──
+
         from collections import Counter
         grp_counts = Counter(groups)
         min_grp = min(grp_counts.values())
