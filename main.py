@@ -6375,6 +6375,9 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         sm.add_command(label="Додати рядок",      command=self._add_row)
         sm.add_command(label="Видалити рядок",    command=self._del_row)
         sm.add_separator()
+        sm.add_command(label="Додати стовпець",    command=self._add_col)
+        sm.add_command(label="Видалити стовпець",  command=self._del_col)
+        sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         mb2["menu"] = sm
 
@@ -6474,6 +6477,29 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         for e in self.entries.pop(): e.destroy()
         self.n_rows -= 1
 
+    def _add_col(self):
+        ci = self.n_cols; self.n_cols += 1
+        # Header
+        e_h = tk.Entry(self.inner, width=13, bg="#1a4b8c", fg="white",
+                       font=("Times New Roman", 11, "bold"),
+                       insertbackground="white")
+        e_h.insert(0, f"Показник {ci}")
+        e_h.grid(row=0, column=ci, padx=1, pady=1)
+        self.header_entries.append(e_h)
+        # Data cells
+        for i, row_ in enumerate(self.entries):
+            e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=ci, padx=1, pady=1)
+            row_.append(e)
+        _bind_nav(self.entries, self.win)
+
+    def _del_col(self):
+        if self.n_cols <= 3: return  # мінімум Група + 2 ЗЗ
+        self.header_entries.pop().destroy()
+        for row_ in self.entries: row_.pop().destroy()
+        self.n_cols -= 1
+
     def _clear_table(self):
         if not messagebox.askyesno("Очистити таблицю",
                 "Видалити всі числові дані?\n(Заголовки залишаться)"):
@@ -6548,50 +6574,65 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
     def _run(self):
         alpha = float(self.alpha_var.get())
-        headers = [e.get().strip() or f"Col{j+1}" for j, e in enumerate(self.header_entries)]
-        dv_names = headers[1:]   # all columns after group
+        headers = [e.get().strip() or f"Показник {j}"
+                   for j, e in enumerate(self.header_entries)]
 
-        # ── Parse data ──
+        # ── Зчитування даних ─────────────────────────────────
         raw = [[e.get().strip() for e in row] for row in self.entries]
         raw = [r for r in raw if any(v for v in r)]
-        if not raw: messagebox.showwarning("Немає даних","Please enter data."); return
+        if not raw:
+            messagebox.showwarning("Немає даних",
+                "Будь ласка, введіть дані у таблицю."); return
 
         groups = []; dv_rows = []; skipped = 0
         for row in raw:
             if len(row) < 2: skipped += 1; continue
             grp = row[0].strip()
             if not grp: skipped += 1; continue
+            # Перший стовпець не має бути числом
+            try:
+                float(grp.replace(",",".")); skipped += 1; continue
+            except ValueError: pass
             vals = []
             for v in row[1:]:
-                if not v: break
+                if not v: continue   # пропускаємо порожні, НЕ зупиняємось
                 try: vals.append(float(v.replace(",",".")))
-                except ValueError: break
+                except ValueError: continue
             if len(vals) >= 2:
                 groups.append(grp); dv_rows.append(vals)
             else: skipped += 1
 
-        if skipped: messagebox.showinfo("Note", f"{skipped} row(s) skipped.")
+        if skipped:
+            messagebox.showinfo("Пропущені рядки",
+                f"Пропущено {skipped} рядків (порожні або нечислові значення).")
 
         n = len(dv_rows)
-        if n < 4: messagebox.showwarning("Замало даних","Потрібно ≥ 4 повних спостереження."); return
+        if n < 4:
+            messagebox.showwarning("Замало даних",
+                "Потрібно щонайменше 4 повних спостереження."); return
 
+        # Вирівнюємо кількість ЗЗ — беремо мінімальну
         min_dv = min(len(r) for r in dv_rows)
         if min_dv < 2:
-            messagebox.showwarning("Замало залежних змінних","Потрібно щонайменше 2 залежних змінних."); return
+            messagebox.showwarning("Замало залежних змінних",
+                "Потрібно щонайменше 2 залежних змінних (показники).\n"
+                "Переконайтесь що числові дані введені у стовпці 2 і далі."); return
 
-        # Align all rows to same number of DVs
         Y = np.array([r[:min_dv] for r in dv_rows], dtype=float)
-        p = min_dv  # number of DVs
-        dv_names_used = dv_names[:p]
+        p = min_dv
+        dv_names_used = [headers[j+1] if j+1 < len(headers) else f"ЗЗ{j+1}"
+                         for j in range(p)]
 
         group_levels = first_seen(groups)
         k = len(group_levels)
 
-        # ── Guard 1: at least 2 groups ──
+        # ── Guard 1: щонайменше 2 групи ──
         if k < 2:
-            messagebox.showwarning("Лише одна група","MANOVA requires ≥ 2 groups."); return
+            messagebox.showwarning("Лише одна група",
+                "MANOVA потребує щонайменше 2 групи.\n"
+                "Перевірте що перший стовпець містить різні текстові мітки."); return
 
-        # ── Guard 2: n > p per group (critical!) ──
+        # ── Guard 2: n > p у кожній групі (критична!) ──
         groups_data = {}
         for lv in group_levels:
             idx_ = [i for i, g in enumerate(groups) if g == lv]
@@ -6600,61 +6641,66 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             n_lv = len(groups_data[lv])
             if n_lv <= p:
                 messagebox.showerror("ПОРУШЕННЯ: n ≤ p",
-                    f"Group '{lv}' has {n_lv} observation(s) but {p} dependent variables.\n\n"
-                    "MANOVA requires n > p (observations > DVs) in EVERY group.\n"
-                    "Otherwise the within-group covariance matrix is singular\n"
-                    "and cannot be inverted — MANOVA is mathematically impossible.\n\n"
-                    "Solutions:\n"
-                    "• Collect more data\n"
-                    "• Reduce the number of dependent variables\n"
-                    "• Use PCA first to reduce dimensionality, then ANOVA on PC scores")
+                    f"Група '{lv}' має {n_lv} спостережень, але {p} залежних змінних.\n\n"
+                    f"MANOVA потребує n > p (спостережень > залежних змінних)\n"
+                    f"у КОЖНІЙ групі.\n\n"
+                    f"Причина: коваріаційна матриця всередині групи є виродженою\n"
+                    f"(singular) і не може бути обернена — MANOVA математично неможлива.\n\n"
+                    f"Рішення:\n"
+                    f"  • Збільшіть кількість спостережень (рядків) у кожній групі\n"
+                    f"    (потрібно мінімум {p+1} спостережень на групу при {p} ЗЗ)\n"
+                    f"  • Зменшіть кількість залежних змінних\n"
+                    f"  • Спочатку виконайте PCA → аналізуйте головні компоненти")
                 return
 
-        # ── Guard 3: Check multicollinearity among DVs ──
+        # ── Guard 3: мультиколінеарність ЗЗ ──
         corr_Y = np.corrcoef(Y.T)
         high_corr_pairs = []
         for i in range(p):
             for j in range(i+1, p):
                 if abs(corr_Y[i,j]) > 0.90:
-                    high_corr_pairs.append((dv_names_used[i], dv_names_used[j], corr_Y[i,j]))
+                    high_corr_pairs.append(
+                        (dv_names_used[i], dv_names_used[j], corr_Y[i,j]))
         if high_corr_pairs:
-            details = "\n".join(f"  • '{a}' & '{b}': r={c:.3f}" for a,b,c in high_corr_pairs)
+            details = "\n".join(
+                f"  • '{a}' та '{b}': r = {c:.3f}" for a,b,c in high_corr_pairs)
             ans = messagebox.askyesno("Висока мультиколінеарність між ЗЗ",
-                "The following dependent variable pairs are highly correlated (|r| > 0.90):\n"
+                "Наступні пари залежних змінних сильно корелюють (|r| > 0.90):\n"
                 + details + "\n\n"
-                "High multicollinearity reduces the power of MANOVA and may lead\n"
-                "to a singular or near-singular covariance matrix.\n\n"
-                "Recommendation: consider removing redundant DVs or using PCA first.\n\n"
-                "Continue anyway?")
+                "Висока мультиколінеарність знижує потужність MANOVA і може\n"
+                "призвести до виродженої коваріаційної матриці.\n\n"
+                "Рекомендація: видаліть одну зі змінних або спочатку виконайте PCA.\n\n"
+                "Продовжити попри це?")
             if not ans: return
 
-        # ── Guard 4: Multivariate normality (Mardia) ──
-        # Test on combined residuals (within-group deviations)
+        # ── Guard 4: Багатовимірна нормальність (Мардіа) ──
         Y_res = np.vstack([groups_data[lv] - np.mean(groups_data[lv], axis=0)
                             for lv in group_levels])
         b1p, p_sk, b2p, p_ku = self._mardia_test(Y_res)
         mv_normal = True
         if (not math.isnan(p_sk) and p_sk < alpha) or (not math.isnan(p_ku) and p_ku < alpha):
             mv_normal = False
-            ans = messagebox.askyesno("Порушення багатовимірної нормальності (тест Мардіа)",
-                f"Mardia's skewness:  b1p={fmt(b1p,4)},  p={fmt(p_sk,4)}\n"
-                f"Mardia's kurtosis:  b2p={fmt(b2p,4)},  p={fmt(p_ku,4)}\n\n"
-                "The multivariate normality assumption appears violated.\n"
-                "Pillai's Trace is the most robust statistic in this case.\n\n"
-                "Note: MANOVA is reasonably robust with larger samples (n > 20/group).\n\n"
-                "Continue? (Pillai's Trace will be highlighted as most reliable)")
+            ans = messagebox.askyesno(
+                "Порушення багатовимірної нормальності (тест Мардіа)",
+                f"Тест Мардіа — асиметрія: b1p={fmt(b1p,4)},  p={fmt(p_sk,4)}\n"
+                f"Тест Мардіа — ексцес:    b2p={fmt(b2p,4)},  p={fmt(p_ku,4)}\n\n"
+                "Передумова багатовимірної нормальності порушена.\n"
+                "Найнадійніша статистика у цьому випадку — Pillai's Trace.\n\n"
+                "Примітка: MANOVA достатньо робастна при великих вибірках (n > 20 на групу).\n\n"
+                "Продовжити? (Pillai's Trace буде позначено як найнадійніша)")
             if not ans: return
 
-        # ── Guard 5: Box's M test ──
+        # ── Guard 5: Box's M тест ──
         box_chi2, box_p = self._box_m_test(groups_data, group_levels)
         if not math.isnan(box_p) and box_p < 0.001:
-            ans = messagebox.askyesno("Неоднорідність коваріаційних матриць (Box M)",
+            ans = messagebox.askyesno(
+                "Неоднорідність коваріаційних матриць (Box's M)",
                 f"Box's M: χ²={fmt(box_chi2,4)},  p={fmt(box_p,6)}\n\n"
-                "Covariance matrices differ significantly across groups.\n"
-                "Note: Box's M is extremely sensitive to non-normality.\n"
-                "If p is only slightly < 0.001, this may be a false alarm.\n\n"
-                "Pillai's Trace is most robust when this assumption is violated.\n\n"
-                "Continue?")
+                "Коваріаційні матриці значущо відрізняються між групами.\n"
+                "Примітка: Box's M дуже чутливий до ненормальності.\n"
+                "Якщо p лише трохи < 0.001 — це може бути хибний сигнал.\n\n"
+                "Pillai's Trace є найробустнішою при порушенні цієї передумови.\n\n"
+                "Продовжити?")
             if not ans: return
 
         # ══ MANOVA computation ══
@@ -6760,11 +6806,12 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                       b1p, p_sk, b2p, p_ku, box_chi2, box_p,
                       alpha, mv_normal, groups_data, group_levels, Y, p):
         win = tk.Toplevel(self.win); win.title("MANOVA — Результати")
-        win.geometry("1180x800"); set_icon(win)
+        win.geometry("1180x820"); set_icon(win)
 
         main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(main, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas = tk.Canvas(main, yscrollcommand=vsb.set); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(main, yscrollcommand=vsb.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.config(command=canvas.yview)
         body = tk.Frame(canvas); canvas.create_window((0,0), window=body, anchor="nw")
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -6772,96 +6819,202 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         def _head(txt):
             tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
-                     anchor="w").pack(fill=tk.X, padx=10, pady=(8,2))
+                     bg="#e8eeff", anchor="w", padx=8, pady=3
+                     ).pack(fill=tk.X, padx=6, pady=(10,2))
         def _txt(txt, color="#000000"):
             tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
-                     anchor="w", justify="left").pack(fill=tk.X, padx=10, pady=1)
+                     anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
         def _tbl(headers, rows):
             f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=(2,8))
 
-        _head("MANOVA — Багатовимірний дисперсійний аналіз")
+        # ── Заголовок ────────────────────────────────────────
+        tk.Label(body,
+                 text=f"MANOVA — Багатовимірний дисперсійний аналіз    α = {alpha}",
+                 font=("Times New Roman",13,"bold"), anchor="w", padx=10, pady=6
+                 ).pack(fill=tk.X)
 
-        # Assumption checks
-        _head("Assumption Checks")
-        _txt(f"Mardia's skewness (multivar. normality):  b1p={fmt(b1p,4)},  p={fmt(p_sk,4)}  "
-             f"{'✓ OK' if math.isnan(p_sk) or p_sk > alpha else '⚠ violated'}",
-             "#000000" if math.isnan(p_sk) or p_sk > alpha else "#c62828")
-        _txt(f"Mardia's kurtosis (multivar. normality):  b2p={fmt(b2p,4)},  p={fmt(p_ku,4)}  "
-             f"{'✓ OK' if math.isnan(p_ku) or p_ku > alpha else '⚠ violated'}",
-             "#000000" if math.isnan(p_ku) or p_ku > alpha else "#c62828")
-        _txt(f"Box's M (homogeneity of cov. matrices):  χ²={fmt(box_chi2,4)},  p={fmt(box_p,6)}  "
-             f"{'✓ OK' if math.isnan(box_p) or box_p >= 0.001 else '⚠ significant (but Box M is sensitive to non-normality)'}",
-             "#000000" if math.isnan(box_p) or box_p >= 0.001 else "#b07000")
+        # ── sig_mark з урахуванням обраного α ─────────────────
+        def _sig(p_val):
+            """Позначення значущості відповідно до обраного рівня α."""
+            if p_val is None or math.isnan(p_val): return ""
+            if p_val < alpha * 0.2:   return "**"   # суттєво нижче α (умовно «дуже значущий»)
+            if p_val < alpha:         return "*"
+            return "–"
 
+        def _sig_color(p_val):
+            if p_val is None or math.isnan(p_val): return "#000000"
+            return "#1a6b1a" if p_val < alpha else "#000000"
+
+        # ── Перевірка передумов ───────────────────────────────
+        _head("Перевірка передумов")
+
+        norm_sk_ok = math.isnan(p_sk) or p_sk > alpha
+        norm_ku_ok = math.isnan(p_ku) or p_ku > alpha
+        box_ok     = math.isnan(box_p) or box_p >= 0.001
+
+        _txt(f"Тест Мардіа — асиметрія (нормальність):   b1p = {fmt(b1p,4)},  p = {fmt(p_sk,4)}  "
+             f"{'✓ ОК' if norm_sk_ok else '⚠ порушено'}",
+             "#000000" if norm_sk_ok else "#c62828")
+        _txt(f"Тест Мардіа — ексцес (нормальність):      b2p = {fmt(b2p,4)},  p = {fmt(p_ku,4)}  "
+             f"{'✓ ОК' if norm_ku_ok else '⚠ порушено'}",
+             "#000000" if norm_ku_ok else "#c62828")
+        _txt(f"Box's M (однорідність коваріаційних матриць):  χ² = {fmt(box_chi2,4)},  p = {fmt(box_p,6)}  "
+             f"{'✓ ОК' if box_ok else '⚠ значущо (Box M чутливий до ненормальності)'}",
+             "#000000" if box_ok else "#b07000")
         if not mv_normal:
-            _txt("⚠ Порушення багатовимірної нормальності → Pillai Trace є найнадійнішою статистикою.",
+            _txt("⚠ Багатовимірна нормальність порушена → Pillai's Trace є найнадійнішою статистикою.",
                  "#c62828")
 
-        # MANOVA test statistics
-        _head("MANOVA Test Statistics")
+        # ── Тестові статистики MANOVA ─────────────────────────
+        _head("Тестові статистики MANOVA")
+
+        # η² (розмір ефекту) для кожної статистики MANOVA
+        # Wilks: η² = 1 - Λ^(1/s), де s = min(df_h, p)
+        # Pillai: V вже є мірою ефекту (0-1), η² ≈ V/s
+        # Hotelling: η² = T/(T+1) (наближення)
+        # Roy: η² = θ/(1+θ)
+        s_val = min(len(group_levels)-1, p)
+        try:
+            eta2_wilks = 1 - wilks_L**(1/max(s_val,1)) if not math.isnan(wilks_L) and wilks_L > 0 else np.nan
+        except Exception: eta2_wilks = np.nan
+        eta2_pillai = pillai_V / max(s_val,1) if not math.isnan(pillai_V) else np.nan
+        eta2_hl    = hl_T / (hl_T+1) if not math.isnan(hl_T) and hl_T >= 0 else np.nan
+        eta2_roy   = roy_GCR / (roy_GCR+1) if not math.isnan(roy_GCR) and roy_GCR >= 0 else np.nan
+
         recommended = "Pillai" if not mv_normal else "Wilks"
         manova_rows = [
-            ["Wilks' Lambda",       fmt(wilks_L,6), fmt(F_wilks,4), f"{int(df1_w)},{int(df2_w)}",
-             fmt(p_wilks,4), sig_mark(p_wilks), "★ стандарт" if recommended=="Wilks" else ""],
-            ["Pillai's Trace",      fmt(pillai_V,6), fmt(F_pillai,4), f"{int(df1_p)},{int(df2_p)}",
-             fmt(p_pillai,4), sig_mark(p_pillai), "★ найробустніша" if recommended=="Pillai" else "робастна"],
-            ["Hotelling-Lawley",    fmt(hl_T,6), fmt(F_hl,4), f"{int(df1_hl)},{int(df2_hl)}",
-             fmt(p_hl,4), sig_mark(p_hl), ""],
-            ["Roy's GCR",           fmt(roy_GCR,6), fmt(F_roy,4), f"–",
-             fmt(p_roy,4), sig_mark(p_roy), "верхня межа"],
+            ["Wilks' Lambda",
+             fmt(wilks_L,6), fmt(F_wilks,4),
+             f"{int(df1_w)},{int(df2_w)}" if not math.isnan(df1_w) else "–",
+             fmt(p_wilks,4), _sig(p_wilks),
+             fmt(eta2_wilks,4), eta2_label(eta2_wilks),
+             "★ стандарт" if recommended=="Wilks" else ""],
+            ["Pillai's Trace",
+             fmt(pillai_V,6), fmt(F_pillai,4),
+             f"{int(df1_p)},{int(df2_p)}" if not math.isnan(df1_p) else "–",
+             fmt(p_pillai,4), _sig(p_pillai),
+             fmt(eta2_pillai,4), eta2_label(eta2_pillai),
+             "★ найробустніша" if recommended=="Pillai" else "робастна"],
+            ["Hotelling-Lawley",
+             fmt(hl_T,6), fmt(F_hl,4),
+             f"{int(df1_hl)},{int(df2_hl)}" if not math.isnan(df1_hl) else "–",
+             fmt(p_hl,4), _sig(p_hl),
+             fmt(eta2_hl,4), eta2_label(eta2_hl), ""],
+            ["Roy's GCR",
+             fmt(roy_GCR,6), fmt(F_roy,4), "–",
+             fmt(p_roy,4), _sig(p_roy),
+             fmt(eta2_roy,4), eta2_label(eta2_roy), "верхня межа"],
         ]
-        _tbl(["Статистика","Значення","F","df","p","Знач.","Примітка"], manova_rows)
+        _tbl(["Статистика","Значення","F","df","p",f"Знач.(α={alpha})",
+              "partial η²","Сила ефекту","Примітка"], manova_rows)
 
-        # Interpretation
-        all_sig = all(not math.isnan(r[4]) and r[4] != "" and
-                      (float(r[4]) < alpha if r[4] not in ("","–") else False)
-                      for r in manova_rows if r[4] not in ("","–","н/д"))
-        if not math.isnan(p_pillai) and p_pillai < alpha:
-            _txt(f"✓ MANOVA значущий (Pillai p={fmt(p_pillai,4)}): групи відрізняються за\n"
-                 f"  комбінацією залежних змінних. Перейдіть до одновимірних тестів.",
-                 "#1a6b1a")
-        elif not math.isnan(p_pillai):
-            _txt(f"✗ MANOVA незначущий (Pillai p={fmt(p_pillai,4)}): немає підстав вважати що\n"
-                 f"  групи відрізняються за комбінацією ЗЗ. Одновимірні тести не рекомендовано.",
-                 "#c62828")
+        # Опис сили ефекту
+        _txt("Сила ефекту (partial η²): < 0.01 дуже слабкий | 0.01–0.06 слабкий | "
+             "0.06–0.14 середній | > 0.14 сильний", "#555555")
 
-        # Univariate follow-up
-        _head(f"Univariate Follow-Up ANOVAs (Bonferroni α = {fmt(alpha/len(dv_names),4)})")
-        _txt("Примітка: ці результати інтерпретуються лише після значущого MANOVA.",
+        # ── Висновок по MANOVA ────────────────────────────────
+        _head("Висновок")
+        if not math.isnan(p_pillai):
+            if p_pillai < alpha:
+                _txt(f"✓ MANOVA значущий (Pillai p = {fmt(p_pillai,4)} < α = {alpha}):\n"
+                     f"  Групи значуще відрізняються за комбінацією залежних змінних.\n"
+                     f"  Перейдіть до одновимірних тестів (таблиця нижче).", "#1a6b1a")
+            else:
+                _txt(f"✗ MANOVA незначущий (Pillai p = {fmt(p_pillai,4)} ≥ α = {alpha}):\n"
+                     f"  Немає достатніх підстав вважати що групи відрізняються за\n"
+                     f"  комбінацією залежних змінних.\n"
+                     f"  Одновимірні тести у цьому випадку НЕ інтерпретуються!", "#c62828")
+
+        # ── Одновимірні тести (follow-up) ─────────────────────
+        bonf_alpha = alpha / max(len(dv_names), 1)
+        _head(f"Одновимірні тести (Bonferroni α = {fmt(bonf_alpha,4)})")
+        _txt("Примітка: ці результати інтерпретуються ЛИШЕ після значущого MANOVA.",
              "#666666")
-        _tbl(["Залежна змінна","F","p","partial η²","Ефект","Bonf. α","Висновок"], univ_rows)
+        _tbl(["Залежна змінна","F","p",f"Знач.(α={fmt(bonf_alpha,4)})",
+              "partial η²","Сила ефекту","Висновок"],
+             [[r[0], r[1], r[2], _sig(float(r[2]) if r[2] else float("nan")),
+               r[3], r[4], r[6]] for r in univ_rows])
 
-        # Group means per DV
-        _head("Групові середні по залежних змінних")
-        means_headers = ["Група"] + dv_names
+        # ── Групові середні ───────────────────────────────────
+        _head("Групові середні (Mean ± SD)")
+        means_headers = ["Група"] + [f"{nm}\nМ (SD)" for nm in dv_names]
         means_rows = []
         for lv in group_levels:
-            row_ = [lv] + [fmt(float(np.mean(groups_data[lv][:,j])),4)
-                           for j in range(len(dv_names))]
+            arr = groups_data[lv]
+            row_ = [lv]
+            for j in range(len(dv_names)):
+                m  = float(np.mean(arr[:,j]))
+                sd = float(np.std(arr[:,j], ddof=1)) if len(arr) > 1 else 0.
+                row_.append(f"{fmt(m,3)} ({fmt(sd,3)})")
             means_rows.append(row_)
         _tbl(means_headers, means_rows)
 
-        # Visualization: means per DV per group
+        # ── Графіки: стовпчикова ±SE + профільний ─────────────
         if HAS_MPL and len(dv_names) >= 2:
             n_dv = len(dv_names)
-            fig = Figure(figsize=(min(11, n_dv*1.8+1), 4.5), dpi=100)
             colors_ = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
+
+            # Графік 1: стовпчикова ±SE для кожної ЗЗ
+            fig1 = Figure(figsize=(min(12, n_dv*1.9+0.8), 4.2), dpi=100)
             for di, dv_nm in enumerate(dv_names):
-                ax = fig.add_subplot(1, n_dv, di+1)
-                grp_means_ = [float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
-                grp_ses_   = [float(np.std(groups_data[lv][:,di],ddof=1)/math.sqrt(len(groups_data[lv])))
-                              for lv in group_levels]
+                ax = fig1.add_subplot(1, n_dv, di+1)
+                gm = [float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
+                gs_ = [float(np.std(groups_data[lv][:,di],ddof=1) /
+                              math.sqrt(len(groups_data[lv])))
+                       for lv in group_levels]
                 xpos = range(len(group_levels))
-                ax.bar(xpos, grp_means_, yerr=grp_ses_, capsize=4,
+                ax.bar(xpos, gm, yerr=gs_, capsize=4,
                        color=[colors_[i % len(colors_)] for i in range(len(group_levels))],
-                       alpha=0.8, error_kw={"ecolor":"#333","lw":1.5})
-                ax.set_xticks(list(xpos)); ax.set_xticklabels(group_levels, rotation=30, ha="right", fontsize=8)
-                ax.set_title(dv_nm, fontsize=9); ax.set_ylabel("Mean ± SE" if di==0 else "")
+                       alpha=0.85, error_kw={"ecolor":"#333","lw":1.5})
+                # позначення значущості univariate
+                if univ_rows and di < len(univ_rows):
+                    try:
+                        p_uv = float(univ_rows[di][2])
+                        if p_uv < bonf_alpha:
+                            ax.set_title(f"{dv_nm}\n(p={fmt(p_uv,3)}*)", fontsize=8)
+                        else:
+                            ax.set_title(f"{dv_nm}\n(p={fmt(p_uv,3)})", fontsize=8)
+                    except Exception:
+                        ax.set_title(dv_nm, fontsize=8)
+                else:
+                    ax.set_title(dv_nm, fontsize=8)
+                ax.set_xticks(list(xpos))
+                ax.set_xticklabels(group_levels, rotation=30, ha="right", fontsize=7)
+                ax.set_ylabel("Середнє ± СП" if di==0 else "", fontsize=8)
                 ax.yaxis.grid(True, alpha=0.3)
-            fig.suptitle("Групові середні (±СП) по залежних змінних", fontsize=10)
-            fig.tight_layout()
-            cv = FigureCanvasTkAgg(fig, master=body); cv.draw()
-            cv.get_tk_widget().pack(fill=tk.X, padx=10, pady=6)
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+            fig1.suptitle("Групові середні (±СП) по залежних змінних", fontsize=10)
+            fig1.tight_layout()
+            cv1 = FigureCanvasTkAgg(fig1, master=body); cv1.draw()
+            cv1.get_tk_widget().pack(fill=tk.X, padx=10, pady=4)
+
+            # Графік 2: профільний (нормовані середні)
+            fig2 = Figure(figsize=(max(6, n_dv*0.9+2), 4), dpi=100)
+            ax2 = fig2.add_subplot(111)
+            # Нормуємо кожну ЗЗ до [0,1] для порівняння профілів
+            all_means = np.array([[float(np.mean(groups_data[lv][:,j]))
+                                   for j in range(n_dv)] for lv in group_levels])
+            mn_col = all_means.min(axis=0); mx_col = all_means.max(axis=0)
+            rng = np.where(mx_col > mn_col, mx_col - mn_col, 1.)
+            normed = (all_means - mn_col) / rng
+
+            x_pos = range(n_dv)
+            for gi, lv in enumerate(group_levels):
+                ax2.plot(list(x_pos), normed[gi], "o-",
+                         color=colors_[gi % len(colors_)],
+                         label=str(lv), linewidth=2, markersize=7)
+            ax2.set_xticks(list(x_pos))
+            ax2.set_xticklabels(dv_names, rotation=20, ha="right", fontsize=9)
+            ax2.set_ylabel("Нормоване середнє (0–1)", fontsize=9)
+            ax2.set_title("Профільний графік груп (нормовані середні по ЗЗ)", fontsize=10)
+            ax2.legend(title="Група", fontsize=8, title_fontsize=8)
+            ax2.yaxis.grid(True, linestyle="--", alpha=0.4)
+            ax2.spines["top"].set_visible(False)
+            ax2.spines["right"].set_visible(False)
+            fig2.tight_layout()
+            cv2 = FigureCanvasTkAgg(fig2, master=body); cv2.draw()
+            cv2.get_tk_widget().pack(fill=tk.X, padx=10, pady=(0,10))
 
 
 
