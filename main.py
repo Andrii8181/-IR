@@ -5155,96 +5155,505 @@ class SampleSizeWindow:
 # CLUSTER ANALYSIS
 # ═══════════════════════════════════════════════════════════════
 class ClusterWindow:
+    """Кластерний аналіз — ієрархічна кластеризація."""
+
+    HELP_TEXT = """
+КЛАСТЕРНИЙ АНАЛІЗ — ПОКРОКОВА ІНСТРУКЦІЯ
+══════════════════════════════════════════
+
+ЩО ТАКЕ КЛАСТЕРНИЙ АНАЛІЗ?
+  Кластерний аналіз групує об'єкти (сорти, зразки, ділянки) так,
+  щоб схожі між собою потрапили в один кластер, а несхожі — у різні.
+  Результат відображається на ДЕНДРОГРАМІ — деревоподібному графіку.
+
+КОЛИ ВИКОРИСТОВУВАТИ?
+  ✓ Класифікація сортів за комплексом показників якості
+  ✓ Групування ґрунтових проб за хімічним складом
+  ✓ Виявлення природних груп без попередніх гіпотез
+  ✓ Як доповнення до PCA для інтерпретації груп
+
+КРОК 1. СТРУКТУРА ТАБЛИЦІ
+
+  Перший стовпець: Назва об'єкта (сорт, зразок, ділянка — текст)
+  Решта стовпців: Числові показники (змінні)
+
+  Приклад (4 сорти, 3 показники):
+  | Сорт    | Висота | Врожайність | Маса зерна |
+  | Сорт А  |  95.3  |    5.8      |    38.2    |
+  | Сорт Б  |  88.5  |    4.9      |    35.1    |
+  | Сорт В  | 102.4  |    6.8      |    43.7    |
+  | Сорт Д  |  91.2  |    5.2      |    36.8    |
+
+  Перейменуйте заголовки (подвійний клік на синій клітинці).
+  Мінімум: 2 об'єкти, 1 показник.
+  Програма автоматично стандартизує дані (z-оцінки).
+
+КРОК 2. ВИБІР МЕТОДУ ЗЧЕПЛЕННЯ
+
+  Метод зчеплення визначає як вимірюється відстань між кластерами.
+
+  ward (рекомендується для більшості випадків):
+    Мінімізує внутрішньокластерну дисперсію.
+    Дає компактні, приблизно рівні кластери.
+    Найпопулярніший метод у біологічних дослідженнях. ✓
+
+  complete (повне зчеплення):
+    Відстань між кластерами = відстань між їх найдальшими об'єктами.
+    Дає компактні кластери схожого розміру.
+    Добре коли кластери чіткі і компактні.
+
+  average (середнє зчеплення, UPGMA):
+    Відстань = середня між усіма парами об'єктів двох кластерів.
+    Компроміс між ward і complete.
+    Широко використовується у філогенетичному аналізі.
+
+  single (одиночне зчеплення):
+    Відстань = відстань між найближчими об'єктами кластерів.
+    Схильний до «ефекту ланцюга» — довгих витягнутих кластерів.
+    Корисний для виявлення викидів і незвичних груп.
+
+  ЯК ОБРАТИ?
+    → Не знаєте яким почати → ward
+    → Хочете рівні компактні групи → complete
+    → Є підозра на ланцюговий зв'язок → average
+    → Шукаєте нетипові об'єкти → single
+
+КРОК 3. ВИБІР КІЛЬКОСТІ КЛАСТЕРІВ k
+
+  k — скільки груп ви хочете отримати.
+
+  ЯК ВИЗНАЧИТИ ПРАВИЛЬНЕ k?
+
+  Спосіб 1: Візуальний аналіз дендрограми (найкращий!)
+    Дивіться на дендрограму:
+    Де є ВЕЛИКИЙ стрибок у висоті з'єднання між гілками?
+    Там і є природна межа кластерів.
+    Проведіть уявну горизонтальну лінію нижче цього стрибка →
+    кількість вертикальних гілок що її перетинають = k.
+
+  Спосіб 2: Правило великого стрибка
+    Висота з'єднання на дендрограмі = «несхожість».
+    Найбільший стрибок висоти між двома сусідніми з'єднаннями
+    вказує на оптимальне k.
+
+  Спосіб 3: Змістовна логіка
+    Якщо ви знаєте що в природі є 3 групи (ранньостиглі,
+    середньостиглі, пізньостиглі) → k=3.
+
+  ТИПОВІ ЗНАЧЕННЯ ДЛЯ АГРОНОМІЇ:
+    Класифікація сортів: k = 2–5
+    Групування ґрунтових проб: k = 3–6
+    Екологічні зони: k = 3–8
+
+КРОК 4. ЧИТАННЯ ДЕНДРОГРАМИ
+
+  Горизонтальна вісь: об'єкти (сорти, зразки)
+  Вертикальна вісь: відстань (несхожість)
+
+  Об'єкти що з'єднуються НИЗЬКО → дуже схожі
+  Об'єкти що з'єднуються ВИСОКО → дуже несхожі
+  Різні кольори = різні кластери при обраному k
+  Горизонтальна пунктирна лінія = поріг відсікання для k кластерів
+
+  Об'єкт що з'єднується останнім (найвище) →
+  найбільш відмінний від усіх інших (потенційний викид!)
+
+КРОК 5. ТАБЛИЦЯ ПРИНАЛЕЖНОСТІ
+
+  Після дендрограми виводиться таблиця:
+  кожен об'єкт і номер його кластера (1, 2, 3...).
+"""
+
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Кластерний аналіз")
-        self.win.geometry("900x620"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent)
+        self.win.title("Кластерний аналіз")
+        self.win.geometry("960x660"); set_icon(self.win)
+        self.gs = gs
+        self._cl_fig = None
+        self._cl_gs  = {
+            "font_family":    "Times New Roman",
+            "font_size":      9,
+            "leaf_font_size": 9,
+            "line_color":     "#2176ae",
+            "threshold_color":"#c62828",
+            "show_threshold": True,
+            "figsize_w":      10,
+            "figsize_h":      5.5,
+        }
+        self._build()
 
     def _build(self):
+        # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Label(top, text="Метод:", font=("Times New Roman",12)).pack(side=tk.LEFT)
+        tk.Button(top, text="▶ Кластеризувати", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
+                  command=self._run).pack(side=tk.LEFT, padx=4)
+
+        # Параметри
+        tk.Label(top, text="Метод:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(8,2))
         self.meth_var = tk.StringVar(value="ward")
         ttk.Combobox(top, textvariable=self.meth_var,
                      values=["ward","complete","average","single"],
-                     state="readonly", width=14).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="k (кластерів):", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+                     state="readonly", width=12).pack(side=tk.LEFT, padx=2)
+        tk.Label(top, text="k:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(8,2))
         self.k_var = tk.IntVar(value=3)
-        tk.Spinbox(top, from_=2, to=20, textvariable=self.k_var, width=5).pack(side=tk.LEFT)
-        tk.Button(top, text="▶ Кластеризувати", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=self._run).pack(side=tk.LEFT, padx=8)
-        tk.Label(top, text="Перший рядок = назви змінних; перша колонка = назви об'єктів",
-                 font=("Times New Roman",10), fg="#666").pack(side=tk.LEFT)
+        tk.Spinbox(top, from_=2, to=20, textvariable=self.k_var,
+                   width=4, font=("Times New Roman",11)).pack(side=tk.LEFT, padx=2)
 
-        # data entry
+        # Налаштування — спадне меню
+        mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
+                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=6)
+        sm = tk.Menu(mb2, tearoff=0)
+        sm.add_command(label="Додати рядок",      command=self._add_row)
+        sm.add_command(label="Видалити рядок",    command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="Додати стовпець",   command=self._add_col)
+        sm.add_command(label="Видалити стовпець", command=self._del_col)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        mb2["menu"] = sm
+
+        tk.Button(top, text="Вставити з буфера",
+                  font=("Times New Roman",11),
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(top,
+                 text="Подвійний клік на заголовку → перейменувати",
+                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=6)
+
+        # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
         self.rows_n = 18; self.cols_n = 8
-        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
-        self.entries = []
+        self._canvas = tk.Canvas(mid)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=self._canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(self._canvas)
+        self._canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>",
+                        lambda e: self._canvas.config(scrollregion=self._canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        default_hdr = ["Назва об'єкта"] + [f"Показник {j}" for j in range(1, self.cols_n)]
+        self.header_vars = []; self.header_labels = []
         for j in range(self.cols_n):
-            tk.Label(self.inner, text=f"{'Name' if j==0 else f'Var{j}'}",
-                     relief=tk.RIDGE, width=12, bg="#f0f0f0",
-                     font=("Times New Roman",11)).grid(row=0,column=j,padx=1,pady=1,sticky="nsew")
+            var = tk.StringVar(value=default_hdr[j] if j < len(default_hdr) else f"П{j}")
+            self.header_vars.append(var)
+            lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
+                           bg="#1a4b8c", fg="white", relief=tk.RIDGE,
+                           font=("Times New Roman",11,"bold"))
+            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+            lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
+            self.header_labels.append(lbl)
+
+        self.entries = []
         for i in range(self.rows_n):
             row_ = []
             for j in range(self.cols_n):
-                e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
-                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
-                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
-                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
-                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
-                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
-                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
+                e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
+                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e.grid(row=i+1, column=j, padx=1, pady=1)
+                row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
 
+    # ── Перейменування ────────────────────────────────────────
+    def _rename_col(self, idx):
+        dlg = tk.Toplevel(self.win); dlg.title("Перейменувати")
+        dlg.resizable(False, False); dlg.grab_set()
+        tk.Label(dlg, text=f"Назва стовпця {idx+1}:",
+                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+        var = tk.StringVar(value=self.header_vars[idx].get())
+        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
+        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
+        def apply():
+            nm = var.get().strip()
+            if nm: self.header_vars[idx].set(nm)
+            dlg.destroy()
+        tk.Button(dlg, text="OK", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+        dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
+
+    # ── Управління таблицею ───────────────────────────────────
+    def _add_row(self):
+        i = self.rows_n; row_ = []
+        for j in range(self.cols_n):
+            e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=j, padx=1, pady=1)
+            row_.append(e)
+        self.entries.append(row_); self.rows_n += 1
+        _bind_nav(self.entries, self.win)
+
+    def _del_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.rows_n -= 1
+
+    def _add_col(self):
+        ci = self.cols_n; self.cols_n += 1
+        var = tk.StringVar(value=f"Показник {ci}")
+        self.header_vars.append(var)
+        lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
+                       bg="#1a4b8c", fg="white", relief=tk.RIDGE,
+                       font=("Times New Roman",11,"bold"))
+        lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
+        lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
+        self.header_labels.append(lbl)
+        for i, row_ in enumerate(self.entries):
+            e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=ci, padx=1, pady=1)
+            row_.append(e)
+        _bind_nav(self.entries, self.win)
+
+    def _del_col(self):
+        if self.cols_n <= 2: return
+        self.header_labels.pop().destroy(); self.header_vars.pop()
+        for row_ in self.entries: row_.pop().destroy()
+        self.cols_n -= 1
+
+    def _clear_table(self):
+        if not messagebox.askyesno("Очистити",
+                "Видалити всі дані? (Заголовки залишаться)"): return
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+    # ── Вставка / Довідка ────────────────────────────────────
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
+        pos = (0, 0)
+        w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos=(i,j); break
+        r0, c0 = pos
+        for ir, line in enumerate(data.splitlines()):
+            if not line.strip(): continue
+            while r0+ir >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                cc = c0+jc
+                if cc >= self.cols_n: continue
+                self.entries[r0+ir][cc].delete(0,tk.END)
+                self.entries[r0+ir][cc].insert(0, val.strip())
+
+    def _show_help(self):
+        win = tk.Toplevel(self.win); win.title("Довідка — Кластерний аналіз")
+        win.geometry("720x680"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
+    # ── Налаштування графіка ──────────────────────────────────
+    def _restyle_cluster(self, win, obj_names, Z, k, method, graph_frame):
+        dlg = tk.Toplevel(win); dlg.title("Налаштування дендрограми")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        gs = self._cl_gs
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        rb_f = ("Times New Roman",12)
+
+        ff_v  = tk.StringVar(value=gs["font_family"])
+        fz_v  = tk.IntVar(value=gs["font_size"])
+        lf_v  = tk.IntVar(value=gs["leaf_font_size"])
+        fw_v  = tk.DoubleVar(value=gs["figsize_w"])
+        fh_v  = tk.DoubleVar(value=gs["figsize_h"])
+        st_v  = tk.BooleanVar(value=gs["show_threshold"])
+        lc_ref = [gs["line_color"]]
+        tc_ref = [gs["threshold_color"]]
+
+        rows_cfg = [
+            ("Шрифт:",                  "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Розмір підписів осей:",   "spin",   fz_v, (6,18)),
+            ("Розмір підписів об'єктів:", "spin", lf_v, (5,16)),
+            ("Ширина графіка:",         "scale",  fw_v, (5.,20.)),
+            ("Висота графіка:",         "scale",  fh_v, (3.,12.)),
+            ("Показувати поріг k:",     "check",  st_v, None),
+        ]
+        btn_refs = {}
+        for ri, (lbl, wt, var, opts) in enumerate(rows_cfg):
+            tk.Label(frm, text=lbl, font=rb_f).grid(row=ri, column=0, sticky="w", pady=4)
+            if wt=="combo":
+                ttk.Combobox(frm, textvariable=var, values=opts,
+                             state="readonly", width=20).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="spin":
+                tk.Spinbox(frm, from_=opts[0], to=opts[1], textvariable=var,
+                           width=7).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="scale":
+                tk.Scale(frm, from_=opts[0], to=opts[1], resolution=0.5,
+                         orient="horizontal", variable=var,
+                         length=160).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="check":
+                tk.Checkbutton(frm, variable=var).grid(row=ri, column=1, sticky="w", padx=8)
+
+        base_r = len(rows_cfg)
+        for ri, (lbl, ref) in enumerate([("Колір ліній дендрограми:", lc_ref),
+                                          ("Колір порогової лінії:",    tc_ref)]):
+            tk.Label(frm, text=lbl, font=rb_f).grid(row=base_r+ri, column=0, sticky="w", pady=4)
+            btn = tk.Button(frm, width=6, relief=tk.SUNKEN, bg=ref[0])
+            btn.grid(row=base_r+ri, column=1, sticky="w", padx=8)
+            def _pick(r=ref, b=btn):
+                ch = colorchooser.askcolor(color=r[0], parent=dlg)
+                if ch and ch[1]: r[0]=ch[1]; b.configure(bg=ch[1])
+            btn.configure(command=_pick); btn_refs[ri] = btn
+
+        def apply():
+            self._cl_gs.update({
+                "font_family":    ff_v.get(), "font_size": fz_v.get(),
+                "leaf_font_size": lf_v.get(), "figsize_w": fw_v.get(),
+                "figsize_h":      fh_v.get(), "show_threshold": st_v.get(),
+                "line_color":     lc_ref[0],  "threshold_color": tc_ref[0],
+            })
+            dlg.destroy()
+            self._draw_dendrogram(graph_frame, obj_names, Z, k, method)
+
+        bf = tk.Frame(frm); bf.grid(row=base_r+2, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="OK (застосувати)", bg="#c62828", fg="white",
+                  font=rb_f, command=apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rb_f, command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    # ── Побудова дендрограми ──────────────────────────────────
+    def _draw_dendrogram(self, frame, obj_names, Z, k, method):
+        from scipy.cluster.hierarchy import dendrogram as _dendro
+        for w in frame.winfo_children(): w.destroy()
+        gs = self._cl_gs
+        fig = Figure(figsize=(gs["figsize_w"], gs["figsize_h"]), dpi=100)
+        ax  = fig.add_subplot(111)
+
+        # Кольори гілок через color_threshold
+        thresh = float(Z[-(k-1), 2]) if k > 1 else float("inf")
+        _dendro(Z, labels=obj_names, ax=ax,
+                leaf_rotation=90, leaf_font_size=gs["leaf_font_size"],
+                color_threshold=thresh if gs["show_threshold"] else 0,
+                above_threshold_color=gs["line_color"])
+
+        if gs["show_threshold"] and k > 1:
+            ax.axhline(thresh, color=gs["threshold_color"],
+                       lw=1.2, linestyle="--",
+                       label=f"Поріг k={k}")
+            ax.legend(fontsize=gs["font_size"], framealpha=0.7)
+
+        ax.set_title(f"Ієрархічна кластеризація  |  Метод: {method}  |  k = {k}",
+                     fontsize=gs["font_size"]+1, fontfamily=gs["font_family"])
+        ax.set_ylabel("Відстань (несхожість)",
+                      fontsize=gs["font_size"], fontfamily=gs["font_family"])
+        ax.tick_params(labelsize=gs["font_size"])
+        ax.yaxis.grid(True, linestyle="--", alpha=0.3)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        self._cl_fig = fig
+
+        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # ── Виконання аналізу ─────────────────────────────────────
     def _run(self):
-        from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+        from scipy.cluster.hierarchy import linkage, fcluster
         from scipy.spatial.distance import pdist
+
         raw = [[e.get().strip() for e in row] for row in self.entries]
         raw = [r for r in raw if any(v for v in r)]
-        if not raw: messagebox.showwarning("","Немає даних."); return
+        if not raw:
+            messagebox.showwarning("Немає даних","Введіть дані у таблицю."); return
 
         obj_names = []; data_matrix = []
         for row in raw:
-            nm = row[0] if row else ""; vals = []
+            nm = row[0].strip() if row else ""
+            if not nm: continue
+            vals = []
             for v in row[1:]:
                 if not v: continue
                 try: vals.append(float(v.replace(",",".")))
                 except Exception: continue
-            if nm and vals:
+            if vals:
                 obj_names.append(nm); data_matrix.append(vals)
 
-        if len(data_matrix) < 2: messagebox.showwarning("Замало об'єктів","Потрібно ≥ 2 об'єкти."); return
+        if len(data_matrix) < 2:
+            messagebox.showwarning("Замало об'єктів",
+                "Потрібно щонайменше 2 об'єкти з числовими даними.\n"
+                "Перший стовпець = назва об'єкта (текст).\n"
+                "Решта стовпців = числові показники."); return
+
         min_cols = min(len(r) for r in data_matrix)
         X = np.array([r[:min_cols] for r in data_matrix], dtype=float)
 
-        # standardize
         from scipy.stats import zscore
-        X_std = zscore(X, axis=0, ddof=1)
-        X_std = np.nan_to_num(X_std)
+        X_std = zscore(X, axis=0, ddof=1); X_std = np.nan_to_num(X_std)
 
         method = self.meth_var.get()
-        Z = linkage(X_std, method=method)
         k = self.k_var.get()
+        k = max(2, min(k, len(obj_names)))
+
+        try:
+            Z = linkage(X_std, method=method)
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex)); return
+
         labels_cl = fcluster(Z, k, criterion='maxclust')
 
-        if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
-        win = tk.Toplevel(self.win); win.title("Кластерний аналіз — Дендрограма"); win.geometry("1000x620")
-        fig = Figure(figsize=(10, 5.5), dpi=100)
-        ax = fig.add_subplot(111)
-        dendrogram(Z, labels=obj_names, ax=ax, leaf_rotation=90, leaf_font_size=9,
-                   color_threshold=Z[-(k-1), 2] if k > 1 else np.inf)
-        ax.set_title(f"Ієрархічна кластеризація (метод {method}, k={k})")
-        ax.set_ylabel("Відстань")
-        fig.tight_layout()
-        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        if not HAS_MPL:
+            messagebox.showwarning("","matplotlib недоступний."); return
 
-        # show cluster membership
-        result_txt = "\n".join(f"{nm}: Cluster {cl}" for nm, cl in zip(obj_names, labels_cl))
-        tk.Label(win, text="Приналежність до кластерів:\n" + result_txt, font=("Times New Roman",11), justify="left").pack(padx=8, pady=4)
+        # ── Вікно результатів ──────────────────────────────────
+        win = tk.Toplevel(self.win)
+        win.title("Кластерний аналіз — Результати")
+        win.geometry("1060x720"); set_icon(win)
+
+        # Toolbar результатів
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
+        graph_frame = tk.Frame(win); # буде pack після tb
+
+        tk.Button(tb, text="📋 Копіювати дендрограму", font=("Times New Roman",11),
+                  command=lambda: self._copy_dendro()).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування графіка", font=("Times New Roman",11),
+                  command=lambda: self._restyle_cluster(
+                      win, obj_names, Z, k, method, graph_frame)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb,
+                 text=f"Метод: {method}  |  k = {k}  |  Об'єктів: {len(obj_names)}",
+                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
+
+        # Дендрограма
+        graph_frame.pack(fill=tk.BOTH, expand=True, padx=4)
+        self._draw_dendrogram(graph_frame, obj_names, Z, k, method)
+
+        # Таблиця приналежності (знизу, прокручувана)
+        tbl_frame = tk.Frame(win); tbl_frame.pack(fill=tk.X, padx=8, pady=4)
+        tk.Label(tbl_frame, text="Приналежність до кластерів:",
+                 font=("Times New Roman",11,"bold"), anchor="w").pack(fill=tk.X)
+        membership_rows = sorted(
+            [[nm, f"Кластер {cl}"] for nm, cl in zip(obj_names, labels_cl)],
+            key=lambda r: r[1])
+        frm_m, _ = make_tv(tbl_frame, ["Об'єкт","Кластер"], membership_rows)
+        frm_m.pack(fill=tk.X)
+
+    def _copy_dendro(self):
+        if self._cl_fig is None:
+            messagebox.showwarning("","Спочатку виконайте кластеризацію."); return
+        ok, msg = _copy_fig_to_clipboard(self._cl_fig)
+        if ok: messagebox.showinfo("","Дендрограму скопійовано.\nВставте у Word через Ctrl+V.")
+        else:   messagebox.showwarning("",f"Помилка: {msg}")
+
+
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -5668,9 +6077,9 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                           eigenvectors, explained, scores, n_comp, min_c):
         gs = self._pca_gs
         win = tk.Toplevel(self.win); win.title("PCA — Результати")
-        win.geometry("1200x800"); set_icon(win)
+        win.geometry("1200x860"); set_icon(win)
 
-        # ── Toolbar результатів ─────────────────────────────
+        # ── Toolbar ─────────────────────────────────────────
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
         tk.Button(tb, text="📋 Копіювати графіки", font=("Times New Roman",11),
                   command=lambda: self._copy_pca()).pack(side=tk.LEFT, padx=4)
@@ -5679,9 +6088,9 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                       win, obj_names, var_names, eigenvalues, eigenvectors,
                       explained, scores, n_comp, min_c)).pack(side=tk.LEFT, padx=4)
 
-        # ── Основна область ─────────────────────────────────
-        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
-        self._pca_main_frame = main   # зберігаємо для перебудови
+        # ── Зона графіків (фіксована висота) ────────────────
+        graph_frame = tk.Frame(win); graph_frame.pack(fill=tk.X)
+        self._pca_main_frame = graph_frame
 
         # Графіки
         fig = Figure(figsize=(12, 5.5), dpi=100)
@@ -5751,31 +6160,43 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         fig.tight_layout()
         self._pca_fig = fig
-        self._pca_canvas_frame = tk.Frame(main)
-        self._pca_canvas_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+        self._pca_canvas_frame = tk.Frame(graph_frame)
+        self._pca_canvas_frame.pack(fill=tk.X)
         cv = FigureCanvasTkAgg(fig, master=self._pca_canvas_frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        cv.get_tk_widget().pack(fill=tk.X)
+
+        # ── Прокручувана текстова частина ────────────────────
+        scroll_area = tk.Frame(win); scroll_area.pack(fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(scroll_area, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt_canvas = tk.Canvas(scroll_area, yscrollcommand=vsb.set, highlightthickness=0)
+        txt_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=txt_canvas.yview)
+        txt_body = tk.Frame(txt_canvas); txt_canvas.create_window((0,0), window=txt_body, anchor="nw")
+        txt_body.bind("<Configure>",
+                      lambda e: txt_canvas.configure(scrollregion=txt_canvas.bbox("all")))
+        win.bind("<MouseWheel>",
+                 lambda e: txt_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
         # ── Таблиця компонент ────────────────────────────────
         # Додаємо пояснення що таке ГК
-        tk.Label(win,
+        tk.Label(txt_body,
                  text="ГК = Головна компонента — «узагальнений показник» "
                       "що об'єднує кілька вихідних змінних. ГК1 пояснює найбільше варіації.",
                  font=("Times New Roman",10), fg="#555", anchor="w"
-                 ).pack(fill=tk.X, padx=12, pady=(2,0))
+                 ).pack(fill=tk.X, padx=12, pady=(6,0))
         summary_rows = [[f"ГК{i+1}  (Головна компонента {i+1})",
                          fmt(eigenvalues[i],4),
                          fmt(explained[i],2),
                          fmt(float(np.sum(explained[:i+1])),2),
                          "✓ включити" if eigenvalues[i] >= 1.0 else "розглянути"]
                         for i in range(n_comp)]
-        frm_t, _ = make_tv(win,
+        frm_t, _ = make_tv(txt_body,
             ["Компонент","Власне значення (λ)","% дисперсії","Кумулятивний %","Критерій Кайзера (λ≥1)"],
             summary_rows)
         frm_t.pack(fill=tk.X, padx=8, pady=4)
 
         # ── Таблиця навантажень ──────────────────────────────
-        tk.Label(win,
+        tk.Label(txt_body,
                  text="Навантаження (loadings): кореляція показника з кожною ГК. "
                       "|Навантаження| > 0.5 — значуща роль показника у цій компоненті.",
                  font=("Times New Roman",10), fg="#555", anchor="w"
@@ -5786,8 +6207,8 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         for j in range(min_c):
             nm_j = var_names[j] if j < len(var_names) else f"П{j+1}"
             load_rows.append([nm_j] + [fmt(eigenvectors[j,k],4) for k in range(n_show2)])
-        frm_l, _ = make_tv(win, load_headers, load_rows)
-        frm_l.pack(fill=tk.X, padx=8, pady=(0,8))
+        frm_l, _ = make_tv(txt_body, load_headers, load_rows)
+        frm_l.pack(fill=tk.X, padx=8, pady=(0,10))
 
 
     def _restyle_pca_live(self, win, obj_names, var_names, eigenvalues,
