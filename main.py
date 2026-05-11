@@ -6294,52 +6294,403 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
 # REPEATED MEASURES ANOVA
 # ═══════════════════════════════════════════════════════════════
 class RepeatedMeasuresWindow:
+    """Дисперсійний аналіз повторних вимірювань."""
+
+    HELP_TEXT = """
+АНАЛІЗ ПОВТОРНИХ ВИМІРЮВАНЬ — ПОКРОКОВА ІНСТРУКЦІЯ
+══════════════════════════════════════════════════
+
+ЩО ТАКЕ ПОВТОРНІ ВИМІРИ?
+  Це ситуація коли одні й ті самі об'єкти (рослини, тварини, ділянки,
+  дерева) вимірюються КІЛЬКА РАЗІВ:
+  • У різні моменти часу (висота пагонів щомісяця)
+  • За різних умов (доза А → доза Б → доза В)
+  • По фазах вегетації (бутонізація, цвітіння, дозрівання)
+
+  ВІДМІНА від звичайного ANOVA:
+  Вимірювання одного об'єкта залежні між собою. Дерево що було
+  вищим у травні — залишається відносно вищим у червні.
+  Ігнорування цього зв'язку (звичайна ANOVA) завищує помилку
+  і знижує шанс виявити реальну різницю.
+
+КОЛИ ВИКОРИСТОВУВАТИ?
+  ✓ Динаміка росту рослин або пагонів (вимірюєте ті самі рослини)
+  ✓ Зміна вмісту поживних речовин по фазах вегетації
+  ✓ Реакція на послідовні обробки (один об'єкт отримує всі обробки)
+  ✓ Порівняння до/після (якщо > 2 точок; для 2 точок — парний t-тест)
+
+КРОК 1. СТРУКТУРА ТАБЛИЦІ
+
+  Перший стовпець: Назва суб'єкта (рослина, дерево, ділянка — текст)
+  Решта стовпців: Вимірювання у кожній часовій точці (числа)
+  Заголовки стовпців (сині): Назви часових точок або умов
+
+  Приклад (ріст пагонів, 5 дерев, 4 вимірювання):
+  | Дерево   | Травень | Червень | Липень | Серпень |
+  | Дерево 1 |  12.3   |  24.5   |  38.1  |  45.2   |
+  | Дерево 2 |  11.8   |  22.9   |  35.7  |  42.8   |
+  | Дерево 3 |  13.1   |  26.2   |  40.3  |  48.6   |
+
+  Перейменуйте заголовки часових точок:
+  Подвійний клік на синій клітинці → введіть назву.
+
+  Мінімум: 2 суб'єкти, 2 часові точки.
+
+КРОК 2. ВИКОНАННЯ АНАЛІЗУ
+  Натисніть «▶ Аналіз».
+  Програма автоматично видаляє рядки з пропущеними даними.
+
+КРОК 3. ІНТЕРПРЕТАЦІЯ РЕЗУЛЬТАТІВ
+
+  Таблиця дисперсійного аналізу:
+
+  SS_час — варіація пояснена зміною у часі (те що нас цікавить)
+  SS_суб'єкти — варіація між суб'єктами (виноситься окремо!)
+  SS_похибка — залишкова варіація
+
+  F(df_час, df_похибка):
+    p < α → є значуща динаміка у часі ✓
+    p ≥ α → динаміка незначуща
+
+  Partial η² (розмір ефекту):
+    < 0.01: дуже слабкий | 0.01–0.06: слабкий
+    0.06–0.14: середній  | > 0.14: сильний ← типово для росту
+
+КРОК 4. POST-HOC АНАЛІЗ (після значущого F)
+
+  Виконуються парні t-тести з поправкою Бонферроні.
+  Показують ЯКІ САМЕ пари часових точок відрізняються.
+
+  Приклад: «Травень vs Червень: p=0.003 *» → у червні показник
+  значущо вищий ніж у травні.
+
+КРОК 5. НОРМАЛЬНІСТЬ РІЗНИЦЬ
+
+  Перевіряється Shapiro-Wilk для різниць між кожною парою точок.
+  p > 0.05 → різниці нормальні → результати надійні ✓
+  p ≤ 0.05 → розгляньте тест Фрідмана (непараметричний аналог)
+
+КРОК 6. ГРАФІК ДИНАМІКИ (Середні ± СП)
+
+  Показує як середнє значення змінюється у часі.
+  Смужки похибок (СП) = стандартна похибка середнього.
+  Чим менші смужки → тим точніше визначено середнє.
+  S-подібний підйом → типовий ріст рослин.
+  Плато → насичення (ріст сповільнився або зупинився).
+
+ПОРАДА:
+  Якщо у вас КІЛЬКА ВАРІАНТІВ (сортів, обробок) і ті самі
+  об'єкти щороку — це двофакторний Repeated Measures:
+  між-суб'єктний фактор (варіант) + всередині-суб'єктний (час).
+  Для такого аналізу використовуйте ТРИФАКТОРНУ ANOVA де рік
+  є одним з факторів — це загальноприйнята практика.
+"""
+
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Дисперсійний аналіз повторних вимірювань")
-        self.win.geometry("880x640"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent)
+        self.win.title("Дисперсійний аналіз повторних вимірювань")
+        self.win.geometry("940x660"); set_icon(self.win)
+        self.gs = gs
+        self._rm_fig = None
+        self._rm_gs  = {
+            "font_family":  "Times New Roman",
+            "font_size":    10,
+            "line_color":   "#4c72b0",
+            "err_color":    "#c62828",
+            "marker":       "o",
+            "linewidth":    2.0,
+            "markersize":   7,
+            "show_grid":    True,
+        }
+        self._build()
 
     def _build(self):
+        # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Label(top, text="Стовпці = часові точки / умови  |  Рядки = суб'єкти",
-                 font=("Times New Roman",11)).pack(side=tk.LEFT)
         tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=self._run).pack(side=tk.RIGHT, padx=4)
+                  font=("Times New Roman", 13),
+                  command=self._run).pack(side=tk.LEFT, padx=4)
 
+        # Налаштування — спадне меню
+        mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
+                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=4)
+        sm = tk.Menu(mb2, tearoff=0)
+        sm.add_command(label="Додати рядок",       command=self._add_row)
+        sm.add_command(label="Видалити рядок",     command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="Додати стовпець",    command=self._add_col)
+        sm.add_command(label="Видалити стовпець",  command=self._del_col)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        mb2["menu"] = sm
+
+        tk.Button(top, text="Вставити з буфера",
+                  font=("Times New Roman",11),
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(top,
+                 text="Подвійний клік на заголовку часової точки → перейменувати",
+                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+
+        # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
         self.rows_n = 20; self.cols_n = 8
-        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
-        self.col_entries = []  # header names
-        self.entries = []
-        tk.Label(self.inner, text="Subject", relief=tk.RIDGE, width=12,
-                 bg="#f0f0f0", font=("Times New Roman",11)).grid(row=0, column=0, padx=1, pady=1)
+        self._canvas = tk.Canvas(mid)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=self._canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(self._canvas)
+        self._canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>",
+                        lambda e: self._canvas.config(scrollregion=self._canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        # Перший заголовок — «Суб'єкт» (фіксований)
+        tk.Label(self.inner, text="Суб'єкт", relief=tk.RIDGE, width=13,
+                 bg="#444444", fg="white",
+                 font=("Times New Roman",11,"bold")).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+
+        # Заголовки часових точок (перейменовувані)
+        self.col_vars = []; self.col_labels = []
         for j in range(1, self.cols_n):
-            e = tk.Entry(self.inner, width=12, bg="#e8f0ff", font=("Times New Roman",11))
-            e.insert(0, f"T{j}"); e.grid(row=0, column=j, padx=1, pady=1)
-            self.col_entries.append(e)
+            var = tk.StringVar(value=f"Точка {j}")
+            self.col_vars.append(var)
+            lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
+                           bg="#1a4b8c", fg="white", relief=tk.RIDGE,
+                           font=("Times New Roman",11,"bold"))
+            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+            lbl.bind("<Double-Button-1>", lambda e, idx=j-1: self._rename_time_col(idx))
+            self.col_labels.append(lbl)
+
+        self.entries = []
         for i in range(self.rows_n):
             row_ = []
             for j in range(self.cols_n):
-                e = tk.Entry(self.inner, width=12, font=("Times New Roman",11))
-                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
-                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
-                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
-                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
-                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
-                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
+                e = tk.Entry(self.inner, width=13 if j==0 else 12,
+                             font=("Times New Roman",11),
+                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e.grid(row=i+1, column=j, padx=1, pady=1)
+                row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
 
+    # ── Перейменування часової точки ─────────────────────────
+    def _rename_time_col(self, idx):
+        dlg = tk.Toplevel(self.win); dlg.title("Перейменувати часову точку")
+        dlg.resizable(False, False); dlg.grab_set()
+        tk.Label(dlg, text=f"Назва часової точки {idx+1}:",
+                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+        var = tk.StringVar(value=self.col_vars[idx].get())
+        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
+        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
+        def apply():
+            nm = var.get().strip()
+            if nm: self.col_vars[idx].set(nm)
+            dlg.destroy()
+        tk.Button(dlg, text="OK", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+        dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
+
+    # ── Управління таблицею ───────────────────────────────────
+    def _add_row(self):
+        i = self.rows_n; row_ = []
+        for j in range(self.cols_n):
+            e = tk.Entry(self.inner, width=13 if j==0 else 12,
+                         font=("Times New Roman",11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=j, padx=1, pady=1)
+            row_.append(e)
+        self.entries.append(row_); self.rows_n += 1
+        _bind_nav(self.entries, self.win)
+
+    def _del_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.rows_n -= 1
+
+    def _add_col(self):
+        ci = self.cols_n; self.cols_n += 1
+        var = tk.StringVar(value=f"Точка {ci}")
+        self.col_vars.append(var)
+        lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
+                       bg="#1a4b8c", fg="white", relief=tk.RIDGE,
+                       font=("Times New Roman",11,"bold"))
+        lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
+        lbl.bind("<Double-Button-1>", lambda e, idx=ci-1: self._rename_time_col(idx))
+        self.col_labels.append(lbl)
+        for i, row_ in enumerate(self.entries):
+            e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e.grid(row=i+1, column=ci, padx=1, pady=1)
+            row_.append(e)
+        _bind_nav(self.entries, self.win)
+
+    def _del_col(self):
+        if self.cols_n <= 3: return
+        self.col_labels.pop().destroy(); self.col_vars.pop()
+        for row_ in self.entries: row_.pop().destroy()
+        self.cols_n -= 1
+
+    def _clear_table(self):
+        if not messagebox.askyesno("Очистити",
+                "Видалити всі дані?\n(Заголовки залишаться)"): return
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+    # ── Вставка / Довідка ────────────────────────────────────
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
+        pos = (0, 0)
+        w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos=(i,j); break
+        r0, c0 = pos
+        for ir, line in enumerate(data.splitlines()):
+            if not line.strip(): continue
+            while r0+ir >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                cc = c0+jc
+                if cc >= self.cols_n: continue
+                self.entries[r0+ir][cc].delete(0,tk.END)
+                self.entries[r0+ir][cc].insert(0, val.strip())
+
+    def _show_help(self):
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — Повторні виміри ANOVA")
+        win.geometry("720x680"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
+    # ── Налаштування графіка ──────────────────────────────────
+    def _restyle_rm(self, win, time_names, data_arr, n):
+        dlg = tk.Toplevel(win); dlg.title("Налаштування графіка")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        gs = self._rm_gs
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        rb_f = ("Times New Roman",12)
+
+        ff_v  = tk.StringVar(value=gs["font_family"])
+        fz_v  = tk.IntVar(value=gs["font_size"])
+        lw_v  = tk.DoubleVar(value=gs["linewidth"])
+        ms_v  = tk.IntVar(value=gs["markersize"])
+        mk_v  = tk.StringVar(value=gs["marker"])
+        gr_v  = tk.BooleanVar(value=gs["show_grid"])
+        lc_ref = [gs["line_color"]]; ec_ref = [gs["err_color"]]
+
+        rows_cfg = [
+            ("Шрифт:",          "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Розмір шрифту:",  "spin",   fz_v, (7,18)),
+            ("Товщина лінії:",  "scale",  lw_v, (0.5,5.0)),
+            ("Розмір маркера:", "spin",   ms_v, (3,20)),
+            ("Тип маркера:",    "combo",  mk_v, ["o","s","^","D","v","*","+"]),
+            ("Показати сітку:", "check",  gr_v, None),
+        ]
+        for ri, (lbl, wt, var, opts) in enumerate(rows_cfg):
+            tk.Label(frm, text=lbl, font=rb_f).grid(row=ri, column=0, sticky="w", pady=4)
+            if wt=="combo":
+                ttk.Combobox(frm, textvariable=var, values=opts,
+                             state="readonly", width=18).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="spin":
+                tk.Spinbox(frm, from_=opts[0], to=opts[1], textvariable=var,
+                           width=7).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="scale":
+                tk.Scale(frm, from_=opts[0], to=opts[1], resolution=0.1,
+                         orient="horizontal", variable=var,
+                         length=160).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wt=="check":
+                tk.Checkbutton(frm, variable=var).grid(row=ri, column=1, sticky="w", padx=8)
+
+        base_r = len(rows_cfg)
+        btn_lc = tk.Button(frm, width=6, relief=tk.SUNKEN, bg=lc_ref[0])
+        btn_ec = tk.Button(frm, width=6, relief=tk.SUNKEN, bg=ec_ref[0])
+        for ri2, (lbl, ref, btn) in enumerate([
+            ("Колір лінії:", lc_ref, btn_lc),
+            ("Колір смужок похибок:", ec_ref, btn_ec)
+        ]):
+            tk.Label(frm, text=lbl, font=rb_f).grid(row=base_r+ri2, column=0, sticky="w", pady=4)
+            btn.grid(row=base_r+ri2, column=1, sticky="w", padx=8)
+            def _pick(r=ref, b=btn):
+                ch = colorchooser.askcolor(color=r[0], parent=dlg)
+                if ch and ch[1]: r[0]=ch[1]; b.configure(bg=ch[1])
+            btn.configure(command=_pick)
+
+        def apply():
+            self._rm_gs.update({
+                "font_family": ff_v.get(), "font_size": fz_v.get(),
+                "linewidth":   lw_v.get(), "markersize": ms_v.get(),
+                "marker":      mk_v.get(), "show_grid": gr_v.get(),
+                "line_color":  lc_ref[0],  "err_color": ec_ref[0],
+            })
+            dlg.destroy()
+            self._redraw_rm(win, time_names, data_arr, n)
+
+        bf = tk.Frame(frm); bf.grid(row=base_r+2, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="OK (застосувати)", bg="#c62828", fg="white",
+                  font=rb_f, command=apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rb_f, command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    def _redraw_rm(self, win, time_names, data_arr, n):
+        """Перебудовує графік у вже відкритому вікні."""
+        if not hasattr(self, '_rm_graph_frame'): return
+        for w in self._rm_graph_frame.winfo_children(): w.destroy()
+        gs = self._rm_gs
+        k = len(time_names)
+        fig = Figure(figsize=(9, 4), dpi=100)
+        ax  = fig.add_subplot(111)
+        means_ = np.mean(data_arr, axis=0)
+        ses_   = np.std(data_arr, axis=0, ddof=1) / math.sqrt(n)
+        ax.errorbar(range(k), means_, yerr=ses_,
+                    fmt=gs["marker"]+"-", capsize=5,
+                    color=gs["line_color"], ecolor=gs["err_color"],
+                    linewidth=gs["linewidth"], markersize=gs["markersize"])
+        ax.set_xticks(range(k))
+        ax.set_xticklabels(time_names, fontsize=gs["font_size"],
+                           fontfamily=gs["font_family"])
+        ax.set_xlabel("Часова точка / Умова",
+                      fontsize=gs["font_size"], fontfamily=gs["font_family"])
+        ax.set_ylabel("Середнє ± СП",
+                      fontsize=gs["font_size"], fontfamily=gs["font_family"])
+        ax.set_title("Повторні виміри: динаміка середніх",
+                     fontsize=gs["font_size"]+1, fontfamily=gs["font_family"])
+        if gs["show_grid"]: ax.yaxis.grid(True, linestyle="--", alpha=0.35)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        self._rm_fig = fig
+        cv = FigureCanvasTkAgg(fig, master=self._rm_graph_frame); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # ── Виконання аналізу ─────────────────────────────────────
     def _run(self):
-        # Read data
-        time_names = [e.get().strip() or f"T{i+1}" for i, e in enumerate(self.col_entries)]
+        # Назви часових точок з col_vars
+        time_names = [v.get().strip() or f"Т{i+1}" for i, v in enumerate(self.col_vars)]
+
         raw = [[e.get().strip() for e in row] for row in self.entries]
+        raw = [r for r in raw if any(v for v in r)]
         subjects = []; data_rows = []
         for row in raw:
-            subj = row[0] if row[0] else f"Subj{len(subjects)+1}"
+            subj = row[0].strip() if row[0].strip() else f"Суб'єкт {len(subjects)+1}"
             vals = []
             for v in row[1:len(time_names)+1]:
                 if not v: vals.append(np.nan)
@@ -6349,86 +6700,165 @@ class RepeatedMeasuresWindow:
             if any(not math.isnan(v) for v in vals):
                 subjects.append(subj); data_rows.append(vals)
 
-        if len(data_rows) < 2: messagebox.showwarning("Замало суб'єктів","Потрібно ≥ 2 суб'єкти."); return
-        k = len(time_names); n = len(data_rows)
+        if len(data_rows) < 2:
+            messagebox.showwarning("Замало суб'єктів",
+                "Потрібно щонайменше 2 суб'єкти (рядки з даними)."); return
+        k = len(time_names); n_raw = len(data_rows)
         data = np.array(data_rows, dtype=float)
 
-        # Remove subjects with any NaN (listwise deletion)
+        # Видалення рядків з пропущеними значеннями
         mask = ~np.any(np.isnan(data), axis=1)
-        data = data[mask]; subjects = [s for s, m in zip(subjects, mask) if m]; n = len(data)
-        if n < 2: messagebox.showwarning("","Not enough complete cases."); return
+        data = data[mask]
+        subjects = [s for s, m in zip(subjects, mask) if m]
+        n = len(data)
+        if n < 2:
+            messagebox.showwarning("Замало повних даних",
+                f"Після видалення рядків з пропущеними значеннями "
+                f"залишилось {n} суб'єктів.\n"
+                f"Потрібно щонайменше 2 повних рядки."); return
+        if n_raw > n:
+            messagebox.showinfo("Пропущені дані",
+                f"Видалено {n_raw-n} рядків з пропущеними значеннями.\n"
+                f"Аналіз виконано на {n} суб'єктах.")
 
-        # Mauchly's test of sphericity (simplified — compare to Greenhouse-Geisser)
-        grand_mean = np.mean(data)
-        subj_means = np.mean(data, axis=1)
-        time_means = np.mean(data, axis=0)
+        # ── ANOVA з повторними вимірами ──────────────────────
+        grand_mean  = np.mean(data)
+        subj_means  = np.mean(data, axis=1)
+        time_means  = np.mean(data, axis=0)
 
         SS_total = float(np.sum((data - grand_mean)**2))
         SS_subj  = k * float(np.sum((subj_means - grand_mean)**2))
         SS_time  = n * float(np.sum((time_means - grand_mean)**2))
         SS_error = SS_total - SS_subj - SS_time
 
-        df_time = k - 1; df_subj = n - 1; df_err = (k-1)*(n-1)
-        MS_time = SS_time / df_time if df_time > 0 else np.nan
-        MS_err  = SS_error / df_err if df_err > 0 else np.nan
-        F = MS_time / MS_err if (not math.isnan(MS_err) and MS_err > 0) else np.nan
+        df_time = k-1; df_subj = n-1; df_err = (k-1)*(n-1)
+        MS_time = SS_time/df_time if df_time > 0 else np.nan
+        MS_err  = SS_error/df_err if df_err > 0 else np.nan
+        F = MS_time/MS_err if (not math.isnan(MS_err) and MS_err > 1e-12) else np.nan
         p = float(1 - f_dist.cdf(F, df_time, df_err)) if not math.isnan(F) else np.nan
 
-        R2 = (SS_time + SS_subj) / SS_total if SS_total > 0 else np.nan
-        eta2_time = SS_time / (SS_time + SS_error) if (SS_time + SS_error) > 0 else np.nan
+        eta2_time = SS_time/(SS_time+SS_error) if (SS_time+SS_error) > 0 else np.nan
+        R2 = (SS_time+SS_subj)/SS_total if SS_total > 0 else np.nan
 
-        # Normality of differences
+        alpha = ALPHA  # використовуємо глобальний
+
+        # Нормальність різниць
         sw_ps = []
         for j in range(k):
             for jj in range(j+1, k):
-                diff = data[:, j] - data[:, jj]
+                diff = data[:,j] - data[:,jj]
                 try: _, p_sw = shapiro(diff)
                 except Exception: p_sw = np.nan
                 sw_ps.append(p_sw)
-        min_sw = min((p for p in sw_ps if not math.isnan(p)), default=np.nan)
+        min_sw = min((pp for pp in sw_ps if not math.isnan(pp)), default=np.nan)
+        norm_ok = not math.isnan(min_sw) and min_sw > 0.05
 
-        if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
-        win = tk.Toplevel(self.win); win.title("Повторні виміри — Результати"); win.geometry("1000x680")
+        if not HAS_MPL:
+            messagebox.showwarning("","matplotlib недоступний."); return
 
-        res_txt = (f"Дисперсійний аналіз повторних вимірювань\n"
-                   f"Суб'єктів: {n},  Часових точок: {k}\n\n"
-                   f"SS_time  = {fmt(SS_time,4)},  df = {df_time},  MS = {fmt(MS_time,4)}\n"
-                   f"SS_subj  = {fmt(SS_subj,4)},  df = {df_subj}\n"
-                   f"SS_error = {fmt(SS_error,4)},  df = {df_err},  MS = {fmt(MS_err,4)}\n\n"
-                   f"F({df_time},{df_err}) = {fmt(F,4)},  p = {fmt(p,4)}"
-                   f"  {'✓ значуще' if not math.isnan(p) and p < ALPHA else '✗ незначуще'}\n"
-                   f"Partial η² (time) = {fmt(eta2_time,4)}  ({eta2_label(eta2_time)})\n"
-                   f"Shapiro–Wilk (differences, min p) = {fmt(min_sw,4)}"
-                   f"  {'✓ нормальний' if not math.isnan(min_sw) and min_sw > 0.05 else '⚠ перевірте нормальність'}")
+        # ── Вікно результатів ─────────────────────────────────
+        win = tk.Toplevel(self.win)
+        win.title("Повторні виміри — Результати")
+        win.geometry("1020x720"); set_icon(win)
 
-        tk.Label(win, text=res_txt, font=("Times New Roman",11), justify="left").pack(padx=8, pady=6, anchor="w")
+        # Toolbar результатів
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
+        self._rm_graph_frame = tk.Frame(win)  # зберігаємо для перебудови
 
-        # Plot means ± SE
-        fig = Figure(figsize=(9, 4), dpi=100)
-        ax = fig.add_subplot(111)
-        means_ = np.mean(data, axis=0); ses_ = np.std(data, axis=0, ddof=1) / math.sqrt(n)
-        ax.errorbar(range(k), means_, yerr=ses_, fmt="o-", capsize=5,
-                    color="#4c72b0", ecolor="#c62828", linewidth=2, markersize=7)
-        ax.set_xticks(range(k)); ax.set_xticklabels(time_names)
-        ax.set_xlabel("Часова точка / Умова"); ax.set_ylabel("Середнє ± СП")
-        ax.set_title("Повторні виміри: динаміка середніх"); ax.yaxis.grid(True, alpha=0.3)
-        fig.tight_layout()
-        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        tk.Button(tb, text="📋 Копіювати графік", font=("Times New Roman",11),
+                  command=lambda: self._copy_rm()).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування графіка", font=("Times New Roman",11),
+                  command=lambda: self._restyle_rm(win, time_names, data, n)
+                  ).pack(side=tk.LEFT, padx=4)
 
-        # Post-hoc (Bonferroni-corrected paired t-tests)
-        if not math.isnan(p) and p < ALPHA:
+        # Прокручуваний звіт
+        scroll_area = tk.Frame(win); scroll_area.pack(fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(scroll_area, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        sc = tk.Canvas(scroll_area, yscrollcommand=vsb.set, highlightthickness=0)
+        sc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=sc.yview)
+        body = tk.Frame(sc); sc.create_window((0,0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: sc.configure(scrollregion=sc.bbox("all")))
+        win.bind("<MouseWheel>", lambda e: sc.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        def _head(txt):
+            tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
+                     bg="#e8eeff", anchor="w", padx=8, pady=3
+                     ).pack(fill=tk.X, padx=6, pady=(8,2))
+        def _txt(txt, color="#000000"):
+            tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
+                     anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
+
+        _head("Дисперсійний аналіз повторних вимірювань")
+        _txt(f"Суб'єктів (n): {n}   |   Часових точок (k): {k}   |   α = {alpha}")
+
+        # ANOVA таблиця
+        _head("Таблиця дисперсійного аналізу")
+        anova_rows = [
+            ["Час (within)",  fmt(SS_time,4),  str(df_time), fmt(MS_time,4),
+             fmt(F,4), fmt(p,4),
+             ("✓ значущий" if p < alpha else "✗ незначущий") if not math.isnan(p) else "–"],
+            ["Суб'єкти",      fmt(SS_subj,4),  str(df_subj), "–", "–", "–", "виноситься окремо"],
+            ["Похибка",       fmt(SS_error,4), str(df_err),  fmt(MS_err,4), "–", "–", ""],
+            ["Загальна",      fmt(SS_total,4), str(df_time+df_subj+df_err), "–", "–", "–", ""],
+        ]
+        frm_a, _ = make_tv(body, ["Джерело","SS","df","MS","F","p","Висновок"], anova_rows)
+        frm_a.pack(fill=tk.X, padx=8, pady=(2,6))
+
+        # Показники
+        _head("Показники якості")
+        sig_color = "#1a6b1a" if not math.isnan(p) and p < alpha else "#c62828"
+        _txt(f"F({df_time}, {df_err}) = {fmt(F,4)},  p = {fmt(p,4)}  "
+             f"{'✓ є значуща динаміка у часі' if not math.isnan(p) and p < alpha else '✗ динаміка незначуща'}",
+             sig_color)
+        _txt(f"Partial η² (час) = {fmt(eta2_time,4)}  →  {eta2_label(eta2_time)}")
+        _txt(f"R² (загальний) = {fmt(R2,4)}  (частка варіації пояснена часом і суб'єктами)")
+        sw_color = "#000000" if norm_ok else "#c62828"
+        _txt(f"Shapiro–Wilk (різниці, мін. p) = {fmt(min_sw,4)}  "
+             f"{'✓ нормальні' if norm_ok else '⚠ перевірте нормальність — розгляньте тест Фрідмана'}",
+             sw_color)
+
+        # Середні по часових точках
+        _head("Середні по часових точках")
+        means_tbl = [[time_names[j], fmt(float(np.mean(data[:,j])),4),
+                      fmt(float(np.std(data[:,j],ddof=1)),4),
+                      fmt(float(np.std(data[:,j],ddof=1)/math.sqrt(n)),4)]
+                     for j in range(k)]
+        frm_m, _ = make_tv(body, ["Часова точка","Середнє","SD","СП (SE)"], means_tbl)
+        frm_m.pack(fill=tk.X, padx=8, pady=(2,6))
+
+        # Графік
+        self._rm_graph_frame.pack(fill=tk.X, padx=8, pady=4, in_=body)
+        self._redraw_rm(win, time_names, data, n)
+
+        # Post-hoc
+        if not math.isnan(p) and p < alpha:
+            _head(f"Пост-хок порівняння (Бонферроні, α_скор = {fmt(alpha*2/max(k*(k-1),1),4)})")
+            from scipy.stats import ttest_rel
             ph_rows = []
             mt = k*(k-1)/2
             for j in range(k):
                 for jj in range(j+1, k):
-                    from scipy.stats import ttest_rel
                     st, p_t = ttest_rel(data[:,j], data[:,jj])
                     p_adj = min(1., float(p_t)*mt)
-                    ph_rows.append([f"{time_names[j]} vs {time_names[jj]}",
-                                    fmt(float(st),4), fmt(p_adj,4),
-                                    "sig. " + sig_mark(p_adj) if p_adj < ALPHA else "–"])
-            frm, _ = make_tv(win, ["Пара","t","p (Bonf.)","Висновок"], ph_rows)
-            frm.pack(fill=tk.X, padx=8, pady=4)
+                    mark = "✓ " + sig_mark(p_adj) if p_adj < alpha else "–"
+                    ph_rows.append([f"{time_names[j]}  vs  {time_names[jj]}",
+                                    fmt(float(np.mean(data[:,j]-data[:,jj])),4),
+                                    fmt(float(st),4), fmt(p_adj,4), mark])
+            frm_ph, _ = make_tv(body,
+                ["Пара","Різниця середніх","t","p (Bonf.)","Висновок"], ph_rows)
+            frm_ph.pack(fill=tk.X, padx=8, pady=(2,10))
+        else:
+            _txt("Post-hoc аналіз не виконується при незначущому F.", "#888")
+
+    def _copy_rm(self):
+        if self._rm_fig is None:
+            messagebox.showwarning("","Спочатку виконайте аналіз."); return
+        ok, msg = _copy_fig_to_clipboard(self._rm_fig)
+        if ok: messagebox.showinfo("","Графік скопійовано.\nВставте у Word через Ctrl+V.")
+        else:   messagebox.showwarning("",f"Помилка: {msg}")
+
+
 
 
 # ═══════════════════════════════════════════════════════════════
