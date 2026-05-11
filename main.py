@@ -6422,6 +6422,9 @@ class RepeatedMeasuresWindow:
         sm.add_command(label="Додати стовпець",    command=self._add_col)
         sm.add_command(label="Видалити стовпець",  command=self._del_col)
         sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
+        sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         mb2["menu"] = sm
 
@@ -6543,8 +6546,60 @@ class RepeatedMeasuresWindow:
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
 
-    # ── Вставка / Довідка ────────────────────────────────────
-    def _paste(self):
+    def _save_proj(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".sadp",
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
+            title="Зберегти проект повторних вимірювань")
+        if not path: return
+        d = {
+            "type": "repeated_measures",
+            "version": APP_VER,
+            "col_vars": [v.get() for v in self.col_vars],
+            "rows_data": [[e.get() for e in row] for row in self.entries],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo("Збережено",
+                f"Проект збережено:\n{path}\n\n"
+                "При наступному відкритті завантажте цей файл і\n"
+                "додайте нові стовпці для наступних дат вимірювань.")
+        except Exception as ex:
+            messagebox.showerror("Помилка збереження", str(ex))
+
+    def _load_proj(self):
+        path = filedialog.askopenfilename(
+            parent=self.win,
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
+            title="Відкрити проект повторних вимірювань")
+        if not path: return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception as ex:
+            messagebox.showerror("Помилка відкриття", str(ex)); return
+        col_vars = d.get("col_vars", [])
+        rows_data = d.get("rows_data", [])
+        # Розширюємо таблицю якщо потрібно
+        n_cols_needed = 2 + len(col_vars)
+        while self.cols_n < n_cols_needed: self._add_col()
+        # Завантажуємо назви часових точок
+        for i, nm in enumerate(col_vars):
+            if i < len(self.col_vars): self.col_vars[i].set(nm)
+        # Завантажуємо дані
+        while len(self.entries) < len(rows_data): self._add_row()
+        for i, row_vals in enumerate(rows_data):
+            for j, v in enumerate(row_vals):
+                if j < self.cols_n:
+                    self.entries[i][j].delete(0, tk.END)
+                    self.entries[i][j].insert(0, v)
+        messagebox.showinfo("Завантажено",
+            f"Проект завантажено: {path}\n\n"
+            "Щоб додати нові дати: натисніть ⚙ → «Додати стовпець»\n"
+            "і перейменуйте заголовок подвійним кліком.")
+
+
         try: data = self.win.clipboard_get()
         except Exception:
             messagebox.showwarning("Буфер порожній",
@@ -7044,6 +7099,9 @@ class MixedRepeatedWindow:
         sm.add_command(label="Додати стовпець",    command=self._add_col)
         sm.add_command(label="Видалити стовпець",  command=self._del_col)
         sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
+        sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear)
         mb2["menu"] = sm
 
@@ -7167,7 +7225,60 @@ class MixedRepeatedWindow:
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
 
-    def _paste(self):
+    def _save_proj(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".sadp",
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
+            title="Зберегти проект Змішаного Repeated Measures")
+        if not path: return
+        d = {
+            "type": "mixed_repeated_measures",
+            "version": APP_VER,
+            "time_vars": [v.get() for v in self.time_vars],
+            "rows_data": [[e.get() for e in row] for row in self.entries],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo("Збережено",
+                f"Проект збережено:\n{path}\n\n"
+                "При наступному відкритті завантажте цей файл і\n"
+                "додайте нові стовпці (дати) через ⚙ → «Додати стовпець».")
+        except Exception as ex:
+            messagebox.showerror("Помилка збереження", str(ex))
+
+    def _load_proj(self):
+        path = filedialog.askopenfilename(
+            parent=self.win,
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
+            title="Відкрити проект Змішаного Repeated Measures")
+        if not path: return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception as ex:
+            messagebox.showerror("Помилка відкриття", str(ex)); return
+        time_vars = d.get("time_vars", [])
+        rows_data = d.get("rows_data", [])
+        # Розширюємо до потрібної кількості стовпців (2 фіксовані + дати)
+        n_cols_needed = 2 + len(time_vars)
+        while self.cols_n < n_cols_needed: self._add_col()
+        # Назви дат
+        for i, nm in enumerate(time_vars):
+            if i < len(self.time_vars): self.time_vars[i].set(nm)
+        # Дані
+        while len(self.entries) < len(rows_data): self._add_row()
+        for i, row_vals in enumerate(rows_data):
+            for j, v in enumerate(row_vals):
+                if j < self.cols_n:
+                    self.entries[i][j].delete(0, tk.END)
+                    self.entries[i][j].insert(0, v)
+        messagebox.showinfo("Завантажено",
+            f"Проект завантажено.\n\n"
+            "Щоб додати нові дати вимірювань:\n"
+            "  ⚙ → «Додати стовпець» → подвійний клік на заголовку → назва дати.")
+
+
         try: data = self.win.clipboard_get()
         except Exception:
             messagebox.showwarning("","Скопіюйте дані з Excel і спробуйте знову."); return
@@ -10335,22 +10446,29 @@ def _SADTk_new_init(self, root):
     bf2 = tk.Frame(sect2, bg="white"); bf2.pack(pady=6)
 
     btn_cfg = [
-        ("Descriptive\nStatistics",   "#1a6b1a", lambda: DescriptiveWindow(root, self.graph_settings)),
-        ("t-Test /\nMann-Whitney",     "#1a6b1a", lambda: TTestWindow(root)),
-        ("Correlation\nAnalysis",      "#1a4b8c", lambda: CorrelationWindow(root, self.graph_settings)),
-        ("Regression\nAnalysis",       "#4b1a8c", lambda: RegressionWindow(root, self.graph_settings)),
-        ("ANCOVA",                     "#4b1a8c", lambda: AncovaWindow(root, self.graph_settings)),
-        ("MANOVA",                     "#4b1a8c", lambda: ManovaWindow(root, self.graph_settings)),
-        ("Repeated\nMeasures ANOVA",   "#4b1a8c", lambda: RepeatedMeasuresWindow(root, self.graph_settings)),
-        ("Змішаний\nRepeated Measures","#4b1a8c", lambda: MixedRepeatedWindow(root, self.graph_settings)),
-        ("Cluster\nAnalysis",          "#8c4b1a", lambda: ClusterWindow(root, self.graph_settings)),
-        ("PCA",                        "#8c4b1a", lambda: PCAWindow(root, self.graph_settings)),
-        ("Stability\nAnalysis (GxE)",  "#8c1a1a", lambda: StabilityWindow(root, self.graph_settings)),
-        ("Sample Size\nCalculator",    "#555555", lambda: SampleSizeWindow(root)),
+        ("Описова\nстатистика",        "#1a6b1a", "DescriptiveWindow"),
+        ("t-тест /\nМанн-Уітні",       "#1a6b1a", "TTestWindow"),
+        ("Кореляційний\nаналіз",       "#1a4b8c", "CorrelationWindow"),
+        ("Регресійний\nаналіз",        "#4b1a8c", "RegressionWindow"),
+        ("ANCOVA",                     "#4b1a8c", "AncovaWindow"),
+        ("MANOVA",                     "#4b1a8c", "ManovaWindow"),
+        ("Повторні\nвиміри",           "#4b1a8c", "RepeatedMeasuresWindow"),
+        ("Змішаний\nRepeated Measures","#4b1a8c", "MixedRepeatedWindow"),
+        ("Кластерний\nаналіз",         "#8c4b1a", "ClusterWindow"),
+        ("PCA",                        "#8c4b1a", "PCAWindow"),
+        ("Аналіз\nстабільності (GxE)", "#8c1a1a", "StabilityWindow"),
+        ("Розмір\nвибірки",            "#555555", "SampleSizeWindow"),
     ]
-    for i, (txt, col, cmd) in enumerate(btn_cfg):
+    def _make_cmd(cls_name):
+        no_gs = {"TTestWindow","SampleSizeWindow"}
+        if cls_name in no_gs:
+            return lambda cn=cls_name: globals()[cn](root)
+        return lambda cn=cls_name: globals()[cn](root, self.graph_settings)
+    for i, (txt, col, cls_name) in enumerate(btn_cfg):
         tk.Button(bf2, text=txt, width=14, height=2, font=("Times New Roman",11),
-                  bg=col, fg="white", command=cmd).grid(row=i//6, column=i%6, padx=5, pady=4)
+                  bg=col, fg="white",
+                  command=_make_cmd(cls_name)
+                  ).grid(row=i//6, column=i%6, padx=5, pady=4)
 
     # ── Project buttons ──
     pf = tk.Frame(mf, bg="white"); pf.pack(pady=6)
