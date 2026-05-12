@@ -6405,6 +6405,14 @@ class RepeatedMeasuresWindow:
         self._build()
 
     def _build(self):
+        try:
+            self._build_inner()
+        except Exception as e:
+            import traceback
+            messagebox.showerror("Помилка ініціалізації",
+                f"Помилка при побудові вікна:\n{traceback.format_exc()}")
+
+    def _build_inner(self):
         # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
@@ -6476,8 +6484,7 @@ class RepeatedMeasuresWindow:
             row_ = []
             for j in range(self.cols_n):
                 e = tk.Entry(self.inner, width=13 if j==0 else 12,
-                             font=("Times New Roman",11),
-                             highlightthickness=1, highlightbackground="#c0c0c0")
+                             font=("Times New Roman",11))
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
@@ -6505,8 +6512,7 @@ class RepeatedMeasuresWindow:
         i = self.rows_n; row_ = []
         for j in range(self.cols_n):
             e = tk.Entry(self.inner, width=13 if j==0 else 12,
-                         font=("Times New Roman",11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+                         font=("Times New Roman",11))
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
@@ -6705,36 +6711,6 @@ class RepeatedMeasuresWindow:
                   font=rb_f, command=apply).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", font=rb_f, command=dlg.destroy).pack(side=tk.LEFT)
         center_win(dlg)
-
-    def _redraw_rm(self, win, time_names, data_arr, n):
-        """Перебудовує графік у вже відкритому вікні."""
-        if not hasattr(self, '_rm_graph_frame'): return
-        for w in self._rm_graph_frame.winfo_children(): w.destroy()
-        gs = self._rm_gs
-        k = len(time_names)
-        fig = Figure(figsize=(9, 4), dpi=100)
-        ax  = fig.add_subplot(111)
-        means_ = np.mean(data_arr, axis=0)
-        ses_   = np.std(data_arr, axis=0, ddof=1) / math.sqrt(n)
-        ax.errorbar(range(k), means_, yerr=ses_,
-                    fmt=gs["marker"]+"-", capsize=5,
-                    color=gs["line_color"], ecolor=gs["err_color"],
-                    linewidth=gs["linewidth"], markersize=gs["markersize"])
-        ax.set_xticks(range(k))
-        ax.set_xticklabels(time_names, fontsize=gs["font_size"],
-                           fontfamily=gs["font_family"])
-        ax.set_xlabel("Часова точка / Умова",
-                      fontsize=gs["font_size"], fontfamily=gs["font_family"])
-        ax.set_ylabel("Середнє ± СП",
-                      fontsize=gs["font_size"], fontfamily=gs["font_family"])
-        ax.set_title("Повторні виміри: динаміка середніх",
-                     fontsize=gs["font_size"]+1, fontfamily=gs["font_family"])
-        if gs["show_grid"]: ax.yaxis.grid(True, linestyle="--", alpha=0.35)
-        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-        fig.tight_layout()
-        self._rm_fig = fig
-        cv = FigureCanvasTkAgg(fig, master=self._rm_graph_frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     # ── Виконання аналізу ─────────────────────────────────────
     def _run(self):
@@ -7184,8 +7160,7 @@ class MixedRepeatedWindow:
         i = self.rows_n; row_ = []
         for j in range(self.cols_n):
             e = tk.Entry(self.inner, width=13 if j<2 else 12,
-                         font=("Times New Roman",11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+                         font=("Times New Roman",11))
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
