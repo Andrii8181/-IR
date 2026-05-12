@@ -7752,6 +7752,11 @@ class MixedRepeatedWindow:
         center_win(dlg)
 
 
+# ═══════════════════════════════════════════════════════════════
+# STABILITY ANALYSIS  (Eberhart–Russell + GGE biplot)
+# ═══════════════════════════════════════════════════════════════
+class StabilityWindow:
+    """Аналіз стабільності генотипів (GxE взаємодія)."""
 
     def __init__(self, parent, gs):
         self.win = tk.Toplevel(parent); self.win.title("Аналіз стабільності (GxE)")
