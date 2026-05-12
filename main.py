@@ -10446,28 +10446,27 @@ def _SADTk_new_init(self, root):
     bf2 = tk.Frame(sect2, bg="white"); bf2.pack(pady=6)
 
     btn_cfg = [
-        ("Описова\nстатистика",        "#1a6b1a", "DescriptiveWindow"),
-        ("t-тест /\nМанн-Уітні",       "#1a6b1a", "TTestWindow"),
-        ("Кореляційний\nаналіз",       "#1a4b8c", "CorrelationWindow"),
-        ("Регресійний\nаналіз",        "#4b1a8c", "RegressionWindow"),
-        ("ANCOVA",                     "#4b1a8c", "AncovaWindow"),
-        ("MANOVA",                     "#4b1a8c", "ManovaWindow"),
-        ("Повторні\nвиміри",           "#4b1a8c", "RepeatedMeasuresWindow"),
-        ("Змішаний\nRepeated Measures","#4b1a8c", "MixedRepeatedWindow"),
-        ("Кластерний\nаналіз",         "#8c4b1a", "ClusterWindow"),
-        ("PCA",                        "#8c4b1a", "PCAWindow"),
-        ("Аналіз\nстабільності (GxE)", "#8c1a1a", "StabilityWindow"),
-        ("Розмір\nвибірки",            "#555555", "SampleSizeWindow"),
+        ("Описова\nстатистика",        "#1a6b1a", DescriptiveWindow,        True),
+        ("t-тест /\nМанн-Уітні",       "#1a6b1a", TTestWindow,              False),
+        ("Кореляційний\nаналіз",       "#1a4b8c", CorrelationWindow,        True),
+        ("Регресійний\nаналіз",        "#4b1a8c", RegressionWindow,         True),
+        ("ANCOVA",                     "#4b1a8c", AncovaWindow,             True),
+        ("MANOVA",                     "#4b1a8c", ManovaWindow,             True),
+        ("Повторні\nвиміри",           "#4b1a8c", RepeatedMeasuresWindow,   True),
+        ("Змішаний\nRepeated Measures","#4b1a8c", MixedRepeatedWindow,      True),
+        ("Кластерний\nаналіз",         "#8c4b1a", ClusterWindow,            True),
+        ("PCA",                        "#8c4b1a", PCAWindow,                True),
+        ("Аналіз\nстабільності (GxE)", "#8c1a1a", StabilityWindow,          True),
+        ("Розмір\nвибірки",            "#555555", SampleSizeWindow,         False),
     ]
-    def _make_cmd(cls_name):
-        no_gs = {"TTestWindow","SampleSizeWindow"}
-        if cls_name in no_gs:
-            return lambda cn=cls_name: globals()[cn](root)
-        return lambda cn=cls_name: globals()[cn](root, self.graph_settings)
-    for i, (txt, col, cls_name) in enumerate(btn_cfg):
+    def _make_cmd(cls, needs_gs):
+        if needs_gs:
+            return lambda c=cls: c(root, self.graph_settings)
+        return lambda c=cls: c(root)
+    for i, (txt, col, cls, needs_gs) in enumerate(btn_cfg):
         tk.Button(bf2, text=txt, width=14, height=2, font=("Times New Roman",11),
                   bg=col, fg="white",
-                  command=_make_cmd(cls_name)
+                  command=_make_cmd(cls, needs_gs)
                   ).grid(row=i//6, column=i%6, padx=5, pady=4)
 
     # ── Project buttons ──
