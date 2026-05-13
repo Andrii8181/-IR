@@ -5055,100 +5055,265 @@ class RegressionWindow:
 # SAMPLE SIZE CALCULATOR
 # ═══════════════════════════════════════════════════════════════
 class SampleSizeWindow:
+    """Калькулятор розміру вибірки та статистичної потужності."""
+
+    HELP_TEXT = """
+КАЛЬКУЛЯТОР РОЗМІРУ ВИБІРКИ — ІНСТРУКЦІЯ
+═════════════════════════════════════════
+
+ДЛЯ ЧОГО ЦЕЙ КАЛЬКУЛЯТОР?
+  Перед початком досліду відповідає на питання:
+  "Скільки повторностей (r) мені потрібно щоб надійно
+  виявити реальну різницю між варіантами?"
+
+  Або навпаки:
+  "Якщо я маю r повторностей — яка ймовірність
+  що я виявлю різницю якщо вона є?"
+
+ПАРАМЕТРИ:
+
+  Дизайн:
+    CRD — повністю рандомізований дослід
+    RCBD — рандомізований повний блок
+    Split-plot — розщеплені ділянки
+
+  α (рівень значущості):
+    Ймовірність хибного виявлення різниці (помилка I роду).
+    Стандарт: 0.05 (5%).
+
+  Потужність (1-β):
+    Ймовірність виявити реальну різницю якщо вона існує.
+    Стандарт: 0.80 (80%). Краще: 0.90 (90%).
+
+  δ (очікувана різниця):
+    Мінімальна різниця між варіантами яку важливо виявити.
+    В одиницях вашого показника (т/га, см, %).
+    Наприклад: δ = 0.5 т/га означає що хочемо виявити різницю ≥ 0.5 т/га.
+
+  σ (стандартне відхилення):
+    Варіабельність вашого показника.
+    Візьміть з попередніх дослідів або пілотного досліду.
+    Або: σ ≈ CV% × Середнє / 100.
+
+  k (кількість варіантів):
+    Скільки варіантів (обробок, сортів) у досліді.
+
+  r (кількість повторностей):
+    Залиште ПОРОЖНІМ → калькулятор знайде мінімальне r.
+    Введіть число → калькулятор розрахує досягнуту потужність.
+
+ПРИКЛАД:
+  Дослід з 4 дозами добрива, очікуємо різницю ≥ 0.5 т/га,
+  SD з попередніх дослідів = 0.8 т/га.
+  Введіть: k=4, δ=0.5, σ=0.8, α=0.05, потужність=0.80.
+  Залиште r порожнім.
+  Результат покаже скільки повторностей потрібно.
+
+ІНТЕРПРЕТАЦІЯ РЕЗУЛЬТАТУ:
+  r = 4 → потрібно 4 повторності на кожен варіант.
+  Загальна кількість = k × r ділянок у досліді.
+  Досягнута потужність = 0.83 → 83% шанс виявити різницю.
+
+ЯКЩО ПОТРІБНО ЗАБАГАТО ПОВТОРНОСТЕЙ:
+  Збільшіть δ (нижня межа практично значущої різниці)
+  або зменшіть σ (точніші вимірювання, однорідніші умови).
+"""
+
     def __init__(self, parent):
-        self.win = tk.Toplevel(parent); self.win.title("Калькулятор розміру вибірки та потужності")
-        self.win.geometry("580x500"); self.win.resizable(False, False); set_icon(self.win)
+        self.win = tk.Toplevel(parent)
+        self.win.title("Калькулятор розміру вибірки та потужності")
+        self.win.geometry("680x700")
+        self.win.resizable(True, True)
+        set_icon(self.win)
         self._build()
 
     def _build(self):
-        frm = tk.Frame(self.win, padx=16, pady=14); frm.pack(fill=tk.BOTH, expand=True)
-        tk.Label(frm, text="Калькулятор розміру вибірки та статистичної потужності",
-                 font=("Times New Roman",13,"bold")).grid(row=0,column=0,columnspan=3,pady=(0,12))
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Button(top, text="▶ Розрахувати", bg="#c62828", fg="white",
+                  font=("Times New Roman",13),
+                  command=self._calc).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+
+        pfrm = tk.LabelFrame(self.win, text="Параметри досліду",
+                             font=("Times New Roman",11,"bold"),
+                             padx=12, pady=8)
+        pfrm.pack(fill=tk.X, padx=10, pady=(0,6))
         rf = ("Times New Roman",12)
+
         params = [
-            ("Дизайн:", None, "design"),
-            ("α (рівень значущості):", "0.05", "alpha"),
-            ("Потужність (1-β):", "0.80", "power"),
-            ("Очікувана різниця (δ):", "", "delta"),
-            ("Стандартне відхилення (σ):", "", "sigma"),
-            ("Кількість варіантів (k):", "3", "k"),
-            ("Кількість повторностей (r) — залиште порожнім для розрахунку:", "", "r"),
+            ("Дизайн досліду:",                     None,   "design"),
+            ("α — рівень значущості:",              "0.05", "alpha"),
+            ("Потужність (1-β):",                   "0.80", "power"),
+            ("δ — мінімальна різниця яку виявити:", "",     "delta"),
+            ("σ — стандартне відхилення:",          "",     "sigma"),
+            ("k — кількість варіантів:",            "3",    "k"),
+            ("r — повторностей (порожньо→знайти):", "",     "r"),
         ]
+        hints = {
+            "alpha": "0.01 / 0.05 / 0.10",
+            "power": "0.80 / 0.90",
+            "delta": "в одиницях показника (т/га, см...)",
+            "sigma": "SD з попередніх дослідів",
+            "k":     "кількість варіантів/сортів",
+            "r":     "порожньо = автоматичний розрахунок",
+        }
         self.vars = {}
-        row_i = 1
-        for label, default, key in params:
-            tk.Label(frm, text=label, font=rf).grid(row=row_i, column=0, sticky="w", pady=4)
+        for ri, (label, default, key) in enumerate(params):
+            tk.Label(pfrm, text=label, font=rf, anchor="w"
+                     ).grid(row=ri, column=0, sticky="w", pady=3)
             if key == "design":
                 var = tk.StringVar(value="CRD")
-                ttk.Combobox(frm, textvariable=var, values=["CRD","RCBD","Split-plot"],
-                             state="readonly", width=16).grid(row=row_i, column=1, sticky="w", padx=6)
+                ttk.Combobox(pfrm, textvariable=var,
+                             values=["CRD","RCBD","Split-plot"],
+                             state="readonly", width=16,
+                             font=rf).grid(row=ri, column=1, sticky="w", padx=6)
             else:
                 var = tk.StringVar(value=default or "")
-                tk.Entry(frm, textvariable=var, width=14, font=rf).grid(row=row_i,column=1,sticky="w",padx=6)
-            self.vars[key] = var; row_i += 1
+                tk.Entry(pfrm, textvariable=var, width=14,
+                         font=rf).grid(row=ri, column=1, sticky="w", padx=6)
+                if key in hints:
+                    tk.Label(pfrm, text=hints[key],
+                             font=("Times New Roman",9), fg="#888"
+                             ).grid(row=ri, column=2, sticky="w", padx=4)
+            self.vars[key] = var
 
-        tk.Button(frm, text="▶ Розрахувати", bg="#c62828", fg="white", font=rf,
-                  command=self._calc).grid(row=row_i, column=0, columnspan=2, pady=14)
-        self.res_var = tk.StringVar()
-        tk.Label(frm, textvariable=self.res_var, font=("Times New Roman",11),
-                 justify="left", wraplength=540).grid(row=row_i+1, column=0, columnspan=3, sticky="w")
+        res_frm = tk.LabelFrame(self.win, text="Результат",
+                                font=("Times New Roman",11,"bold"),
+                                padx=8, pady=6)
+        res_frm.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
+        vsb = ttk.Scrollbar(res_frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.res_txt = tk.Text(res_frm, wrap="word",
+                               font=("Courier New",11),
+                               yscrollcommand=vsb.set,
+                               relief=tk.FLAT, bg="#f8f8f8",
+                               padx=8, pady=6, cursor="arrow",
+                               state="disabled")
+        self.res_txt.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=self.res_txt.yview)
+
+    def _set_result(self, text, color="#000000"):
+        self.res_txt.configure(state="normal")
+        self.res_txt.delete("1.0", tk.END)
+        self.res_txt.insert("1.0", text)
+        self.res_txt.configure(state="disabled", fg=color)
+
+    def _show_help(self):
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — Калькулятор вибірки")
+        win.geometry("660x640"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
 
     def _calc(self):
         try:
-            alpha = float(self.vars["alpha"].get())
-            power = float(self.vars["power"].get())
-            delta = float(self.vars["delta"].get())
-            sigma = float(self.vars["sigma"].get())
-            k = int(self.vars["k"].get())
+            alpha  = float(self.vars["alpha"].get())
+            power  = float(self.vars["power"].get())
+            delta  = float(self.vars["delta"].get())
+            sigma  = float(self.vars["sigma"].get())
+            k      = int(self.vars["k"].get())
             design = self.vars["design"].get()
-            r_str = self.vars["r"].get().strip()
+            r_str  = self.vars["r"].get().strip()
         except ValueError:
-            self.res_var.set("Будь ласка, заповніть усі числові поля."); return
+            self._set_result(
+                "Заповніть всі числові поля!\n\n"
+                "delta i sigma — в одиницях вашого показника.\n"
+                "k — ціле число >= 2.", "#c62828")
+            return
 
         if delta <= 0 or sigma <= 0 or k < 2:
-            self.res_var.set("δ та σ мають бути додатними; k ≥ 2."); return
+            self._set_result("delta та sigma мають бути > 0; k >= 2.", "#c62828"); return
+        if not 0 < alpha < 1 or not 0 < power < 1:
+            self._set_result("alpha і потужність мають бути між 0 і 1.", "#c62828"); return
 
-        z_alpha = float(norm.ppf(1 - alpha/2))
-        z_beta  = float(norm.ppf(power))
+        from scipy.stats import ncf
+        lines = []; sep = "-" * 44
 
-        lines = []
         if r_str:
-            # given r — compute power
-            r = int(r_str)
-            # approximate formula for ANOVA power
+            try: r = int(r_str)
+            except ValueError:
+                self._set_result("r має бути цілим числом.", "#c62828"); return
+            if r < 2:
+                self._set_result("r має бути >= 2.", "#c62828"); return
+
             lambda_nc = k * r * (delta**2) / (2 * sigma**2)
-            from scipy.stats import ncf
             F_crit = float(f_dist.ppf(1-alpha, k-1, k*(r-1)))
-            achieved_power = float(1 - ncf.cdf(F_crit, k-1, k*(r-1), lambda_nc))
-            lines.append(f"Дизайн: {design},  k={k} варіантів,  r={r} повторностей")
-            lines.append(f"Нецентральність λ = {fmt(lambda_nc,3)}")
-            lines.append(f"F_крит(α={alpha}) = {fmt(F_crit,3)}")
-            lines.append(f"Досягнута потужність (1-β) = {fmt(achieved_power,4)}")
-            lines.append(f"\n{'✓ Sufficient power' if achieved_power >= power else '✗ Insufficient power — increase replications'}")
+            ap = float(1 - ncf.cdf(F_crit, k-1, k*(r-1), lambda_nc))
+
+            lines.append("РЕЖИМ: Розрахунок потужності при заданому r")
+            lines.append(sep)
+            lines.append(f"Дизайн: {design}  |  k={k}  |  r={r}")
+            lines.append(f"delta={delta}  |  sigma={sigma}  |  alpha={alpha}")
+            lines.append(sep)
+            lines.append(f"Нецентральність lambda = {fmt(lambda_nc,3)}")
+            lines.append(f"F критичне (alpha={alpha}) = {fmt(F_crit,3)}")
+            lines.append(f"Досягнута потужність (1-beta) = {fmt(ap,4)}")
+            lines.append("")
+            if ap >= power:
+                lines.append(f"OK Потужність ДОСТАТНЯ: {fmt(ap*100,1)}% >= {power*100:.0f}%")
+                lines.append(f"При r={r} ви маєте {fmt(ap*100,1)}% шанс")
+                lines.append(f"виявити різницю delta>={delta} якщо вона є.")
+            else:
+                lines.append(f"НЕДОСТАТНЯ: {fmt(ap*100,1)}% < {power*100:.0f}%")
+                lines.append("Збільшіть r або delta, або зменшіть sigma.")
+            if design == "RCBD":
+                lines.append(f"\nRCBD: {r} блоків x {k} варіантів = {k*r} ділянок")
+            elif design == "Split-plot":
+                lines.append(f"\nSplit-plot: >= {r} блоків для WP фактора")
+            else:
+                lines.append(f"\nCRD: {k}x{r} = {k*r} ділянок")
         else:
-            # calculate r needed
-            # iterative: increase r until power achieved
-            from scipy.stats import ncf
-            lines.append(f"Дизайн: {design},  k={k} варіантів")
-            lines.append(f"Ціль: α={alpha}, потужність={power}, δ={delta}, σ={sigma}\n")
+            lines.append("РЕЖИМ: Пошук мінімальних повторностей")
+            lines.append(sep)
+            lines.append(f"Дизайн: {design}  |  k={k} варіантів")
+            lines.append(f"Ціль: alpha={alpha}, потужність>={power}")
+            lines.append(f"delta={delta}, sigma={sigma}")
+            lines.append(sep)
+
             found = False
             for r in range(2, 101):
                 lambda_nc = k * r * (delta**2) / (2 * sigma**2)
-                F_crit = float(f_dist.ppf(1-alpha, k-1, k*(r-1)))
-                pwr = float(1 - ncf.cdf(F_crit, k-1, k*(r-1), lambda_nc))
+                try:
+                    F_crit = float(f_dist.ppf(1-alpha, k-1, k*(r-1)))
+                    pwr = float(1 - ncf.cdf(F_crit, k-1, k*(r-1), lambda_nc))
+                except Exception: continue
                 if pwr >= power:
-                    lines.append(f"Мінімальна кількість повторностей: r = {r}")
-                    lines.append(f"Досягнута потужність = {fmt(pwr,4)}")
-                    lines.append(f"Загальна кількість спостережень = {k*r}")
+                    lines.append(f"OK Мінімальне r = {r} повторностей")
+                    lines.append(f"   Досягнута потужність: {fmt(pwr*100,1)}%")
+                    lines.append(f"   Загальна кількість ділянок: {k}x{r} = {k*r}")
                     if design == "RCBD":
-                        lines.append(f"→ RCBD: {r} повних блоків, по {k} варіантів у кожному")
+                        lines.append(f"   RCBD: {r} блоків, {k} варіантів у кожному")
                     elif design == "Split-plot":
-                        lines.append(f"→ Split-plot: ≥ {r} блоків для whole-plot фактора")
+                        lines.append(f"   Split-plot: >= {r} блоків WP")
+                    lines.append("")
+                    lines.append(f"{'r':>4}  {'Потужність':>12}  Статус")
+                    lines.append("-" * 32)
+                    for rr in range(max(2,r-2), min(r+5, 101)):
+                        lnc2 = k*rr*(delta**2)/(2*sigma**2)
+                        try:
+                            fc2 = float(f_dist.ppf(1-alpha, k-1, k*(rr-1)))
+                            pw2 = float(1 - ncf.cdf(fc2, k-1, k*(rr-1), lnc2))
+                        except Exception: continue
+                        mark = " <-- мінімум" if rr == r else ""
+                        lines.append(f"{rr:>4}  {pw2*100:>10.1f}%{mark}")
                     found = True; break
-            if not found:
-                lines.append("Не вдалося досягти цільової потужності при r ≤ 100.\nРозгляньте збільшення δ або зменшення σ.")
 
-        self.res_var.set("\n".join(lines))
+            if not found:
+                lines.append("Не вдалося знайти r <= 100.")
+                lines.append("Спробуйте: збільшити delta або зменшити sigma.")
+
+        self._set_result("\n".join(lines))
+
 
 
 # ═══════════════════════════════════════════════════════════════
