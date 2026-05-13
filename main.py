@@ -2414,20 +2414,24 @@ class SADTk:
         if col < 0 or col >= self.factors_count: return
         fk = self.factor_keys[col]; old = self.ftitle(fk)
         dlg = tk.Toplevel(self.table_win or self.root)
-        dlg.title("Перейменування"); dlg.resizable(False, False); set_icon(dlg)
-        frm = tk.Frame(dlg, padx=14, pady=12); frm.pack()
-        tk.Label(frm, text=f"Назва для {fk}:").grid(row=0, column=0, sticky="w")
-        e = tk.Entry(frm, width=36, fg="#000000"); e.grid(row=1, column=0, pady=6)
-        e.insert(0, old); e.select_range(0, "end"); e.focus_set()
+        dlg.title("Перейменувати фактор"); dlg.resizable(False, False)
+        set_icon(dlg); dlg.grab_set()
+        tk.Label(dlg, text=f"Назва фактору {fk}:",
+                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+        var = tk.StringVar(value=old)
+        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=28)
+        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def ok():
-            new = e.get().strip()
-            if not new: messagebox.showwarning("", "Назва не може бути порожньою."); return
+            new = var.get().strip()
+            if not new: return
             self._set_ftitle(fk, new)
-            if col < len(self.header_labels): self.header_labels[col].configure(text=new)
+            if col < len(self.header_labels):
+                self.header_labels[col].configure(text=new)
             dlg.destroy()
-        bf = tk.Frame(frm); bf.grid(row=2, column=0, sticky="w", pady=(8, 0))
-        tk.Button(bf, text="OK", width=10, command=ok).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Button(bf, text="Скасувати", width=12, command=dlg.destroy).pack(side=tk.LEFT)
+        tk.Button(dlg, text="OK", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=ok).pack(pady=(4,14))
+        dlg.bind("<Return>", lambda ev: ok())
+        center_win(dlg)
         dlg.update_idletasks(); center_win(dlg); dlg.bind("<Return>", lambda ev: ok()); dlg.grab_set()
 
     def show_design_help(self):
@@ -2460,7 +2464,9 @@ class SADTk:
             if fk not in self.factor_title_map: self._set_ftitle(fk, f"Фактор {fk}")
 
         self.table_win = tw = tk.Toplevel(self.root)
-        tw.title(f"S.A.D. — {fc}-факторний аналіз")
+        factor_names = {1:"Однофакторний", 2:"Двофакторний",
+                        3:"Трифакторний",  4:"Чотирифакторний"}
+        tw.title(f"S.A.D. — {factor_names.get(fc,str(fc)+'-факторний')} дисперсійний аналіз")
         tw.geometry("1280x720"); set_icon(tw)
 
         # ── Menu bar ──────────────────────────────────────────
@@ -2488,19 +2494,36 @@ class SADTk:
 
         # ── Toolbar ───────────────────────────────────────────
         ctl = tk.Frame(tw, padx=6, pady=4); ctl.pack(fill=tk.X)
-        btn_texts = ["Вставити з буфера", "Аналіз даних", "Розробник"]
-        bf_ = fit_font(btn_texts, start=13, min_s=9, target=150)
-        bw, bh = 18, 1
 
-        tk.Button(ctl, text="Вставити з буфера", width=bw, height=bh, font=bf_,
+        tk.Button(ctl, text="▶ Аналіз", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
+                  command=self.analyze).pack(side=tk.LEFT, padx=4)
+
+        # Налаштування — спадне меню
+        mb2 = tk.Menubutton(ctl, text="⚙ Налаштування ▾",
+                            font=("Times New Roman", 11),
+                            relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=4)
+        sm2 = tk.Menu(mb2, tearoff=0)
+        sm2.add_command(label="Додати рядок",      command=self.add_row)
+        sm2.add_command(label="Видалити рядок",    command=self.delete_row)
+        sm2.add_separator()
+        sm2.add_command(label="Додати стовпчик",   command=self.add_column)
+        sm2.add_command(label="Видалити стовпчик", command=self.delete_column)
+        sm2.add_separator()
+        sm2.add_command(label="💾 Зберегти проект", command=self.save_project)
+        sm2.add_command(label="📂 Відкрити проект", command=self.load_project)
+        sm2.add_separator()
+        sm2.add_command(label="🗑 Очистити таблицю", command=self.clear_project)
+        mb2["menu"] = sm2
+
+        tk.Button(ctl, text="Вставити з буфера",
+                  font=("Times New Roman", 11),
                   command=self._paste_from_focus).pack(side=tk.LEFT, padx=4)
-        tk.Button(ctl, text="Аналіз даних", width=bw, height=bh, font=bf_,
-                  bg="#c62828", fg="white", command=self.analyze).pack(side=tk.LEFT, padx=(10, 4))
-        tk.Button(ctl, text="📚 Довідка", width=14, height=bh, font=bf_,
+        tk.Button(ctl, text="📚 Довідка",
                   bg="#1a4b8c", fg="white",
+                  font=("Times New Roman", 11),
                   command=lambda: show_help(self.table_win)).pack(side=tk.LEFT, padx=4)
-        tk.Button(ctl, text="Розробник", width=bw, height=bh, font=bf_,
-                  command=self.show_about).pack(side=tk.RIGHT, padx=4)
 
         # ── Table canvas ──────────────────────────────────────
         self.canvas = tk.Canvas(tw)
@@ -2517,11 +2540,16 @@ class SADTk:
         self.entries = []; self.header_labels = []
         col_names = [self.ftitle(fk) for fk in self.factor_keys] + [f"Повт.{i+1}" for i in range(6)]
         for j, nm in enumerate(col_names):
+            is_factor = j < fc
             lbl = tk.Label(self.inner, text=nm, relief=tk.RIDGE, width=COL_W,
-                           bg="#f0f0f0", fg="#000000", font=("Times New Roman", 12, "bold"))
+                           bg="#1a4b8c" if is_factor else "#2e6b2e",
+                           fg="white",
+                           cursor="hand2" if is_factor else "arrow",
+                           font=("Times New Roman", 12, "bold"))
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             self.header_labels.append(lbl)
-            if j < fc: lbl.bind("<Double-Button-1>", lambda e, c=j: self.rename_factor(c))
+            if is_factor:
+                lbl.bind("<Double-Button-1>", lambda e, c=j: self.rename_factor(c))
         for i in range(self.rows):
             row_e = []
             for j in range(self.cols):
@@ -4527,6 +4555,12 @@ SHAPIRO-WILK:
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
+        tk.Button(top, text="Вставити з буфера",
+                  font=("Times New Roman",11),
+                  command=self._paste).pack(side=tk.LEFT, padx=8)
+        tk.Button(top, text="📋 Копіювати результат",
+                  font=("Times New Roman",11),
+                  command=self._copy_result).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
                   font=("Times New Roman",11),
                   command=self._show_help).pack(side=tk.LEFT, padx=8)
@@ -4626,6 +4660,7 @@ SHAPIRO-WILK:
         alpha = float(self.alpha_var.get())
         x1 = self._parse(self.e1)
         t = self.test_var.get()
+        p = None  # ініціалізуємо явно
         if len(x1) < 2:
             self._set_result("Група 1 потребує ≥ 2 значень.", "#c62828"); return
 
@@ -4701,16 +4736,45 @@ SHAPIRO-WILK:
                     lines.append(f"Cliff's δ = {fmt(d,4)}   ({cliffs_lbl(abs(d))} ефект)")
 
         lines.append(sep)
-        if "p" in dir():
-            sig = not math.isnan(p) and p < alpha
+        if p is not None and not math.isnan(p):
+            sig = p < alpha
             lines.append(
                 f"{'✓ Різниця ЗНАЧУЩА' if sig else '✗ Різниця НЕЗНАЧУЩА'}"
                 f"   (p = {fmt(p,4)},  α = {alpha})")
-            if sig:
-                diff = float(np.mean(x1) - np.mean(self._parse(self.e2))) if t != "one" else float(np.mean(x1) - float(self.e_mu.get()))
+            if sig and t != "one":
+                x2_arr = self._parse(self.e2)
+                diff = float(np.mean(x1) - np.mean(x2_arr)) if len(x2_arr) > 0 else float("nan")
                 lines.append(f"Різниця середніх: {fmt(diff,4)}")
+            elif sig and t == "one":
+                try: mu0v = float(self.e_mu.get())
+                except Exception: mu0v = 0.0
+                lines.append(f"Різниця від μ₀: {fmt(float(np.mean(x1))-mu0v,4)}")
 
         self._set_result("\n".join(lines))
+
+    def _paste(self):
+        """Вставити дані з буфера у Групу 1 або Групу 2 залежно від фокусу."""
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Скопіюйте дані з Excel і спробуйте знову."); return
+        if not data.strip(): return
+        # Нормалізуємо — замінюємо табуляції і пробіли на нові рядки
+        data = data.replace("\t","\n").replace(",",".")
+        w = self.win.focus_get()
+        target = self.e2 if w is self.e2 else self.e1
+        target.delete("1.0", tk.END)
+        target.insert("1.0", data.strip())
+
+    def _copy_result(self):
+        text = self.res_txt.get("1.0", tk.END).strip()
+        if not text:
+            messagebox.showwarning("","Спочатку виконайте аналіз."); return
+        self.win.clipboard_clear()
+        self.win.clipboard_append(text)
+        messagebox.showinfo("Скопійовано","Результат скопійовано у буфер обміну.")
+
+
 
 
 
