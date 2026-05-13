@@ -6552,48 +6552,6 @@ class RepeatedMeasuresWindow:
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
 
-    def _paste(self):
-        try: data = self.win.clipboard_get()
-        except Exception:
-            messagebox.showwarning("Буфер порожній",
-                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
-        if not data.strip(): return
-        pos = (0, 0)
-        w = self.win.focus_get()
-        if isinstance(w, tk.Entry):
-            for i, row_ in enumerate(self.entries):
-                for j, e in enumerate(row_):
-                    if e is w: pos = (i, j); break
-        r0, c0 = pos
-        for ir, line in enumerate(data.splitlines()):
-            if not line.strip(): continue
-            while r0+ir >= len(self.entries): self._add_row()
-            for jc, val in enumerate(line.split("\t")):
-                cc = c0+jc
-                if cc >= self.cols_n: continue
-                self.entries[r0+ir][cc].delete(0, tk.END)
-                self.entries[r0+ir][cc].insert(0, val.strip())
-        path = filedialog.asksaveasfilename(
-            parent=self.win, defaultextension=".sadp",
-            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
-            title="Зберегти проект повторних вимірювань")
-        if not path: return
-        d = {
-            "type": "repeated_measures",
-            "version": APP_VER,
-            "col_vars": [v.get() for v in self.col_vars],
-            "rows_data": [[e.get() for e in row] for row in self.entries],
-        }
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(d, f, ensure_ascii=False, indent=2)
-            messagebox.showinfo("Збережено",
-                f"Проект збережено:\n{path}\n\n"
-                "При наступному відкритті завантажте цей файл і\n"
-                "додайте нові стовпці для наступних дат вимірювань.")
-        except Exception as ex:
-            messagebox.showerror("Помилка збереження", str(ex))
-
     def _save_proj(self):
         path = filedialog.asksaveasfilename(
             parent=self.win, defaultextension=".sadp",
@@ -6615,6 +6573,10 @@ class RepeatedMeasuresWindow:
             messagebox.showerror("Помилка збереження", str(ex))
 
     def _load_proj(self):
+        path = filedialog.askopenfilename(
+            parent=self.win,
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
+            title="Відкрити проект повторних вимірювань")
         if not path: return
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -6623,13 +6585,10 @@ class RepeatedMeasuresWindow:
             messagebox.showerror("Помилка відкриття", str(ex)); return
         col_vars = d.get("col_vars", [])
         rows_data = d.get("rows_data", [])
-        # Розширюємо таблицю якщо потрібно
-        n_cols_needed = 2 + len(col_vars)
+        n_cols_needed = 1 + len(col_vars)
         while self.cols_n < n_cols_needed: self._add_col()
-        # Завантажуємо назви часових точок
         for i, nm in enumerate(col_vars):
             if i < len(self.col_vars): self.col_vars[i].set(nm)
-        # Завантажуємо дані
         while len(self.entries) < len(rows_data): self._add_row()
         for i, row_vals in enumerate(rows_data):
             for j, v in enumerate(row_vals):
@@ -6637,11 +6596,11 @@ class RepeatedMeasuresWindow:
                     self.entries[i][j].delete(0, tk.END)
                     self.entries[i][j].insert(0, v)
         messagebox.showinfo("Завантажено",
-            f"Проект завантажено: {path}\n\n"
-            "Щоб додати нові дати: натисніть ⚙ → «Додати стовпець»\n"
+            "Проект завантажено.\n\n"
+            "Щоб додати нові дати: ⚙ → «Додати стовпець»\n"
             "і перейменуйте заголовок подвійним кліком.")
 
-
+    def _paste(self):
         try: data = self.win.clipboard_get()
         except Exception:
             messagebox.showwarning("Буфер порожній",
@@ -7331,11 +7290,11 @@ class MixedRepeatedWindow:
                     self.entries[i][j].delete(0, tk.END)
                     self.entries[i][j].insert(0, v)
         messagebox.showinfo("Завантажено",
-            f"Проект завантажено.\n\n"
+            "Проект завантажено.\n\n"
             "Щоб додати нові дати вимірювань:\n"
             "  ⚙ → «Додати стовпець» → подвійний клік на заголовку → назва дати.")
 
-
+    def _paste(self):
         try: data = self.win.clipboard_get()
         except Exception:
             messagebox.showwarning("","Скопіюйте дані з Excel і спробуйте знову."); return
@@ -7815,48 +7774,295 @@ class MixedRepeatedWindow:
 class StabilityWindow:
     """Аналіз стабільності генотипів (GxE взаємодія)."""
 
+    HELP_TEXT = """
+АНАЛІЗ СТАБІЛЬНОСТІ (GxE) — ПОКРОКОВА ІНСТРУКЦІЯ
+══════════════════════════════════════════════════
+
+ЩО ТАКЕ АНАЛІЗ СТАБІЛЬНОСТІ?
+  Оцінює як стабільно генотипи (сорти) поводяться
+  в різних середовищах (роки, локації, умови).
+
+  Два ключових питання:
+  1. Який генотип найбільш продуктивний загалом?
+  2. Який генотип найбільш СТАБІЛЬНИЙ (мало залежить від умов)?
+
+  Генотип може бути:
+  • Стабільним і продуктивним → ідеальний для широкого впровадження
+  • Стабільним але низькопродуктивним → стабільний аутсайдер
+  • Нестабільним і продуктивним → хороший лише у сприятливих умовах
+
+КРОК 1. СТРУКТУРА ТАБЛИЦІ
+
+  Перший стовпець: Назва генотипу/сорту (текст)
+  Решта стовпців: Значення показника у кожному середовищі
+
+  Значення = СЕРЕДНЄ по повторностях для цього генотипу у цьому середовищі.
+
+  Приклад (4 сорти, 4 роки):
+  | Генотип  | 2021 | 2022 | 2023 | 2024 |
+  | Сорт А   | 5.8  |  6.2 |  5.5 |  6.8 |
+  | Сорт Б   | 4.9  |  7.1 |  4.2 |  7.8 |
+  | Контроль | 5.2  |  5.4 |  5.1 |  5.6 |
+
+  Перейменуйте заголовки середовищ (подвійний клік).
+  Мінімум: 2 генотипи, 2 середовища.
+
+КРОК 2. МЕТОД EBERHART-RUSSELL
+
+  Рівняння: Yij = μi + bi·Ij + δij
+  де:
+    Yij — врожай сорту i в середовищі j
+    μi  — середнє сорту по всіх середовищах
+    bi  — коефіцієнт регресії (відгук на умови)
+    Ij  — індекс середовища
+    δij — відхилення від регресії
+
+  Параметри стабільності:
+
+  bi (коефіцієнт регресії):
+    bi = 1.0 → сорт реагує як середній по популяції
+    bi > 1.0 → адаптивний/чутливий (краще у сприятливих, гірше у несприятливих)
+    bi < 1.0 → консервативний/стабільний (слабко реагує на умови)
+
+  s²d (дисперсія відхилень від регресії):
+    s²d ≈ 0 → точна лінійна відповідь, передбачуваний сорт ✓
+    s²d > 0 → непередбачувана реакція ✗
+
+  КЛАСИ СТАБІЛЬНОСТІ:
+    Стабільний:      bi ≈ 1, s²d ≈ 0  → рекомендований для всіх зон
+    Адаптивний:      bi > 1, s²d ≈ 0  → лише для сприятливих умов
+    Консервативний:  bi < 1, s²d ≈ 0  → для несприятливих умов
+    Нестабільний:    будь-який bi, s²d > 0  → непередбачуваний
+
+КРОК 3. GGE BIPLOT
+
+  GGE = Genotype + Genotype×Environment interaction.
+  Двовимірний графік що показує одночасно:
+  • Продуктивність генотипів (відстань від центру)
+  • Стабільність (чим ближче до кола — тим стабільніший)
+  • Адаптацію до конкретних середовищ
+
+  Стрілки = середовища.
+  Точки = генотипи.
+  Генотип близько до стрілки середовища → добре адаптований до нього.
+"""
+
     def __init__(self, parent, gs):
-        self.win = tk.Toplevel(parent); self.win.title("Аналіз стабільності (GxE)")
-        self.win.geometry("980x660"); set_icon(self.win); self.gs = gs; self._build()
+        self.win = tk.Toplevel(parent)
+        self.win.title("Аналіз стабільності (GxE)")
+        self.win.geometry("1020x680"); set_icon(self.win)
+        self.gs = gs
+        self._stab_fig = None
+        self._build()
 
     def _build(self):
+        # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Label(top, text="Рядки = Генотипи/Сорти  |  Стовпці = Середовища",
-                 font=("Times New Roman",11)).pack(side=tk.LEFT)
         tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=self._run).pack(side=tk.RIGHT, padx=4)
+                  font=("Times New Roman",13),
+                  command=self._run).pack(side=tk.LEFT, padx=4)
 
+        mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
+                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=4)
+        sm = tk.Menu(mb2, tearoff=0)
+        sm.add_command(label="Додати рядок",       command=self._add_row)
+        sm.add_command(label="Видалити рядок",     command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="Додати стовпець",    command=self._add_col)
+        sm.add_command(label="Видалити стовпець",  command=self._del_col)
+        sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear)
+        mb2["menu"] = sm
+
+        tk.Button(top, text="Вставити з буфера",
+                  font=("Times New Roman",11),
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+        tk.Label(top,
+                 text="Подвійний клік на заголовку → перейменувати середовище",
+                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+
+        # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
-        self.rows_n = 16; self.cols_n = 10
-        canvas = tk.Canvas(mid); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(canvas); canvas.create_window((0,0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
+        self.rows_n = 16; self.cols_n = 8
+        self._canvas = tk.Canvas(mid)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=self._canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.configure(yscrollcommand=sb.set)
+        self.inner = tk.Frame(self._canvas)
+        self._canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>",
+                        lambda e: self._canvas.config(scrollregion=self._canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
-        self.env_entries = []
+        # Перший заголовок — «Генотип» (фіксований)
         tk.Label(self.inner, text="Генотип", relief=tk.RIDGE, width=14,
-                 bg="#f0f0f0", font=("Times New Roman",11)).grid(row=0, column=0, padx=1, pady=1)
+                 bg="#444444", fg="white",
+                 font=("Times New Roman",11,"bold")
+                 ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+
+        # Заголовки середовищ (перейменовувані)
+        self.env_vars = []; self.env_labels = []
         for j in range(1, self.cols_n):
-            e = tk.Entry(self.inner, width=12, bg="#e8f0ff", font=("Times New Roman",11))
-            e.insert(0, f"E{j}"); e.grid(row=0, column=j, padx=1, pady=1)
-            self.env_entries.append(e)
+            var = tk.StringVar(value=f"E{j}")
+            self.env_vars.append(var)
+            lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
+                           bg="#1a4b8c", fg="white", relief=tk.RIDGE,
+                           font=("Times New Roman",11,"bold"))
+            lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+            lbl.bind("<Double-Button-1>", lambda e, idx=j-1: self._rename_env(idx))
+            self.env_labels.append(lbl)
+
         self.entries = []
         for i in range(self.rows_n):
             row_ = []
             for j in range(self.cols_n):
-                e = tk.Entry(self.inner, width=12 if j==0 else 10, font=("Times New Roman",11))
-                e.grid(row=i+1, column=j, padx=1, pady=1); row_.append(e)
-                e.bind("<Return>", lambda ev, ri=i, ci=j: _nav_down(self.entries, ri, ci, getattr(self,'add_row',getattr(self,'_add_row',None))))
-                e.bind("<Up>",     lambda ev, ri=i, ci=j: _nav_move(self.entries, ri-1, ci))
-                e.bind("<Down>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri+1, ci))
-                e.bind("<Left>",   lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci-1))
-                e.bind("<Right>",  lambda ev, ri=i, ci=j: _nav_move(self.entries, ri, ci+1))
+                e = tk.Entry(self.inner, width=14 if j==0 else 11,
+                             font=("Times New Roman",11))
+                e.grid(row=i+1, column=j, padx=1, pady=1)
+                row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
 
+    # ── Перейменування середовища ─────────────────────────────
+    def _rename_env(self, idx):
+        dlg = tk.Toplevel(self.win); dlg.title("Перейменувати середовище")
+        dlg.resizable(False, False); dlg.grab_set()
+        tk.Label(dlg, text=f"Назва середовища {idx+1}:",
+                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+        var = tk.StringVar(value=self.env_vars[idx].get())
+        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=24)
+        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
+        def apply():
+            nm = var.get().strip()
+            if nm: self.env_vars[idx].set(nm)
+            dlg.destroy()
+        tk.Button(dlg, text="OK", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+        dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
+
+    # ── Управління таблицею ───────────────────────────────────
+    def _add_row(self):
+        i = self.rows_n; row_ = []
+        for j in range(self.cols_n):
+            e = tk.Entry(self.inner, width=14 if j==0 else 11,
+                         font=("Times New Roman",11))
+            e.grid(row=i+1, column=j, padx=1, pady=1)
+            row_.append(e)
+        self.entries.append(row_); self.rows_n += 1
+        _bind_nav(self.entries, self.win)
+
+    def _del_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.rows_n -= 1
+
+    def _add_col(self):
+        ci = self.cols_n; self.cols_n += 1
+        var = tk.StringVar(value=f"E{ci}")
+        self.env_vars.append(var)
+        lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
+                       bg="#1a4b8c", fg="white", relief=tk.RIDGE,
+                       font=("Times New Roman",11,"bold"))
+        lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
+        lbl.bind("<Double-Button-1>", lambda e, idx=ci-1: self._rename_env(idx))
+        self.env_labels.append(lbl)
+        for i, row_ in enumerate(self.entries):
+            e = tk.Entry(self.inner, width=11, font=("Times New Roman",11))
+            e.grid(row=i+1, column=ci, padx=1, pady=1)
+            row_.append(e)
+        _bind_nav(self.entries, self.win)
+
+    def _del_col(self):
+        if self.cols_n <= 3: return
+        self.env_labels.pop().destroy(); self.env_vars.pop()
+        for row_ in self.entries: row_.pop().destroy()
+        self.cols_n -= 1
+
+    def _clear(self):
+        if not messagebox.askyesno("Очистити","Видалити всі дані?"): return
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("","Скопіюйте дані з Excel і спробуйте знову."); return
+        if not data.strip(): return
+        pos = (0, 0)
+        w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos=(i,j); break
+        r0, c0 = pos
+        for ir, line in enumerate(data.splitlines()):
+            if not line.strip(): continue
+            while r0+ir >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                cc = c0+jc
+                if cc >= self.cols_n: continue
+                self.entries[r0+ir][cc].delete(0, tk.END)
+                self.entries[r0+ir][cc].insert(0, val.strip())
+
+    def _save_proj(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".sadp",
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")])
+        if not path: return
+        d = {"type":"stability","version":APP_VER,
+             "env_vars":[v.get() for v in self.env_vars],
+             "rows_data":[[e.get() for e in row] for row in self.entries]}
+        try:
+            with open(path,"w",encoding="utf-8") as f: json.dump(d,f,ensure_ascii=False,indent=2)
+            messagebox.showinfo("Збережено", path)
+        except Exception as ex: messagebox.showerror("Помилка",str(ex))
+
+    def _load_proj(self):
+        path = filedialog.askopenfilename(
+            parent=self.win, filetypes=[("SAD проект","*.sadp"),("JSON","*.json")])
+        if not path: return
+        try:
+            with open(path,"r",encoding="utf-8") as f: d=json.load(f)
+        except Exception as ex: messagebox.showerror("Помилка",str(ex)); return
+        env_vars = d.get("env_vars",[])
+        rows_data = d.get("rows_data",[])
+        while self.cols_n < 1+len(env_vars): self._add_col()
+        for i,nm in enumerate(env_vars):
+            if i<len(self.env_vars): self.env_vars[i].set(nm)
+        while len(self.entries)<len(rows_data): self._add_row()
+        for i,rv in enumerate(rows_data):
+            for j,v in enumerate(rv):
+                if j<self.cols_n:
+                    self.entries[i][j].delete(0,tk.END); self.entries[i][j].insert(0,v)
+        messagebox.showinfo("Завантажено","Проект завантажено.")
+
+    def _show_help(self):
+        win = tk.Toplevel(self.win); win.title("Довідка — Аналіз стабільності")
+        win.geometry("720x680"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
+        txt.bind("<MouseWheel>", lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
+
+
     def _run(self):
-        env_names = [e.get().strip() or f"E{i+1}" for i, e in enumerate(self.env_entries)]
+        env_names = [v.get().strip() or f"E{i+1}" for i, v in enumerate(self.env_vars)]
         raw = [[e.get().strip() for e in row] for row in self.entries]
         gen_names = []; matrix = []
         for row in raw:
