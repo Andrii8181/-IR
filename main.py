@@ -6594,11 +6594,27 @@ class RepeatedMeasuresWindow:
         except Exception as ex:
             messagebox.showerror("Помилка збереження", str(ex))
 
-    def _load_proj(self):
-        path = filedialog.askopenfilename(
-            parent=self.win,
+    def _save_proj(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".sadp",
             filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
-            title="Відкрити проект повторних вимірювань")
+            title="Зберегти проект повторних вимірювань")
+        if not path: return
+        d = {
+            "type": "repeated_measures", "version": APP_VER,
+            "col_vars": [v.get() for v in self.col_vars],
+            "rows_data": [[e.get() for e in row] for row in self.entries],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo("Збережено",
+                f"Проект збережено:\n{path}\n\n"
+                "Щоб додати нові дати: ⚙ → «Додати стовпець»")
+        except Exception as ex:
+            messagebox.showerror("Помилка збереження", str(ex))
+
+    def _load_proj(self):
         if not path: return
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -7265,6 +7281,26 @@ class MixedRepeatedWindow:
                 f"Проект збережено:\n{path}\n\n"
                 "При наступному відкритті завантажте цей файл і\n"
                 "додайте нові стовпці (дати) через ⚙ → «Додати стовпець».")
+        except Exception as ex:
+            messagebox.showerror("Помилка збереження", str(ex))
+
+    def _save_proj(self):
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".sadp",
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
+            title="Зберегти проект Змішаного Repeated Measures")
+        if not path: return
+        d = {
+            "type": "mixed_repeated_measures", "version": APP_VER,
+            "time_vars": [v.get() for v in self.time_vars],
+            "rows_data": [[e.get() for e in row] for row in self.entries],
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo("Збережено",
+                f"Проект збережено:\n{path}\n\n"
+                "Щоб додати нові дати: ⚙ → «Додати стовпець»")
         except Exception as ex:
             messagebox.showerror("Помилка збереження", str(ex))
 
