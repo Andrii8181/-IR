@@ -2130,6 +2130,139 @@ class SADTk:
     def open_correlation(self):
         CorrelationWindow(self.root, self.graph_settings)
 
+    def _show_anova_help(self, parent, fc):
+        """Довідка специфічна для кожного типу ANOVA."""
+        help_texts = {
+            1: """
+ОДНОФАКТОРНИЙ ДИСПЕРСІЙНИЙ АНАЛІЗ
+═══════════════════════════════════
+
+ЩО РОБИТЬ?
+  Порівнює СЕРЕДНІ по 3 і більше групах (варіантах).
+  Перевіряє: «Чи хоча б одна група відрізняється від інших?»
+
+  Перевага над t-тестом: при кількох порівняннях одночасно
+  не накопичується помилка першого роду.
+
+СТРУКТУРА ТАБЛИЦІ:
+  Стовпець 1: Фактор A (назви варіантів/обробок)
+  Стовпці 2+: Повторності (числові значення)
+
+  Приклад (3 дози добрива, 4 повторності):
+  | Доза    | Повт.1 | Повт.2 | Повт.3 | Повт.4 |
+  | Контроль|  5.2   |  4.8   |  5.5   |  4.9   |
+  | Доза 1  |  6.1   |  6.4   |  5.9   |  6.3   |
+  | Доза 2  |  7.2   |  6.8   |  7.5   |  7.1   |
+
+  Перейменуйте «Фактор A» (подвійний клік) на назву вашого фактора.
+
+ВИБІР ДИЗАЙНУ:
+  CRD — ділянки однорідні, варіанти розміщені випадково
+  RCBD — є блоки (рельєф, родючість) — ефективніший
+  Split-plot — лише для 2+ факторів
+
+ІНТЕРПРЕТАЦІЯ:
+  F-тест значущий → є різниця між варіантами
+  Переходьте до пост-хок для визначення ЯКИХ САМЕ
+""",
+            2: """
+ДВОФАКТОРНИЙ ДИСПЕРСІЙНИЙ АНАЛІЗ
+══════════════════════════════════
+
+ЩО РОБИТЬ?
+  Оцінює вплив ДВОХ факторів (A і B) та їх взаємодії (A×B).
+
+  Три питання одночасно:
+  1. Чи значущий головний ефект фактора A?
+  2. Чи значущий головний ефект фактора B?
+  3. Чи є взаємодія A×B? (найважливіше!)
+
+СТРУКТУРА ТАБЛИЦІ:
+  Стовпець 1: Фактор A (рівні першого фактора)
+  Стовпець 2: Фактор B (рівні другого фактора)
+  Стовпці 3+: Повторності (числові значення)
+
+  Приклад (сорт × доза добрива):
+  | Сорт    | Доза  | Повт.1 | Повт.2 | Повт.3 |
+  | Сорт А  | Доза1 |  5.2   |  4.8   |  5.5   |
+  | Сорт А  | Доза2 |  6.1   |  6.4   |  5.9   |
+  | Сорт Б  | Доза1 |  4.9   |  5.1   |  4.7   |
+  | Сорт Б  | Доза2 |  7.2   |  6.8   |  7.5   |
+
+ВЗАЄМОДІЯ A×B:
+  Значуща → ефект фактора A залежить від рівня B.
+  Тобто: один сорт краще реагує на добрива, інший — ні.
+  При значущій взаємодії — аналізуйте прості ефекти!
+  Незначуща → ефекти факторів незалежні.
+""",
+            3: """
+ТРИФАКТОРНИЙ ДИСПЕРСІЙНИЙ АНАЛІЗ
+══════════════════════════════════
+
+ЩО РОБИТЬ?
+  Оцінює вплив трьох факторів (A, B, C) та їх взаємодій:
+  A×B, A×C, B×C, і потрійну взаємодію A×B×C.
+
+СТРУКТУРА ТАБЛИЦІ:
+  Стовпець 1: Фактор A
+  Стовпець 2: Фактор B
+  Стовпець 3: Фактор C
+  Стовпці 4+: Повторності
+
+  Кожна унікальна комбінація A×B×C = один рядок.
+  При 3 рівнях кожного фактора: 3×3×3 = 27 рядків.
+
+ВЗАЄМОДІЯ A×B×C:
+  Значуща → ефект пари факторів залежить від третього.
+  Наприклад: вплив добрива і сорту різний в різні роки.
+
+ПОРАДА:
+  При 3 факторах рекомендується Тип III SS.
+  Кількість рядків = k_A × k_B × k_C (де k = кількість рівнів).
+""",
+            4: """
+ЧОТИРИФАКТОРНИЙ ДИСПЕРСІЙНИЙ АНАЛІЗ
+═════════════════════════════════════
+
+ЩО РОБИТЬ?
+  Оцінює вплив чотирьох факторів (A, B, C, D) та всіх
+  можливих взаємодій (4 парних + 4 потрійних + 1 четверна).
+
+СТРУКТУРА ТАБЛИЦІ:
+  Стовпці 1-4: Фактори A, B, C, D
+  Стовпці 5+: Повторності
+
+  При 2 рівнях кожного: 2×2×2×2 = 16 комбінацій.
+  При 3 рівнях кожного: 3×3×3×3 = 81 комбінація!
+
+ВАЖЛИВО:
+  Чотирифакторний аналіз вимагає дуже великого досліду.
+  Мінімум: 2 повторності × 16 комбінацій = 32 спостереження.
+  Рекомендується Тип III SS.
+  Потрійні і четверна взаємодії рідко бувають значущими
+  і важко інтерпретуються.
+
+ПОРАДА:
+  При незначущих вищих взаємодіях — спростіть до трифакторного.
+"""
+        }
+        text = help_texts.get(fc, "Довідка недоступна.")
+
+        win = tk.Toplevel(parent)
+        win.title(f"Довідка — {['','Одно','Дво','Три','Чотири'][fc]}факторний ANOVA")
+        win.geometry("680x540"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
+        txt.insert("1.0", text.strip()); txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
     # ── factor titles ─────────────────────────────────────────
     def ftitle(self, fk): return self.factor_title_map.get(fk, f"Фактор {fk}")
     def _set_ftitle(self, fk, t): self.factor_title_map[fk] = t.strip() or f"Фактор {fk}"
@@ -2469,29 +2602,6 @@ class SADTk:
         tw.title(f"S.A.D. — {factor_names.get(fc,str(fc)+'-факторний')} дисперсійний аналіз")
         tw.geometry("1280x720"); set_icon(tw)
 
-        # ── Menu bar ──────────────────────────────────────────
-        mb = tk.Menu(tw)
-        fm = tk.Menu(mb, tearoff=0)
-        fm.add_command(label="Зберегти проект", accelerator="Ctrl+S", command=self.save_project)
-        fm.add_command(label="Відкрити проект", accelerator="Ctrl+O", command=self.load_project)
-        fm.add_separator()
-        fm.add_command(label="Очистити проект", command=self.clear_project)
-        mb.add_cascade(label="Файл", menu=fm)
-
-        em = tk.Menu(mb, tearoff=0)
-        em.add_command(label="Додати рядок",      command=self.add_row)
-        em.add_command(label="Видалити рядок",     command=self.delete_row)
-        em.add_separator()
-        em.add_command(label="Додати стовпчик",    command=self.add_column)
-        em.add_command(label="Видалити стовпчик",  command=self.delete_column)
-        mb.add_cascade(label="Правка", menu=em)
-        tw.config(menu=mb)
-
-        tw.bind("<Control-s>", lambda e: self.save_project())
-        tw.bind("<Control-S>", lambda e: self.save_project())
-        tw.bind("<Control-o>", lambda e: self.load_project())
-        tw.bind("<Control-O>", lambda e: self.load_project())
-
         # ── Toolbar ───────────────────────────────────────────
         ctl = tk.Frame(tw, padx=6, pady=4); ctl.pack(fill=tk.X)
 
@@ -2523,7 +2633,12 @@ class SADTk:
         tk.Button(ctl, text="📚 Довідка",
                   bg="#1a4b8c", fg="white",
                   font=("Times New Roman", 11),
-                  command=lambda: show_help(self.table_win)).pack(side=tk.LEFT, padx=4)
+                  command=lambda: self._show_anova_help(tw, fc)).pack(side=tk.LEFT, padx=4)
+
+        # Підказка
+        tk.Label(ctl,
+                 text="Подвійний клік на синьому заголовку фактора → перейменувати",
+                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
 
         # ── Table canvas ──────────────────────────────────────
         self.canvas = tk.Canvas(tw)
@@ -2627,65 +2742,102 @@ class SADTk:
 
     # ── dialogs ───────────────────────────────────────────────
     def ask_params(self):
-        dlg = tk.Toplevel(self.root); dlg.title("Параметри звіту")
+        dlg = tk.Toplevel(self.root); dlg.title("Параметри аналізу")
         dlg.resizable(False, False); set_icon(dlg)
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        tk.Label(frm, text="Назва показника:").grid(row=0, column=0, sticky="w", pady=5)
-        e_ind = tk.Entry(frm, width=38); e_ind.grid(row=0, column=1, pady=5, padx=6)
-        tk.Label(frm, text="Одиниці виміру:").grid(row=1, column=0, sticky="w", pady=5)
-        e_un  = tk.Entry(frm, width=38); e_un.grid(row=1, column=1, pady=5, padx=6)
+        rf = ("Times New Roman", 12)
+        rb_f = ("Times New Roman", 13)
 
-        # Design
-        row_d = tk.Frame(frm); row_d.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 4))
-        tk.Label(row_d, text="Дизайн:").pack(side=tk.LEFT)
-        tk.Button(row_d, text=" ? ", width=3, command=self.show_design_help).pack(side=tk.LEFT, padx=4)
-        tk.Button(row_d, text="📚 Детальніше", font=("Times New Roman",10), fg="#1a4b8c",
-                  relief=tk.FLAT, cursor="hand2",
-                  command=lambda: show_help(dlg, "Дизайни експерименту")).pack(side=tk.LEFT, padx=2)
-        dv = tk.StringVar(value="crd"); rb_f = ("Times New Roman", 13)
-        df = tk.Frame(frm); df.grid(row=2, column=1, sticky="w", pady=(10, 4), padx=(140, 0))
-        for txt, val in [("CRD", "crd"), ("RCBD", "rcbd"), ("Split-plot (лише параметр.)", "split")]:
-            tk.Radiobutton(df, text=txt, variable=dv, value=val, font=rb_f).pack(anchor="w")
-        mfv = tk.StringVar(value="A")
-        sp_frm = tk.Frame(frm); sp_frm.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        tk.Label(sp_frm, text="Головний фактор:").pack(side=tk.LEFT)
+        tk.Label(frm, text="Назва показника (необов'язково):",
+                 font=rf).grid(row=0, column=0, sticky="w", pady=4)
+        e_ind = tk.Entry(frm, width=32, font=rf)
+        e_ind.grid(row=0, column=1, pady=4, padx=6)
+        tk.Label(frm, text="Одиниці виміру (необов'язково):",
+                 font=rf).grid(row=1, column=0, sticky="w", pady=4)
+        e_un = tk.Entry(frm, width=32, font=rf)
+        e_un.grid(row=1, column=1, pady=4, padx=6)
+
+        # ── Дизайн ───────────────────────────────────────────
+        tk.Label(frm, text="Дизайн досліду:", font=("Times New Roman",12,"bold")
+                 ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(14,4))
+
+        design_info = tk.Frame(frm); design_info.grid(row=3, column=0, columnspan=2, sticky="w")
+        tk.Label(design_info,
+                 text=(
+                     "CRD — Повністю рандомізований:\n"
+                     "  Варіанти розміщені випадково по всіх ділянках.\n"
+                     "  Використовується на однорідному фоні.\n\n"
+                     "RCBD — Рандомізовані повні блоки:\n"
+                     "  Ділянки розбиті на блоки (повторності) однорідних умов.\n"
+                     "  Блок = одна повторність. Всередині блоку — випадкове розміщення.\n"
+                     "  Рекомендується при неоднорідності фону.\n\n"
+                     "Split-plot — Розщеплені ділянки:\n"
+                     "  Головний фактор (whole-plot) = великі ділянки,\n"
+                     "  Другорядний фактор (sub-plot) = дрібніші, всередині великих.\n"
+                     "  Типово: фактор A = обробка всього поля, B = сорт на підділянці."
+                 ),
+                 font=("Times New Roman",10), justify="left",
+                 bg="#f0f4ff", relief=tk.FLAT, padx=8, pady=6
+                 ).pack(fill=tk.X)
+
+        dv = tk.StringVar(value="crd")
+        df = tk.Frame(frm); df.grid(row=4, column=0, columnspan=2, sticky="w", pady=8)
+        for txt, val in [("CRD", "crd"), ("RCBD", "rcbd"),
+                          ("Split-plot (лише параметричний)", "split")]:
+            tk.Radiobutton(df, text=txt, variable=dv, value=val,
+                           font=rb_f).pack(side=tk.LEFT, padx=10)
+
+        mfv = tk.StringVar(value=self.factor_keys[0] if self.factor_keys else "A")
+        sp_frm = tk.Frame(frm); sp_frm.grid(row=5, column=0, columnspan=2, sticky="w", pady=(0,4))
+        tk.Label(sp_frm, text="Головний фактор (whole-plot):", font=rf).pack(side=tk.LEFT)
         ttk.Combobox(sp_frm, textvariable=mfv, width=6, state="readonly",
-                     values=("A", "B", "C", "D")).pack(side=tk.LEFT, padx=6)
+                     values=self.factor_keys).pack(side=tk.LEFT, padx=6)
         sp_frm.grid_remove()
         def _upd(*_):
             sp_frm.grid() if dv.get() == "split" else sp_frm.grid_remove()
         dv.trace_add("write", _upd)
 
-        # SS Type
-        ss_lbl = tk.Frame(frm); ss_lbl.grid(row=4, column=0, sticky="w", pady=(10, 4))
-        tk.Label(ss_lbl, text="Тип SS:").pack(side=tk.LEFT)
-        tk.Button(ss_lbl, text=" ? ", width=3,
-                  command=lambda: messagebox.showinfo("Типи SS",
-                      "Тип I — Послідовний: кожен фактор після попередніх.\n"
-                      "         Порядок важливий. Для збалансованих дизайнів.\n\n"
-                      "Тип II — Ієрархічний: кожен фактор після решти головних\n"
-                      "          ефектів (без взаємодій). Незбаланс. без взаємодій.\n\n"
-                      "Тип III — Частковий (за замовч.): кожен ефект при всіх\n"
-                      "           інших. Стандарт SPSS/SAS. Взаємодії враховані.\n\n"
-                      "Тип IV — Функції, що оцінюються: для незбалансованих\n"
-                      "          дизайнів з пропущеними клітинками (SAS).")).pack(side=tk.LEFT, padx=4)
+        # ── Тип SS ───────────────────────────────────────────
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=6, column=0, columnspan=2, sticky="ew", pady=8)
+        tk.Label(frm, text="Тип суми квадратів (SS):", font=("Times New Roman",12,"bold")
+                 ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(0,4))
+        tk.Label(frm,
+                 text=(
+                     "Тип I — Послідовний. Для збалансованих дизайнів, порядок факторів важливий.\n"
+                     "Тип III — Частковий (стандарт). Для незбалансованих даних і взаємодій.\n"
+                     "Рекомендується: Тип III якщо не впевнені."
+                 ),
+                 font=("Times New Roman",10), justify="left",
+                 bg="#f0f4ff", relief=tk.FLAT, padx=8, pady=4
+                 ).grid(row=8, column=0, columnspan=2, sticky="ew")
         ssv = tk.StringVar(value="III")
-        ssf = tk.Frame(frm); ssf.grid(row=4, column=1, sticky="w", pady=(10, 4), padx=(140, 0))
-        for ss in ["I", "II", "III", "IV"]:
-            tk.Radiobutton(ssf, text=f"Тип {ss}", variable=ssv, value=ss, font=rb_f).pack(side=tk.LEFT, padx=6)
+        ssf = tk.Frame(frm); ssf.grid(row=9, column=0, columnspan=2, sticky="w", pady=4)
+        for ss in ["I","II","III","IV"]:
+            tk.Radiobutton(ssf, text=f"Тип {ss}", variable=ssv, value=ss,
+                           font=rb_f).pack(side=tk.LEFT, padx=8)
 
+        # ── Кнопки ───────────────────────────────────────────
         out = {"ok": False}
         def ok():
-            out.update({"ok": True, "indicator": e_ind.get().strip(), "units": e_un.get().strip(),
-                        "design": dv.get(), "split_main": mfv.get(), "ss_type": ssv.get()})
-            if not out["indicator"] or not out["units"]:
-                messagebox.showwarning("", "Заповніть показник та одиниці."); return
+            out.update({"ok": True,
+                        "indicator": e_ind.get().strip() or "Показник",
+                        "units":     e_un.get().strip()  or "–",
+                        "design":    dv.get(),
+                        "split_main": mfv.get(),
+                        "ss_type":   ssv.get()})
             dlg.destroy()
-        bf = tk.Frame(frm); bf.grid(row=5, column=0, columnspan=2, pady=(12, 0))
-        tk.Button(bf, text="OK", width=10, command=ok).pack(side=tk.LEFT, padx=4)
-        tk.Button(bf, text="Скасувати", width=12, command=dlg.destroy).pack(side=tk.LEFT)
-        dlg.update_idletasks(); center_win(dlg); e_ind.focus_set()
-        dlg.bind("<Return>", lambda e: ok()); dlg.grab_set(); self.root.wait_window(dlg)
+
+        bf = tk.Frame(frm); bf.grid(row=10, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="▶ Виконати аналіз", width=18,
+                  bg="#c62828", fg="white", font=rf, command=ok).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", width=12,
+                  font=rf, command=dlg.destroy).pack(side=tk.LEFT)
+
+        dlg.update_idletasks(); center_win(dlg)
+        e_ind.focus_set()
+        dlg.bind("<Return>", lambda e: ok())
+        dlg.grab_set(); self.root.wait_window(dlg)
         return out
 
     def choose_method(self, p_norm, design, n_var):
