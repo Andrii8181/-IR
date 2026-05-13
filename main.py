@@ -4449,45 +4449,134 @@ class DescriptiveWindow:
 # T-TEST MODULE
 # ═══════════════════════════════════════════════════════════════
 class TTestWindow:
+    """t-тест / Критерій Манна-Уітні."""
+
+    HELP_TEXT = """
+t-ТЕСТ / МАНН-УІТНІ — ПОКРОКОВА ІНСТРУКЦІЯ
+════════════════════════════════════════════
+
+ЩО ЦЕЙ АНАЛІЗ РОБИТЬ?
+  Порівнює ДВІ групи і відповідає:
+  «Чи є різниця між середніми статистично значущою,
+  чи це просто випадкові коливання?»
+
+  Програма автоматично обирає правильний тест:
+  ✓ Нормальний розподіл + рівні дисперсії → t-тест Стьюдента
+  ✓ Нормальний розподіл + нерівні дисперсії → t-тест Велша
+  ✓ Ненормальний розподіл → Манн-Уітні (непараметричний)
+  ✓ Парні + нормальний → Парний t-тест
+  ✓ Парні + ненормальний → Вілкоксон
+
+РЕЖИМ 1: НЕЗАЛЕЖНІ ВИБІРКИ
+  Дві різні групи. Спостереження не пов'язані.
+  Приклад: врожайність Сорту А і Сорту Б.
+  Введіть значення у поля «Група 1» і «Група 2».
+
+РЕЖИМ 2: ПАРНІ ВИБІРКИ (до/після)
+  Ті самі об'єкти вимірюються двічі.
+  Приклад: маса рослин до і після обробки.
+  ВАЖЛИВО: порядок значень має бути однаковим!
+  Перше значення Групи 1 пов'язане з першим Групи 2.
+  Кількість значень в обох групах має бути однаковою.
+
+РЕЖИМ 3: ОДНА ВИБІРКА (проти відомого μ)
+  Порівняння середнього вибірки з відомим значенням.
+  Приклад: чи відрізняється врожайність від нормативу 5 т/га?
+  Введіть дані у «Група 1» і вкажіть μ₀.
+
+ЯК ВВОДИТИ ДАНІ:
+  Значення через кому, пробіл або кожне з нового рядка.
+  Приклад: 4.2, 5.1, 4.8, 5.3, 4.9
+  Або:
+  4.2
+  5.1
+  4.8
+
+ІНТЕРПРЕТАЦІЯ РЕЗУЛЬТАТІВ:
+  p < α → різниця значуща ✓ (реальна різниця між групами)
+  p ≥ α → різниця незначуща ✗ (можлива випадковість)
+
+  РОЗМІР ЕФЕКТУ (Cliff's delta для Манн-Уітні):
+  |δ| < 0.15: дуже слабкий
+  0.15-0.33:  слабкий
+  0.33-0.47:  середній
+  > 0.47:     сильний
+
+  Значущий p ≠ велика різниця!
+  При великих n навіть мізерна різниця буде значущою.
+  Завжди оцінюйте розмір ефекту разом з p.
+
+SHAPIRO-WILK:
+  p > 0.05 → нормальний розподіл (параметричний тест)
+  p ≤ 0.05 → ненормальний (непараметричний тест)
+"""
+
     def __init__(self, parent):
-        self.win = tk.Toplevel(parent); self.win.title("t-тест / Критерій Манна-Уітні")
-        self.win.geometry("680x540"); set_icon(self.win); self._build()
+        self.win = tk.Toplevel(parent)
+        self.win.title("t-тест / Критерій Манна-Уітні")
+        self.win.geometry("700x660"); set_icon(self.win)
+        self._build()
 
     def _build(self):
-        frm = tk.Frame(self.win, padx=12, pady=10); frm.pack(fill=tk.BOTH, expand=True)
-        tk.Label(frm, text="Тип тесту:", font=("Times New Roman",12,"bold")).grid(row=0,column=0,sticky="w")
+        # ── Toolbar ──────────────────────────────────────────
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
+                  font=("Times New Roman",13),
+                  command=self._run).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="α:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+        self.alpha_var = tk.StringVar(value="0.05")
+        ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
+                     state="readonly", width=7).pack(side=tk.LEFT)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._show_help).pack(side=tk.LEFT, padx=8)
+
+        # ── Тип тесту ────────────────────────────────────────
+        frm = tk.Frame(self.win, padx=12); frm.pack(fill=tk.BOTH, expand=True)
+        tk.Label(frm, text="Тип тесту:",
+                 font=("Times New Roman",12,"bold")).grid(row=0, column=0, sticky="w", pady=(4,2))
         self.test_var = tk.StringVar(value="ind")
         rf = ("Times New Roman",12)
-        for txt, val, r in [("Незалежні вибірки (2 групи)","ind",1),
-                             ("Парні вибірки (до/після)","paired",2),
-                             ("Одна вибірка (проти відомого μ)","one",3)]:
-            tk.Radiobutton(frm, text=txt, variable=self.test_var, value=val, font=rf,
-                           command=self._update_ui).grid(row=r, column=0, sticky="w")
+        tests = [("Незалежні вибірки (2 різні групи)", "ind"),
+                 ("Парні вибірки (до/після, однакові об'єкти)", "paired"),
+                 ("Одна вибірка (проти відомого μ₀)", "one")]
+        for ri, (txt, val) in enumerate(tests):
+            tk.Radiobutton(frm, text=txt, variable=self.test_var, value=val,
+                           font=rf, command=self._update_ui
+                           ).grid(row=ri+1, column=0, columnspan=2, sticky="w")
 
-        tk.Label(frm, text="Група 1 / Вибірка:", font=("Times New Roman",12)).grid(row=4,column=0,sticky="w",pady=(10,2))
-        self.e1 = tk.Text(frm, width=50, height=4, font=("Times New Roman",11))
+        # ── Поля введення ─────────────────────────────────────
+        tk.Label(frm, text="Група 1 / Вибірка:",
+                 font=("Times New Roman",12)).grid(row=4, column=0, sticky="w", pady=(10,2))
+        self.e1 = tk.Text(frm, width=55, height=5, font=("Times New Roman",11))
         self.e1.grid(row=5, column=0, columnspan=2, sticky="ew")
-        tk.Label(frm, text="(через кому, пробіл або кожне значення з нового рядка)", font=("Times New Roman",10), fg="#666").grid(row=6,column=0,sticky="w")
+        tk.Label(frm, text="Вводьте через кому, пробіл або кожне значення з нового рядка",
+                 font=("Times New Roman",9), fg="#666"
+                 ).grid(row=6, column=0, columnspan=2, sticky="w")
 
         self.lbl2 = tk.Label(frm, text="Група 2:", font=("Times New Roman",12))
-        self.lbl2.grid(row=7,column=0,sticky="w",pady=(8,2))
-        self.e2 = tk.Text(frm, width=50, height=4, font=("Times New Roman",11))
+        self.lbl2.grid(row=7, column=0, sticky="w", pady=(8,2))
+        self.e2 = tk.Text(frm, width=55, height=5, font=("Times New Roman",11))
         self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
 
         self.lbl_mu = tk.Label(frm, text="Відоме середнє (μ₀):", font=("Times New Roman",12))
-        self.e_mu = tk.Entry(frm, width=12, font=("Times New Roman",12)); self.e_mu.insert(0,"0")
+        self.e_mu = tk.Entry(frm, width=12, font=("Times New Roman",12))
+        self.e_mu.insert(0, "0")
 
-        # alpha
-        tk.Label(frm, text="α:", font=("Times New Roman",12)).grid(row=11,column=0,sticky="w",pady=(8,2))
-        self.alpha_var = tk.StringVar(value="0.05")
-        ttk.Combobox(frm, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
-                     state="readonly", width=8).grid(row=11, column=1, sticky="w")
+        # ── Результати (scrollable) ───────────────────────────
+        res_frm = tk.Frame(frm); res_frm.grid(row=13, column=0, columnspan=2,
+                                               sticky="nsew", pady=(8,4))
+        frm.rowconfigure(13, weight=1); frm.columnconfigure(0, weight=1)
+        vsb = ttk.Scrollbar(res_frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.res_txt = tk.Text(res_frm, wrap="word",
+                               font=("Times New Roman",11),
+                               yscrollcommand=vsb.set,
+                               relief=tk.FLAT, bg="#f8f8f8",
+                               padx=8, pady=6, cursor="arrow",
+                               state="disabled", height=8)
+        self.res_txt.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=self.res_txt.yview)
 
-        tk.Button(frm, text="▶ Виконати", bg="#c62828", fg="white", font=("Times New Roman",13),
-                  command=self._run).grid(row=12, column=0, pady=12, sticky="w")
-        self.result_var = tk.StringVar()
-        tk.Label(frm, textvariable=self.result_var, font=("Times New Roman",11),
-                 justify="left", wraplength=620).grid(row=13, column=0, columnspan=2, sticky="w")
         self._update_ui()
 
     def _update_ui(self):
@@ -4500,78 +4589,130 @@ class TTestWindow:
             self.lbl_mu.grid_remove(); self.e_mu.grid_remove()
             self.lbl2.grid(row=7, column=0, sticky="w", pady=(8,2))
             self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
-        txt = "Group 2 (paired — same order as Group 1):" if t == "paired" else "Group 2:"
-        self.lbl2.configure(text=txt)
+            txt = ("Група 2 (парна — той самий порядок що й Група 1):"
+                   if t == "paired" else "Група 2:")
+            self.lbl2.configure(text=txt)
 
     def _parse(self, widget):
         import re
-        txt = widget.get("1.0", tk.END).strip()
-        nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", txt.replace(",","."))
+        txt = widget.get("1.0", tk.END).strip().replace(",",".")
+        nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", txt)
         return np.array([float(x) for x in nums], dtype=float)
+
+    def _set_result(self, text, color="#000000"):
+        self.res_txt.configure(state="normal")
+        self.res_txt.delete("1.0", tk.END)
+        self.res_txt.insert("1.0", text)
+        self.res_txt.configure(state="disabled", fg=color)
+
+    def _show_help(self):
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — t-тест / Манн-Уітні")
+        win.geometry("680x640"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT,
+                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
 
     def _run(self):
         from scipy.stats import ttest_ind, ttest_rel, ttest_1samp
         alpha = float(self.alpha_var.get())
         x1 = self._parse(self.e1)
         t = self.test_var.get()
-        if len(x1) < 2: self.result_var.set("Група 1 потребує ≥ 2 значень."); return
+        if len(x1) < 2:
+            self._set_result("Група 1 потребує ≥ 2 значень.", "#c62828"); return
 
         lines = []
-        lines.append(f"n₁ = {len(x1)},  Сер₁ = {fmt(np.mean(x1),4)},  SD₁ = {fmt(np.std(x1,ddof=1),4)}")
+        sep = "─" * 46
+        lines.append(f"n₁ = {len(x1)}   Середнє₁ = {fmt(np.mean(x1),4)}   SD₁ = {fmt(np.std(x1,ddof=1),4)}")
 
-        # normality check
         try: _, sw1 = shapiro(x1)
         except Exception: sw1 = np.nan
-        normal1 = (not math.isnan(sw1)) and sw1 > 0.05
-        lines.append(f"Shapiro–Wilk (Група 1): W={fmt(sw1,4)} → {'нормальний' if normal1 else 'НЕ нормальний'}")
+        normal1 = not math.isnan(sw1) and sw1 > 0.05
+        lines.append(f"Shapiro–Wilk (Група 1): W = {fmt(sw1,4)}"
+                     f"  →  {'✓ нормальний' if normal1 else '⚠ НЕ нормальний'}")
 
         if t == "one":
             try: mu0 = float(self.e_mu.get())
             except Exception: mu0 = 0.0
             stat, p = ttest_1samp(x1, mu0)
-            lines.append(f"\nOne-sample t-test (μ₀={mu0}):")
-            lines.append(f"t = {fmt(stat,4)},  df = {len(x1)-1},  p = {fmt(p,4)}")
-            lines.append("→ Значуща різниця" if p < alpha else "→ Немає значущої різниці")
+            lines.append(sep)
+            lines.append(f"Одновибірковий t-тест (μ₀ = {mu0})")
+            lines.append(f"t = {fmt(stat,4)},   df = {len(x1)-1},   p = {fmt(p,4)}")
         else:
             x2 = self._parse(self.e2)
-            if len(x2) < 2: self.result_var.set("Група 2 потребує ≥ 2 значень."); return
+            if len(x2) < 2:
+                self._set_result("Група 2 потребує ≥ 2 значень.", "#c62828"); return
             try: _, sw2 = shapiro(x2)
             except Exception: sw2 = np.nan
-            normal2 = (not math.isnan(sw2)) and sw2 > 0.05
-            lines.append(f"n₂ = {len(x2)},  Сер₂ = {fmt(np.mean(x2),4)},  SD₂ = {fmt(np.std(x2,ddof=1),4)}")
-            lines.append(f"Shapiro–Wilk (Група 2): W={fmt(sw2,4)} → {'нормальний' if normal2 else 'НЕ нормальний'}")
+            normal2 = not math.isnan(sw2) and sw2 > 0.05
+            lines.append(f"n₂ = {len(x2)}   Середнє₂ = {fmt(np.mean(x2),4)}   SD₂ = {fmt(np.std(x2,ddof=1),4)}")
+            lines.append(f"Shapiro–Wilk (Група 2): W = {fmt(sw2,4)}"
+                         f"  →  {'✓ нормальний' if normal2 else '⚠ НЕ нормальний'}")
+            lines.append(sep)
 
             if t == "paired":
                 if len(x1) != len(x2):
-                    self.result_var.set("Парний тест вимагає однакових розмірів вибірок."); return
+                    self._set_result(
+                        "Парний тест вимагає однакового розміру вибірок.\n"
+                        f"Група 1: {len(x1)} значень, Група 2: {len(x2)} значень.",
+                        "#c62828"); return
                 if normal1 and normal2:
                     stat, p = ttest_rel(x1, x2)
-                    lines.append(f"\nPaired t-test:  t={fmt(stat,4)},  df={len(x1)-1},  p={fmt(p,4)}")
+                    lines.append(f"Парний t-тест")
+                    lines.append(f"t = {fmt(stat,4)},   df = {len(x1)-1},   p = {fmt(p,4)}")
                 else:
-                    stat, p = wilcoxon(x1, x2, zero_method="wilcox", alternative="two-sided", mode="auto")
-                    lines.append(f"\nWilcoxon signed-rank (non-normal):  W={fmt(stat,4)},  p={fmt(p,4)}")
+                    stat, p = wilcoxon(x1, x2, zero_method="wilcox",
+                                       alternative="two-sided", mode="auto")
+                    lines.append("Критерій Вілкоксона (знакових рангів)")
+                    lines.append(f"W = {fmt(stat,4)},   p = {fmt(p,4)}")
             else:
-                # check variance homogeneity
                 try: lev_s, lev_p = levene(x1, x2, center='median')
                 except Exception: lev_p = np.nan
-                equal_var = (not math.isnan(lev_p)) and lev_p >= 0.05
-                lines.append(f"Тест Левена: p={fmt(lev_p,4)} → {'рівні дисперсії' if equal_var else 'нерівні дисперсії'}")
+                equal_var = not math.isnan(lev_p) and lev_p >= 0.05
+                lines.append(f"Тест Левена: p = {fmt(lev_p,4)}"
+                             f"  →  {'✓ рівні дисперсії' if equal_var else '⚠ нерівні дисперсії'}")
+
                 if normal1 and normal2:
                     stat, p = ttest_ind(x1, x2, equal_var=equal_var)
-                    test_name = "Незалежний t-тест" if equal_var else "t-тест Велша (нерівні дисперсії)"
                     n1, n2 = len(x1), len(x2)
-                    df_w = (np.var(x1,ddof=1)/n1 + np.var(x2,ddof=1)/n2)**2 / \
-                           ((np.var(x1,ddof=1)/n1)**2/(n1-1) + (np.var(x2,ddof=1)/n2)**2/(n2-1)) if not equal_var else n1+n2-2
-                    lines.append(f"\n{test_name}:  t={fmt(stat,4)},  df≈{fmt(df_w,1)},  p={fmt(p,4)}")
+                    if not equal_var:
+                        df_w = ((np.var(x1,ddof=1)/n1 + np.var(x2,ddof=1)/n2)**2 /
+                                ((np.var(x1,ddof=1)/n1)**2/(n1-1) +
+                                 (np.var(x2,ddof=1)/n2)**2/(n2-1)))
+                        test_name = "t-тест Велша (нерівні дисперсії)"
+                    else:
+                        df_w = n1+n2-2
+                        test_name = "t-тест Стьюдента (незалежні)"
+                    lines.append(f"{test_name}")
+                    lines.append(f"t = {fmt(stat,4)},   df ≈ {fmt(df_w,1)},   p = {fmt(p,4)}")
                 else:
                     U, p = mannwhitneyu(x1, x2, alternative="two-sided")
                     d = cliffs_d(x1, x2)
-                    lines.append(f"\nMann–Whitney U (non-normal):  U={fmt(U,3)},  p={fmt(p,4)}")
-                    lines.append(f"Cliff's δ = {fmt(d,4)}  ({cliffs_lbl(abs(d))} ефект)")
+                    lines.append("Критерій Манна-Уітні (непараметричний)")
+                    lines.append(f"U = {fmt(U,3)},   p = {fmt(p,4)}")
+                    lines.append(f"Cliff's δ = {fmt(d,4)}   ({cliffs_lbl(abs(d))} ефект)")
 
-            lines.append("→ Значуща різниця" if p < alpha else "→ Немає значущої різниці")
+        lines.append(sep)
+        if "p" in dir():
+            sig = not math.isnan(p) and p < alpha
+            lines.append(
+                f"{'✓ Різниця ЗНАЧУЩА' if sig else '✗ Різниця НЕЗНАЧУЩА'}"
+                f"   (p = {fmt(p,4)},  α = {alpha})")
+            if sig:
+                diff = float(np.mean(x1) - np.mean(self._parse(self.e2))) if t != "one" else float(np.mean(x1) - float(self.e_mu.get()))
+                lines.append(f"Різниця середніх: {fmt(diff,4)}")
 
-        self.result_var.set("\n".join(lines))
+        self._set_result("\n".join(lines))
+
+
 
 
 # ═══════════════════════════════════════════════════════════════
