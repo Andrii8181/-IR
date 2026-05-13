@@ -6535,7 +6535,7 @@ class RepeatedMeasuresWindow:
         self.col_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
             e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+                         )
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
@@ -6552,7 +6552,27 @@ class RepeatedMeasuresWindow:
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
 
-    def _save_proj(self):
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
+        pos = (0, 0)
+        w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos = (i, j); break
+        r0, c0 = pos
+        for ir, line in enumerate(data.splitlines()):
+            if not line.strip(): continue
+            while r0+ir >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                cc = c0+jc
+                if cc >= self.cols_n: continue
+                self.entries[r0+ir][cc].delete(0, tk.END)
+                self.entries[r0+ir][cc].insert(0, val.strip())
         path = filedialog.asksaveasfilename(
             parent=self.win, defaultextension=".sadp",
             filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
@@ -7059,6 +7079,13 @@ class MixedRepeatedWindow:
         self._build()
 
     def _build(self):
+        try:
+            self._build_inner()
+        except Exception as _be:
+            import traceback
+            messagebox.showerror("Помилка","Помилка побудови вікна:\n"+traceback.format_exc())
+
+    def _build_inner(self):
         # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
@@ -7132,7 +7159,7 @@ class MixedRepeatedWindow:
             for j in range(self.cols_n):
                 w = 13 if j < 2 else 12
                 e = tk.Entry(self.inner, width=w, font=("Times New Roman",11),
-                             highlightthickness=1, highlightbackground="#c0c0c0")
+                             )
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
@@ -7184,7 +7211,7 @@ class MixedRepeatedWindow:
         self.time_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
             e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+                         )
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
@@ -7200,7 +7227,26 @@ class MixedRepeatedWindow:
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
 
-    def _save_proj(self):
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("","Скопіюйте дані з Excel і спробуйте знову."); return
+        if not data.strip(): return
+        pos = (0, 0)
+        w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos = (i, j); break
+        r0, c0 = pos
+        for ir, line in enumerate(data.splitlines()):
+            if not line.strip(): continue
+            while r0+ir >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                cc = c0+jc
+                if cc >= self.cols_n: continue
+                self.entries[r0+ir][cc].delete(0, tk.END)
+                self.entries[r0+ir][cc].insert(0, val.strip())
         path = filedialog.asksaveasfilename(
             parent=self.win, defaultextension=".sadp",
             filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
