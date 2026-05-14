@@ -2875,15 +2875,6 @@ class SADTk:
 
         dv = tk.StringVar(value="crd")
         df = tk.Frame(frm); df.grid(row=4, column=0, columnspan=2, sticky="w", pady=8)
-        # Показуємо підказку ЛК при виборі
-        def _on_design(*_):
-            if dv.get() == "latin":
-                latin_hint.grid()
-            else:
-                latin_hint.grid_remove()
-            sp_frm.grid() if dv.get() == "split" else sp_frm.grid_remove()
-        dv.trace_add("write", _on_design)
-
         for txt, val in [("CRD", "crd"), ("RCBD", "rcbd"),
                           ("Латинський квадрат", "latin"),
                           ("Split-plot (лише параметричний)", "split")]:
@@ -2892,13 +2883,22 @@ class SADTk:
 
         # Підказка для латинського квадрату
         latin_hint = tk.Label(frm,
-            text="ℹ Латинський квадрат: у таблиці відкрийте 3-факторний аналіз.\n"
+            text="ℹ Латинський квадрат: відкрийте 3-факторний аналіз.\n"
                  "  Фактор A = Варіант,  Фактор B = Рядок,  Фактор C = Стовпець.\n"
-                 "  Кожен рядок таблиці = одна ділянка. Повторність = 1 значення на рядок.",
+                 "  1 рядок таблиці = 1 ділянка, 1 значення у «Повт.1».",
             font=("Times New Roman",10), fg="#1a4b8c",
             bg="#eef4ff", relief=tk.FLAT, padx=8, pady=4, justify="left")
         latin_hint.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0,4))
         latin_hint.grid_remove()
+
+        # Тепер реєструємо trace (latin_hint вже існує)
+        def _on_design(*_):
+            v = dv.get()
+            if v == "latin": latin_hint.grid()
+            else:            latin_hint.grid_remove()
+            if v == "split": sp_frm.grid()
+            else:            sp_frm.grid_remove()
+        dv.trace_add("write", _on_design)
 
         mfv = tk.StringVar(value=self.factor_keys[0] if self.factor_keys else "A")
         sp_frm = tk.Frame(frm); sp_frm.grid(row=5, column=0, columnspan=2, sticky="w", pady=(0,4))
@@ -3055,6 +3055,16 @@ class SADTk:
     # ANALYZE
     # ════════════════════════════════════════════════════════════
     def analyze(self):
+        try:
+            self._analyze_inner()
+        except Exception as _ae:
+            import traceback
+            messagebox.showerror("Помилка аналізу",
+                f"Виникла помилка при виконанні аналізу:\n\n"
+                f"{str(_ae)}\n\n"
+                f"Деталі:\n{traceback.format_exc()[-600:]}")
+
+    def _analyze_inner(self):
         created = datetime.now()
         params = self.ask_params()
         if not params["ok"]: return
@@ -3242,11 +3252,17 @@ class SADTk:
             elif design == "rcbd":
                 res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
             elif design == "latin":
-                res = anova_latin_square(long, self.factor_keys, lbf, ss_type)
+                # Для ЛК перший ключ = варіант, другий = рядок, третій = стовпець
+                fk_var = [self.factor_keys[0]]
+                res = anova_latin_square(long, fk_var, lbf, ss_type)
             else:
                 if split_main not in self.factor_keys: split_main = self.factor_keys[0]
                 res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
-        except Exception as ex: messagebox.showerror("Помилка моделі", str(ex)); return
+        except Exception as ex:
+            import traceback
+            messagebox.showerror("Помилка моделі",
+                str(ex) + "\n\nДетальніше:\n" + traceback.format_exc()[-500:])
+            return
 
         residuals = np.array(res.get("residuals", []), dtype=float)
         n_res = len(residuals)
@@ -3273,7 +3289,7 @@ class SADTk:
                 + sw_warning); return
 
         choice = self.choose_method(p_norm, design, n_var)
-        if not choice["ok"]: return
+        if not choice or not choice.get("ok"): return
         method = choice["method"]
 
         log_applied = False
@@ -11699,502 +11715,692 @@ _SADTk_orig_init = SADTk.__init__
 # TRIAL DESIGN GENERATOR
 # ═══════════════════════════════════════════════════════════════
 class TrialDesignWindow:
-    """Генератор плану польового досліду."""
+    """Генератор плану польового досліду — універсальний для всіх культур."""
+
+    # ── Типи культур з налаштуваннями ────────────────────────
+    CULTURES = {
+        "Зернові / польові культури": {
+            "plot_w": 3.0, "plot_l": 10.0,
+            "unit": "ділянка",
+            "indicators": ["Висота рослин, см", "Маса 1000 зерен, г",
+                           "Врожайність, т/га", "Вміст білку, %"],
+        },
+        "Садівництво (дерева)": {
+            "plot_w": 4.0, "plot_l": 5.0,
+            "unit": "дерево",
+            "indicators": ["Висота дерева, м", "Діаметр крони, м",
+                           "Врожайність з дерева, кг", "Маса плоду, г",
+                           "Вміст ЦРР, °Brix", "% зав'язування квіток"],
+        },
+        "Ягідники": {
+            "plot_w": 1.5, "plot_l": 5.0,
+            "unit": "кущ",
+            "indicators": ["Висота куща, см", "Кількість пагонів",
+                           "Врожайність з куща, кг", "Маса ягоди, г",
+                           "Вміст ЦРР, °Brix"],
+        },
+        "Овочівництво (відкритий ґрунт)": {
+            "plot_w": 2.0, "plot_l": 5.0,
+            "unit": "ділянка",
+            "indicators": ["Висота рослин, см", "Маса плоду, г",
+                           "Врожайність, т/га", "Товарність, %",
+                           "Вихід стандарту, %"],
+        },
+        "Захищений ґрунт (теплиця)": {
+            "plot_w": 1.0, "plot_l": 4.0,
+            "unit": "грядка",
+            "indicators": ["Висота рослин, см", "Кількість плодів/рослину",
+                           "Врожайність, кг/м²", "Маса плоду, г"],
+        },
+        "Виноградарство": {
+            "plot_w": 3.0, "plot_l": 10.0,
+            "unit": "кущ",
+            "indicators": ["Маса грона, г", "Кількість грон/кущ",
+                           "Врожайність з куща, кг", "Вміст ЦРР, °Brix",
+                           "Кислотність, г/л"],
+        },
+    }
+
+    DESIGNS = [
+        ("crd",   "CRD — Повністю рандомізований",
+         "Всі ділянки рівноцінні. Варіанти розміщуються випадково."),
+        ("rcbd",  "RCBD — Рандомізовані повні блоки (рекомендується)",
+         "Поле ділиться на повторності. Кожна повторність = всі варіанти."),
+        ("latin", "Латинський квадрат",
+         "Контролює 2 джерела мінливості. k варіантів = k рядів = k стовпців."),
+        ("split", "Split-plot — Розщеплені ділянки",
+         "Два фактори різного масштабу. WP = великі ділянки, SP = підділянки."),
+    ]
 
     HELP_TEXT = """
-ГЕНЕРАЦІЯ ПЛАНУ ПОЛЬОВОГО ДОСЛІДУ — ІНСТРУКЦІЯ
-═══════════════════════════════════════════════
+ГЕНЕРАТОР ПЛАНУ ПОЛЬОВОГО ДОСЛІДУ
+══════════════════════════════════════════════════
 
-ЩО РОБИТЬ ЦЕЙ МОДУЛЬ?
-  Автоматично рандомізує розміщення варіантів на ділянках
-  відповідно до обраного дизайну досліду.
+ЩО РОБИТЬ?
+  Автоматично рандомізує розміщення варіантів
+  і формує документи для польової роботи:
+  • Польова схема (кольорова карта ділянок)
+  • Список рандомізації (порядок закладки)
+  • Польовий журнал (таблиця для вимірювань)
 
-  Результат: польова схема, журнал спостережень,
-  список рандомізації — готові до друку або в Excel.
+══════════════════════════════════════════════════
+КРОК 1. ТИП КУЛЬТУРИ
+══════════════════════════════════════════════════
+  Оберіть тип культури — програма підлаштує:
+  • Типові розміри ділянок
+  • Стандартні показники для журналу
+  • Термінологію (ділянка/дерево/кущ)
 
-КРОК 1. ВВЕДІТЬ ВАРІАНТИ
-  Кожен рядок = один варіант (обробка, сорт, доза).
-  Наприклад:
+══════════════════════════════════════════════════
+КРОК 2. ВАРІАНТИ ДОСЛІДУ
+══════════════════════════════════════════════════
+  Введіть назви варіантів — по одному на рядок.
+  Приклади:
     Контроль (без добрив)
     N60P60K60
     N90P60K60
     N120P60K60
 
-КРОК 2. ОБЕРІТЬ ДИЗАЙН
+  Для Split-plot — введіть також sub-plot варіанти.
+
+══════════════════════════════════════════════════
+КРОК 3. ДИЗАЙН ДОСЛІДУ
+══════════════════════════════════════════════════
 
   CRD — Повністю рандомізований:
-    Всі ділянки рівноцінні, варіанти розміщуються
-    абсолютно випадково по всьому досліду.
-    Використовується на однорідних ділянках.
-    Статистична модель: Y = μ + τ + ε
+    Для однорідних умов. Всі ділянки рівноцінні.
+    Варіанти розміщуються абсолютно випадково.
+    Простий але потребує однорідного фону.
 
   RCBD — Рандомізовані повні блоки:
-    Дослід розбивається на блоки (= повторності).
-    Кожен блок містить всі варіанти рівно по 1 разу.
-    Блоки розміщуються перпендикулярно до відомого
-    джерела варіації (схил, родючість, зрошення).
-    Рекомендується для більшості польових дослідів.
-    Статистична модель: Y = μ + τ + β + ε
+    РЕКОМЕНДУЄТЬСЯ для більшості дослідів.
+    Поле ділиться на ПОВТОРНОСТІ (блоки).
+    Кожна повторність містить всі варіанти.
+    Блоки розміщують перпендикулярно до основного
+    градієнта мінливості (схил, зрошення, ряди).
+    У садівництві: повторність = кілька дерев/ряд.
 
   Латинський квадрат:
-    Контролює два джерела варіації одночасно
-    (рядки і стовпці = незалежні блоки).
-    Кількість рядків = стовпців = варіантів (n×n).
-    Ідеально для ділянок з двонаправленою мінливістю.
-    Обмеження: k варіантів → k² ділянок.
-    Статистична модель: Y = μ + τ + ρ + γ + ε
+    Контролює ДВА незалежних джерела мінливості.
+    k варіантів → k рядів × k стовпців ділянок.
+    Кожен варіант — рівно 1 раз у кожному ряду
+    і рівно 1 раз у кожному стовпці.
+    Рекомендується при k=4-6 варіантів.
+    Після досліду → 3-факторна ANOVA у S.A.D.
+    (Фактор A = Варіант, B = Рядок, C = Стовпець)
 
   Split-plot — Розщеплені ділянки:
-    Два фактори різного розміру ділянок.
-    Whole-plot (WP): головний фактор — великі ділянки.
-    Sub-plot (SP): другорядний фактор — малі підділянки.
-    Типово: WP = обробка ґрунту, SP = сорт.
-    Статистична модель: два рівні рандомізації.
+    Для двох факторів різного масштабу.
+    WP (whole-plot): головний фактор — великі ділянки.
+    SP (sub-plot): другорядний — всередині WP.
+    Приклади:
+      Зернові:    WP = обробка ґрунту, SP = сорт
+      Садівництво: WP = підщепа, SP = сорт
+      Овочі:      WP = спосіб вирощування, SP = сорт
 
-КРОК 3. SEED РАНДОМІЗАЦІЇ
-  Будь-яке число (наприклад рік досліду: 2024).
-  При однаковому seed — однакова рандомізація.
-  Важливо зберегти seed для документування досліду!
+══════════════════════════════════════════════════
+КРОК 4. SEED РАНДОМІЗАЦІЇ
+══════════════════════════════════════════════════
+  Seed — технічний номер жеребкування.
+  При однаковому seed → однакова схема.
+  ЗБЕРІГАЙТЕ seed у документації досліду!
+  Seed ≠ Рік: seed може бути будь-яким числом.
 
-КРОК 4. РОЗМІРИ ДІЛЯНКИ
-  Вкажіть реальні розміри ділянок.
-  Використовується для розрахунку площі досліду
-  і відстаней між ділянками на схемі.
+══════════════════════════════════════════════════
+КРОК 5. ПОЛЬОВИЙ ЖУРНАЛ
+══════════════════════════════════════════════════
+  Налаштуйте назви показників (через ";").
+  Програма підставляє типові показники для
+  обраного типу культури.
+  Натисніть "▶ Оновити" після зміни назв.
+  Збережіть журнал у Excel для польової роботи.
 
-КРОК 5. РЕЗУЛЬТАТИ
-  Польова схема:   просторове розміщення варіантів
-  Список рандомізації: порядок закладки ділянок
-  Польовий журнал: таблиця для запису вимірювань
+══════════════════════════════════════════════════
+САДІВНИЦТВО — ОСОБЛИВОСТІ
+══════════════════════════════════════════════════
+  Ділянка = кілька дерев одного варіанту в ряду.
+  Повторність = окремий ряд або частина ряду.
 
-  Зберегти → Excel для роботи в полі
-  Друк → готовий документ для польового журналу
+  Приклад для яблуні (схема 4×5 м):
+    4 сорти × 3 повторності = 12 ділянок
+    По 3-5 дерев на ділянку
+    Розмір ділянки: 4 м (ширина) × 15 м (5 дерев)
+
+  У RCBD: кожна повторність = 1 ряд дерев,
+  де всі 4 сорти розміщені випадково в ряду.
+
+  Показники для кожного дерева усереднюють
+  і записують одне середнє значення на ділянку.
 """
-
-    DESIGNS = ["CRD (повна рандомізація)",
-               "RCBD (рандомізовані блоки)",
-               "Латинський квадрат",
-               "Split-plot (розщеплені ділянки)"]
 
     def __init__(self, parent):
         self.win = tk.Toplevel(parent)
-        self.win.title("Генерація плану польового досліду")
-        self.win.geometry("1060x720")
+        self.win.title("Генератор плану польового досліду")
+        self.win.geometry("1160x760")
         self.win.resizable(True, True)
         set_icon(self.win)
-        self._plan_data = None   # зберігаємо результат для збереження/друку
+        self._plan_data = None
         self._build()
 
+    # ═══════════════════════════════════════════════════════
+    # _build — головний інтерфейс
+    # ═══════════════════════════════════════════════════════
     def _build(self):
-        # ── Toolbar ──────────────────────────────────────────
-        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Згенерувати план", bg="#c62828", fg="white",
-                  font=("Times New Roman",13),
-                  command=self._generate).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="💾 Зберегти у Excel",
-                  font=("Times New Roman",11),
-                  command=self._save_excel).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="🖨 Друк / PDF",
-                  font=("Times New Roman",11),
-                  command=self._print_plan).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
-                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+        rf = ("Times New Roman", 11)
 
-        # ── Основна область: параметри + результат ───────────
+        # ── Toolbar ────────────────────────────────────────
+        top = tk.Frame(self.win, padx=8, pady=5); top.pack(fill=tk.X)
+        tk.Button(top, text="▶ Згенерувати план", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
+                  command=self._generate).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="💾 Зберегти схему PNG",
+                  font=rf, command=self._save_png).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="💾 Зберегти журнал Excel",
+                  font=rf, command=self._save_excel).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="💾 Зберегти рандомізацію TXT",
+                  font=rf, command=self._save_rand_txt).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=rf, command=self._show_help).pack(side=tk.LEFT, padx=4)
+
+        # ── Основна область ────────────────────────────────
         main = tk.Frame(self.win); main.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
 
-        # ── Ліва панель: параметри ───────────────────────────
-        left = tk.Frame(main, width=320); left.pack(side=tk.LEFT, fill=tk.Y, padx=(0,8))
-        left.pack_propagate(False)
+        # ── ЛІВА ПАНЕЛЬ (прокручувана) ─────────────────────
+        left_outer = tk.Frame(main, width=360)
+        left_outer.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        left_outer.pack_propagate(False)
+        lc = tk.Canvas(left_outer, highlightthickness=0)
+        lc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        lsb = ttk.Scrollbar(left_outer, orient="vertical", command=lc.yview)
+        lsb.pack(side=tk.RIGHT, fill=tk.Y)
+        lc.configure(yscrollcommand=lsb.set)
+        lf = tk.Frame(lc); lc.create_window((0, 0), window=lf, anchor="nw")
+        lf.bind("<Configure>", lambda e: lc.configure(scrollregion=lc.bbox("all")))
+        left_outer.bind("<MouseWheel>",
+                        lambda e: lc.yview_scroll(int(-1*(e.delta/120)), "units"))
 
-        # Варіанти
-        vf = tk.LabelFrame(left, text="Варіанти досліду",
-                           font=("Times New Roman",11,"bold"), padx=8, pady=6)
-        vf.pack(fill=tk.X, pady=(0,6))
-        tk.Label(vf, text="Один варіант на рядок:",
-                 font=("Times New Roman",10), fg="#666").pack(anchor="w")
-        self.var_text = tk.Text(vf, width=34, height=8,
-                                font=("Times New Roman",11), wrap="word")
-        self.var_text.pack(fill=tk.X, pady=4)
-        # Приклад за замовчуванням
-        default_vars = "Контроль\nДоза 1 (N60P60K60)\nДоза 2 (N90P60K60)\nДоза 3 (N120P60K60)"
-        self.var_text.insert("1.0", default_vars)
+        # ─── Тип культури ──────────────────────────────────
+        cf = tk.LabelFrame(lf, text="1. Тип культури",
+                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+        cf.pack(fill=tk.X, pady=(0, 4))
+        self.culture_var = tk.StringVar(value=list(self.CULTURES.keys())[0])
+        self.culture_cb = ttk.Combobox(cf, textvariable=self.culture_var,
+                                       values=list(self.CULTURES.keys()),
+                                       state="readonly", width=36, font=rf)
+        self.culture_cb.pack(fill=tk.X, pady=2)
+        self.culture_cb.bind("<<ComboboxSelected>>", self._on_culture)
+        self._culture_hint = tk.Label(cf, text="", font=("Times New Roman", 9),
+                                      fg="#555", justify="left")
+        self._culture_hint.pack(anchor="w")
 
-        # Параметри дизайну
-        pf = tk.LabelFrame(left, text="Параметри дизайну",
-                           font=("Times New Roman",11,"bold"), padx=8, pady=6)
-        pf.pack(fill=tk.X, pady=(0,6))
-        rf = ("Times New Roman",11)
+        # ─── Варіанти ──────────────────────────────────────
+        vf = tk.LabelFrame(lf, text="2. Варіанти досліду (один на рядок)",
+                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+        vf.pack(fill=tk.X, pady=(0, 4))
+        self.var_text = tk.Text(vf, width=38, height=6, font=rf, wrap="word")
+        self.var_text.pack(fill=tk.X, pady=2)
+        self.var_text.insert("1.0", "Контроль\nВаріант 1\nВаріант 2\nВаріант 3")
 
-        tk.Label(pf, text="Дизайн:", font=rf).grid(row=0, column=0, sticky="w", pady=3)
-        self.design_var = tk.StringVar(value=self.DESIGNS[1])
-        self.design_cb = ttk.Combobox(pf, textvariable=self.design_var,
-                                      values=self.DESIGNS, state="readonly", width=24,
-                                      font=rf)
-        self.design_cb.grid(row=0, column=1, sticky="w", padx=4)
-        self.design_cb.bind("<<ComboboxSelected>>", self._on_design_change)
-
-        tk.Label(pf, text="Повторностей:", font=rf).grid(row=1, column=0, sticky="w", pady=3)
-        self.reps_var = tk.IntVar(value=3)
-        tk.Spinbox(pf, from_=2, to=10, textvariable=self.reps_var,
-                   width=6, font=rf).grid(row=1, column=1, sticky="w", padx=4)
+        # ─── Дизайн ────────────────────────────────────────
+        df = tk.LabelFrame(lf, text="3. Дизайн досліду",
+                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+        df.pack(fill=tk.X, pady=(0, 4))
+        self.design_var = tk.StringVar(value="rcbd")
+        for val, label, desc in self.DESIGNS:
+            fr = tk.Frame(df); fr.pack(fill=tk.X, pady=1)
+            tk.Radiobutton(fr, text=label, variable=self.design_var, value=val,
+                           font=("Times New Roman", 11),
+                           command=self._on_design).pack(side=tk.LEFT)
+        self._design_hint = tk.Label(df, text="", font=("Times New Roman", 9),
+                                     fg="#1a4b8c", bg="#eef4ff",
+                                     justify="left", wraplength=320, padx=4, pady=3)
+        self._design_hint.pack(fill=tk.X, pady=(4, 0))
 
         # Split-plot додатковий фактор
-        self.sp_frame = tk.Frame(pf); self.sp_frame.grid(row=2, column=0, columnspan=2, sticky="w")
-        tk.Label(self.sp_frame, text="Sub-plot варіанти:", font=rf).pack(anchor="w")
-        self.sp_text = tk.Text(self.sp_frame, width=28, height=3, font=rf)
+        self.sp_frame = tk.LabelFrame(lf, text="Sub-plot варіанти",
+                                      font=("Times New Roman", 11, "bold"),
+                                      padx=8, pady=4)
+        self.sp_text = tk.Text(self.sp_frame, width=38, height=3, font=rf)
         self.sp_text.pack(fill=tk.X)
         self.sp_text.insert("1.0", "Сорт А\nСорт Б\nСорт В")
-        self.sp_frame.grid_remove()  # показуємо лише для split-plot
+        # (показується лише для split-plot)
 
-        tk.Label(pf, text="Seed рандомізації:", font=rf).grid(row=3, column=0, sticky="w", pady=3)
-        self.seed_var = tk.IntVar(value=2024)
-        tk.Entry(pf, textvariable=self.seed_var, width=10, font=rf
-                 ).grid(row=3, column=1, sticky="w", padx=4)
-        tk.Label(pf, text="(для відтворення результату)",
-                 font=("Times New Roman",9), fg="#888"
-                 ).grid(row=4, column=0, columnspan=2, sticky="w")
+        # ─── Параметри ─────────────────────────────────────
+        pf = tk.LabelFrame(lf, text="4. Параметри",
+                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+        pf.pack(fill=tk.X, pady=(0, 4))
+        self._pv = {}
+        for ri, (lbl, key, default, hint) in enumerate([
+            ("Повторностей:", "reps", "3",
+             "Кількість повторностей (блоків)"),
+            ("Seed рандомізації:", "seed", "2024",
+             "Число для відтворення жеребкування. ≠ рік!"),
+            ("Ширина ділянки, м:", "pw", "5",
+             "Реальна ширина однієї ділянки"),
+            ("Довжина ділянки, м:", "pl", "10",
+             "Реальна довжина однієї ділянки"),
+        ]):
+            tk.Label(pf, text=lbl, font=rf).grid(row=ri, column=0, sticky="w", pady=2)
+            v = tk.StringVar(value=default); self._pv[key] = v
+            tk.Entry(pf, textvariable=v, width=9, font=rf
+                     ).grid(row=ri, column=1, sticky="w", padx=6)
+            tk.Label(pf, text=hint, font=("Times New Roman", 9), fg="#666"
+                     ).grid(row=ri, column=2, sticky="w")
 
-        # Розміри ділянки
-        df2 = tk.LabelFrame(left, text="Розміри ділянки (необов'язково)",
-                            font=("Times New Roman",11,"bold"), padx=8, pady=6)
-        df2.pack(fill=tk.X, pady=(0,6))
-        tk.Label(df2, text="Ширина (м):", font=rf).grid(row=0, column=0, sticky="w", pady=2)
-        self.width_var = tk.StringVar(value="5")
-        tk.Entry(df2, textvariable=self.width_var, width=8, font=rf
-                 ).grid(row=0, column=1, sticky="w", padx=4)
-        tk.Label(df2, text="Довжина (м):", font=rf).grid(row=1, column=0, sticky="w", pady=2)
-        self.length_var = tk.StringVar(value="10")
-        tk.Entry(df2, textvariable=self.length_var, width=8, font=rf
-                 ).grid(row=1, column=1, sticky="w", padx=4)
+        # ─── Паспорт ───────────────────────────────────────
+        nf = tk.LabelFrame(lf, text="5. Паспорт досліду",
+                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+        nf.pack(fill=tk.X, pady=(0, 4))
+        self._nv = {}
+        for ri, (lbl, key) in enumerate([
+            ("Назва:", "name"), ("Рік:", "year"),
+            ("Місце:", "loc"),  ("Відповідальний:", "resp"),
+        ]):
+            tk.Label(nf, text=lbl, font=rf).grid(row=ri, column=0, sticky="w", pady=2)
+            v = tk.StringVar(value=(str(datetime.now().year) if key=="year" else ""))
+            self._nv[key] = v
+            tk.Entry(nf, textvariable=v, width=28, font=rf
+                     ).grid(row=ri, column=1, sticky="w", padx=6, pady=2)
 
-        # Назва досліду
-        nf = tk.LabelFrame(left, text="Інформація про дослід",
-                           font=("Times New Roman",11,"bold"), padx=8, pady=6)
-        nf.pack(fill=tk.X)
-        tk.Label(nf, text="Назва:", font=rf).grid(row=0, column=0, sticky="w", pady=2)
-        self.name_var = tk.StringVar(value="")
-        tk.Entry(nf, textvariable=self.name_var, width=26, font=rf
-                 ).grid(row=0, column=1, sticky="w", padx=4)
-        tk.Label(nf, text="Рік:", font=rf).grid(row=1, column=0, sticky="w", pady=2)
-        self.year_var = tk.StringVar(value=str(datetime.now().year))
-        tk.Entry(nf, textvariable=self.year_var, width=10, font=rf
-                 ).grid(row=1, column=1, sticky="w", padx=4)
-        tk.Label(nf, text="Місцезнаходження:", font=rf).grid(row=2, column=0, sticky="w", pady=2)
-        self.loc_var = tk.StringVar(value="")
-        tk.Entry(nf, textvariable=self.loc_var, width=26, font=rf
-                 ).grid(row=2, column=1, sticky="w", padx=4)
-
-        # ── Права панель: результати ─────────────────────────
+        # ── ПРАВА ПАНЕЛЬ — вкладки результатів ─────────────
         right = tk.Frame(main); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        nb = ttk.Notebook(right); nb.pack(fill=tk.BOTH, expand=True)
-        self.nb = nb
+        self.nb = ttk.Notebook(right); self.nb.pack(fill=tk.BOTH, expand=True)
 
-        # Вкладка 1: Польова схема
-        self.tab_scheme = tk.Frame(nb); nb.add(self.tab_scheme, text="Польова схема")
-        self._scheme_canvas = tk.Canvas(self.tab_scheme, bg="white")
-        sch_vsb = ttk.Scrollbar(self.tab_scheme, orient="vertical",
-                                command=self._scheme_canvas.yview)
-        sch_hsb = ttk.Scrollbar(self.tab_scheme, orient="horizontal",
-                                command=self._scheme_canvas.xview)
-        sch_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        sch_hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self._scheme_canvas.pack(fill=tk.BOTH, expand=True)
-        self._scheme_canvas.configure(yscrollcommand=sch_vsb.set,
-                                      xscrollcommand=sch_hsb.set)
+        # Вкладка 1: Схема
+        t1 = tk.Frame(self.nb); self.nb.add(t1, text="🗺 Польова схема")
+        tk.Label(t1, text="Клітинка = одна ділянка. Кольори = варіанти. Двигайте схему прокруткою.",
+                 font=("Times New Roman", 9), fg="#666").pack(anchor="w", padx=4, pady=2)
+        self._scheme_cv = tk.Canvas(t1, bg="white")
+        s_vsb = ttk.Scrollbar(t1, orient="vertical",
+                               command=self._scheme_cv.yview)
+        s_hsb = ttk.Scrollbar(t1, orient="horizontal",
+                               command=self._scheme_cv.xview)
+        s_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        s_hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        self._scheme_cv.pack(fill=tk.BOTH, expand=True)
+        self._scheme_cv.configure(yscrollcommand=s_vsb.set,
+                                   xscrollcommand=s_hsb.set)
 
-        # Вкладка 2: Список рандомізації
-        self.tab_rand = tk.Frame(nb); nb.add(self.tab_rand, text="Список рандомізації")
-        rand_vsb = ttk.Scrollbar(self.tab_rand, orient="vertical"); rand_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.rand_txt = tk.Text(self.tab_rand, font=("Courier New",11),
-                                yscrollcommand=rand_vsb.set,
+        # Вкладка 2: Рандомізація
+        t2 = tk.Frame(self.nb); self.nb.add(t2, text="📋 Рандомізація")
+        tb2 = tk.Frame(t2); tb2.pack(fill=tk.X, padx=4, pady=3)
+        tk.Label(tb2, text="Порядок закладки ділянок:",
+                 font=rf).pack(side=tk.LEFT)
+        r_vsb = ttk.Scrollbar(t2, orient="vertical")
+        r_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.rand_txt = tk.Text(t2, font=("Courier New", 10),
+                                yscrollcommand=r_vsb.set,
                                 state="disabled", wrap="none")
         self.rand_txt.pack(fill=tk.BOTH, expand=True)
-        rand_vsb.config(command=self.rand_txt.yview)
+        r_vsb.config(command=self.rand_txt.yview)
 
-        # Вкладка 3: Польовий журнал
-        self.tab_journal = tk.Frame(nb); nb.add(self.tab_journal, text="Польовий журнал")
-        j_vsb = ttk.Scrollbar(self.tab_journal, orient="vertical"); j_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        j_hsb = ttk.Scrollbar(self.tab_journal, orient="horizontal"); j_hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self.journal_tv = ttk.Treeview(self.tab_journal,
-                                       yscrollcommand=j_vsb.set,
+        # Вкладка 3: Журнал
+        t3 = tk.Frame(self.nb); self.nb.add(t3, text="📓 Польовий журнал")
+        tb3 = tk.Frame(t3); tb3.pack(fill=tk.X, padx=4, pady=3)
+        tk.Label(tb3, text="Показники:", font=rf).pack(side=tk.LEFT, padx=(0,4))
+        self.ind_var = tk.StringVar()
+        tk.Entry(tb3, textvariable=self.ind_var, width=55,
+                 font=("Times New Roman", 10)).pack(side=tk.LEFT, padx=2)
+        tk.Button(tb3, text="▶ Оновити", bg="#c62828", fg="white",
+                  font=("Times New Roman", 10),
+                  command=self._refresh_journal).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb3, text="(через крапку з комою)",
+                 font=("Times New Roman", 9), fg="#888").pack(side=tk.LEFT)
+
+        j_frame = tk.Frame(t3); j_frame.pack(fill=tk.BOTH, expand=True)
+        j_vsb = ttk.Scrollbar(j_frame, orient="vertical")
+        j_hsb = ttk.Scrollbar(j_frame, orient="horizontal")
+        j_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        j_hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        self.journal_tv = ttk.Treeview(j_frame, yscrollcommand=j_vsb.set,
                                        xscrollcommand=j_hsb.set)
         self.journal_tv.pack(fill=tk.BOTH, expand=True)
         j_vsb.config(command=self.journal_tv.yview)
         j_hsb.config(command=self.journal_tv.xview)
 
-    def _on_design_change(self, event=None):
-        if "Split" in self.design_var.get():
-            self.sp_frame.grid()
-            self.reps_var.set(max(2, self.reps_var.get()))
-        else:
-            self.sp_frame.grid_remove()
+        # Ініціалізуємо підказки
+        self._on_culture()
+        self._on_design()
 
-    # ── Довідка ───────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════
+    # Обробники змін
+    # ═══════════════════════════════════════════════════════
+    def _on_culture(self, *_):
+        key = self.culture_var.get()
+        cfg = self.CULTURES.get(key, {})
+        # Підказка розміру
+        unit = cfg.get("unit", "ділянка")
+        pw = cfg.get("plot_w", 5); pl = cfg.get("plot_l", 10)
+        self._culture_hint.configure(
+            text=f"Одиниця: {unit}  |  Типові розміри: {pw}×{pl} м")
+        # Автозаповнення розмірів
+        if hasattr(self, '_pv'):
+            self._pv["pw"].set(str(pw))
+            self._pv["pl"].set(str(pl))
+        # Автозаповнення показників журналу
+        indicators = cfg.get("indicators", [])
+        if hasattr(self, 'ind_var'):
+            self.ind_var.set("; ".join(indicators))
+
+    def _on_design(self, *_):
+        val = self.design_var.get()
+        hints = {
+            "crd":   "Однорідний фон. Варіанти розміщуються абсолютно випадково по всьому полю.",
+            "rcbd":  "Рекомендується. Поле ділиться на повторності. Кожна повторність = всі варіанти.",
+            "latin": "k варіантів = k рядів = k стовпців. Аналіз — 3-факторна ANOVA у S.A.D.",
+            "split": "Введіть WP (whole-plot) варіанти вище і SP варіанти нижче.",
+        }
+        if hasattr(self, '_design_hint'):
+            self._design_hint.configure(text=hints.get(val, ""))
+        if hasattr(self, 'sp_frame'):
+            if val == "split":
+                self.sp_frame.pack(fill=tk.X, pady=(0, 4),
+                                   after=self.sp_frame.master.winfo_children()[-1]
+                                   if self.sp_frame.master.winfo_children() else None)
+            else:
+                self.sp_frame.pack_forget()
+
+    # ═══════════════════════════════════════════════════════
+    # Довідка
+    # ═══════════════════════════════════════════════════════
     def _show_help(self):
-        win = tk.Toplevel(self.win); win.title("Довідка — Генерація плану досліду")
+        win = tk.Toplevel(self.win)
+        win.title("Довідка — Генератор плану досліду")
         win.geometry("700x660"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg="#fafafa", padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
-                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=("Times New Roman", 11)).pack(pady=6)
 
-    # ── Генерація плану ───────────────────────────────────────
+    # ═══════════════════════════════════════════════════════
+    # Генерація плану
+    # ═══════════════════════════════════════════════════════
     def _generate(self):
         import random
 
-        # Зчитуємо варіанти
-        variants = [v.strip() for v in self.var_text.get("1.0","end").splitlines()
-                    if v.strip()]
+        variants = [v.strip() for v in
+                    self.var_text.get("1.0", "end").splitlines() if v.strip()]
         if len(variants) < 2:
-            messagebox.showwarning("Замало варіантів",
-                "Введіть щонайменше 2 варіанти."); return
-
-        reps   = self.reps_var.get()
-        seed   = self.seed_var.get()
-        design = self.design_var.get()
-        rng    = random.Random(seed)
+            messagebox.showwarning("", "Введіть щонайменше 2 варіанти."); return
 
         try:
-            w = float(self.width_var.get() or "5")
-            l = float(self.length_var.get() or "10")
-        except Exception: w, l = 5., 10.
+            reps = int(self._pv["reps"].get())
+            seed = int(self._pv["seed"].get())
+            pw   = float(self._pv["pw"].get())
+            pl   = float(self._pv["pl"].get())
+        except ValueError:
+            messagebox.showwarning("", "Перевірте числові поля (повторності, seed, розміри)."); return
 
+        design = self.design_var.get()
+        rng = random.Random(seed)
         k = len(variants)
 
-        # ── Латинський квадрат: перевірка ────────────────────
-        if "Латинськ" in design and k > 8:
-            messagebox.showwarning("Обмеження",
-                f"Латинський квадрат: максимум 8 варіантів.\n"
-                f"У вас {k}. Оберіть CRD або RCBD."); return
+        if design == "latin" and k > 8:
+            messagebox.showwarning("Латинський квадрат",
+                f"Максимум 8 варіантів для ЛК. У вас {k}.\n"
+                "Оберіть RCBD для більшої кількості варіантів."); return
 
-        # ── Генерація розміщення ──────────────────────────────
-        plan = []   # список dict: {plot, block, variant, row, col}
+        plan = []
 
-        if "CRD" in design:
-            all_plots = variants * reps
-            rng.shuffle(all_plots)
-            for i, v in enumerate(all_plots):
-                plan.append({"plot": i+1, "block": "–", "variant": v,
-                             "row": i//6+1, "col": i%6+1})
+        if design == "crd":
+            all_p = variants * reps; rng.shuffle(all_p)
+            for i, v in enumerate(all_p):
+                plan.append({"plot": i+1, "rep": "–",
+                             "variant": v, "row": i//k+1, "col": i%k+1})
 
-        elif "RCBD" in design:
-            plot_n = 0
+        elif design == "rcbd":
+            pn = 0
             for b in range(1, reps+1):
-                block_vars = variants[:]
-                rng.shuffle(block_vars)
-                for i, v in enumerate(block_vars):
-                    plot_n += 1
-                    plan.append({"plot": plot_n, "block": f"Блок {b}",
+                bv = variants[:]; rng.shuffle(bv)
+                for i, v in enumerate(bv):
+                    pn += 1
+                    plan.append({"plot": pn, "rep": f"Повт. {b}",
                                 "variant": v, "row": b, "col": i+1})
 
-        elif "Латинськ" in design:
-            # Генерація латинського квадрату
+        elif design == "latin":
+            reps = k
             base = list(range(k))
-            rows_perm = [base[:]]
+            rows_p = [base[:]]
             for _ in range(k-1):
-                rows_perm.append(rows_perm[-1][1:] + [rows_perm[-1][0]])
-            # Рандомізуємо рядки і стовпці
-            rng.shuffle(rows_perm)
-            col_perm = list(range(k)); rng.shuffle(col_perm)
-            plot_n = 0
+                rows_p.append(rows_p[-1][1:] + [rows_p[-1][0]])
+            rng.shuffle(rows_p)
+            cp = list(range(k)); rng.shuffle(cp)
+            pn = 0
             for r in range(k):
                 for c in range(k):
-                    plot_n += 1
-                    v_idx = rows_perm[r][col_perm[c]]
-                    plan.append({"plot": plot_n,
-                                "block": f"Рядок {r+1}",
-                                "variant": variants[v_idx],
-                                "row": r+1, "col": c+1})
-            reps = k  # для латинського квадрату рeps = k
+                    pn += 1
+                    plan.append({
+                        "plot": pn, "rep": f"Рядок {r+1}",
+                        "variant": variants[rows_p[r][cp[c]]],
+                        "row": r+1, "col": c+1,
+                        "col_label": f"Стовп. {c+1}"
+                    })
 
-        elif "Split" in design:
-            sp_vars = [v.strip() for v in self.sp_text.get("1.0","end").splitlines()
-                       if v.strip()]
+        elif design == "split":
+            sp_vars = [v.strip() for v in
+                       self.sp_text.get("1.0", "end").splitlines() if v.strip()]
             if len(sp_vars) < 2:
-                messagebox.showwarning("","Введіть щонайменше 2 sub-plot варіанти."); return
-            plot_n = 0
+                messagebox.showwarning("", "Введіть щонайменше 2 sub-plot варіанти."); return
+            pn = 0
             for b in range(1, reps+1):
-                wp_order = variants[:]
-                rng.shuffle(wp_order)
-                for wi, wp in enumerate(wp_order):
-                    sp_order = sp_vars[:]
-                    rng.shuffle(sp_order)
-                    for si, sp in enumerate(sp_order):
-                        plot_n += 1
-                        plan.append({"plot": plot_n,
-                                    "block": f"Блок {b}",
-                                    "variant": f"{wp} / {sp}",
-                                    "wp": wp, "sp": sp,
-                                    "row": b,
-                                    "col": wi*len(sp_vars)+si+1})
+                wp_o = variants[:]; rng.shuffle(wp_o)
+                for wp in wp_o:
+                    sp_o = sp_vars[:]; rng.shuffle(sp_o)
+                    for sp in sp_o:
+                        pn += 1
+                        plan.append({
+                            "plot": pn, "rep": f"Повт. {b}",
+                            "variant": f"{wp} / {sp}",
+                            "wp": wp, "sp": sp,
+                            "row": b,
+                            "col": (wp_o.index(wp))*len(sp_vars) + sp_o.index(sp) + 1
+                        })
 
-        # Зберігаємо для подальшого використання
+        # Зберігаємо план
+        design_name = {v: l for v, l, _ in self.DESIGNS}.get(design, design)
         self._plan_data = {
             "plan": plan, "variants": variants, "reps": reps,
-            "design": design, "seed": seed, "k": k,
-            "plot_w": w, "plot_l": l,
-            "name": self.name_var.get(),
-            "year": self.year_var.get(),
-            "loc":  self.loc_var.get(),
+            "design": design, "design_name": design_name,
+            "seed": seed, "k": k, "pw": pw, "pl": pl,
+            "culture": self.culture_var.get(),
+            "name":  self._nv["name"].get(),
+            "year":  self._nv["year"].get(),
+            "loc":   self._nv["loc"].get(),
+            "resp":  self._nv["resp"].get(),
         }
 
-        self._draw_scheme(plan, design, k, reps, w, l)
-        self._fill_randomization(plan)
-        self._fill_journal(plan, variants)
+        self._draw_scheme()
+        self._fill_rand()
+        self._fill_journal()
         self.nb.select(0)
+
         messagebox.showinfo("Готово",
-            f"План згенеровано.\n"
+            f"План згенеровано!\n\n"
+            f"Дизайн: {design_name}\n"
+            f"Варіантів: {k}   |   Повторностей: {reps}\n"
+            f"Ділянок: {len(plan)}\n"
+            f"Загальна площа: {pw*pl*len(plan):.0f} м²\n\n"
             f"Seed рандомізації: {seed}\n"
-            f"Збережіть seed для документування досліду!")
+            f"⚠ Збережіть seed у документацію досліду!")
 
-    # ── Малювання схеми ───────────────────────────────────────
-    def _draw_scheme(self, plan, design, k, reps, pw, pl):
-        cv = self._scheme_canvas
-        cv.delete("all")
+    # ═══════════════════════════════════════════════════════
+    # Польова схема
+    # ═══════════════════════════════════════════════════════
+    def _draw_scheme(self):
+        if not self._plan_data: return
+        cv = self._scheme_cv; cv.delete("all")
+        d = self._plan_data; plan = d["plan"]
 
-        # Кольорова палітра варіантів
-        palettes = ["#aed6f1","#a9dfbf","#f9e79f","#f1948a","#d2b4de",
+        PALETTES = ["#aed6f1","#a9dfbf","#f9e79f","#f1948a","#d2b4de",
                     "#a3e4d7","#fad7a0","#d5d8dc","#82e0aa","#f0b27a",
                     "#85c1e9","#f7dc6f","#c39bd3","#76d7c4","#f8c471"]
-        all_variants = list(dict.fromkeys(p["variant"] for p in plan))
-        col_map = {v: palettes[i % len(palettes)]
-                   for i, v in enumerate(all_variants)}
+        all_v = list(dict.fromkeys(p["variant"] for p in plan))
+        cmap  = {v: PALETTES[i % len(PALETTES)] for i, v in enumerate(all_v)}
 
-        # Розраховуємо розміри клітинок
-        cell_w = max(90, min(140, 700 // max(k, reps)))
-        cell_h = max(50, min(80, 400 // max(k, reps)))
-        pad = 8
-
-        # Заголовки стовпців
         cols_set = sorted(set(p["col"] for p in plan))
         rows_set = sorted(set(p["row"] for p in plan))
-
-        x0 = 80; y0 = 50
+        nc = len(cols_set); nr = len(rows_set)
+        cw = max(78, min(130, 680 // nc))
+        ch = max(44, min(72,  400 // nr))
+        pad = 5; x0 = 110; y0 = 55
 
         # Заголовок
-        cv.create_text(x0 + len(cols_set)*cell_w//2, 18,
-                       text=f"{design}   |   {len(all_variants)} варіантів   "
-                            f"|   {reps} повторностей   |   Seed={self._plan_data['seed']}",
-                       font=("Times New Roman",11,"bold"), fill="#000")
+        title = (d.get("name") or "План досліду")
+        sub   = (f"{d.get('culture','')}  |  {d['design_name']}  |  "
+                 f"Seed={d['seed']}  |  {d.get('year','')}")
+        cv.create_text(x0 + nc*cw//2, 16,
+                       text=title, font=("Times New Roman",12,"bold"), fill="#000")
+        cv.create_text(x0 + nc*cw//2, 34,
+                       text=sub, font=("Times New Roman",9), fill="#555")
+
+        # Мітки рядків
+        rep_map = {}
+        for p in plan: rep_map[p["row"]] = p["rep"]
+        for i, r in enumerate(rows_set):
+            cv.create_text(x0-6, y0+i*ch+ch//2,
+                           text=rep_map.get(r, f"Ряд {r}"),
+                           anchor="e", font=("Times New Roman",9,"bold"), fill="#333")
 
         # Мітки стовпців
         for j, c in enumerate(cols_set):
-            cx = x0 + j*cell_w + cell_w//2
-            if "RCBD" in design or "Латинськ" in design:
-                lbl = f"Стовп {c}" if "Латинськ" in design else str(c)
-            else:
-                lbl = f"#{c}"
-            cv.create_text(cx, y0-18, text=lbl,
-                          font=("Times New Roman",9,"bold"), fill="#555")
-
-        # Мітки рядків (блоки)
-        block_labels = {}
-        for p in plan:
-            block_labels[p["row"]] = p["block"]
-
-        for i, r in enumerate(rows_set):
-            ry = y0 + i*cell_h + cell_h//2
-            lbl = block_labels.get(r, str(r))
-            cv.create_text(x0-8, ry, text=lbl, anchor="e",
-                          font=("Times New Roman",9,"bold"), fill="#333")
+            lbl = plan[[p for p in plan if p["col"]==c][0]
+                       ].get("col_label", f"#{c}")
+            cv.create_text(x0+j*cw+cw//2, y0-14,
+                           text=lbl, font=("Times New Roman",8), fill="#555")
 
         # Ділянки
         for p in plan:
             ci = cols_set.index(p["col"])
             ri = rows_set.index(p["row"])
-            x1 = x0 + ci*cell_w; y1 = y0 + ri*cell_h
-            x2 = x1+cell_w-pad;  y2 = y1+cell_h-pad
-
-            color = col_map.get(p["variant"], "#eeeeee")
-            cv.create_rectangle(x1, y1, x2, y2,
-                               fill=color, outline="#666", width=1)
-
-            # Номер ділянки
-            cv.create_text(x1+6, y1+8, text=f"№{p['plot']}",
-                          anchor="nw", font=("Courier New",7), fill="#444")
-
-            # Назва варіанту (скорочена)
-            v_short = p["variant"][:16] + "…" if len(p["variant"]) > 16 else p["variant"]
-            cv.create_text((x1+x2)//2, (y1+y2)//2,
-                          text=v_short, font=("Times New Roman",8),
-                          fill="#000", width=cell_w-8)
+            x1 = x0+ci*cw; y1 = y0+ri*ch
+            x2 = x1+cw-pad; y2 = y1+ch-pad
+            cv.create_rectangle(x1,y1,x2,y2,
+                                fill=cmap.get(p["variant"],"#eee"),
+                                outline="#888", width=1)
+            cv.create_text(x1+5, y1+6,
+                           text=f"№{p['plot']}",
+                           anchor="nw", font=("Courier New",7), fill="#555")
+            short = (p["variant"][:14]+"…"
+                     if len(p["variant"]) > 14 else p["variant"])
+            cv.create_text((x1+x2)//2, (y1+y2)//2, text=short,
+                           font=("Times New Roman",8), fill="#000", width=cw-10)
 
         # Легенда
-        leg_y = y0 + len(rows_set)*cell_h + 20
-        cv.create_text(x0, leg_y, text="Легенда:", anchor="w",
-                      font=("Times New Roman",10,"bold"), fill="#000")
-        for i, v in enumerate(all_variants):
-            lx = x0 + (i % 3)*240
-            ly = leg_y + 20 + (i // 3)*22
-            cv.create_rectangle(lx, ly, lx+16, ly+14,
-                               fill=col_map[v], outline="#666")
-            cv.create_text(lx+22, ly+7, text=v, anchor="w",
-                          font=("Times New Roman",9), fill="#000")
+        leg_y = y0 + nr*ch + 16
+        cv.create_text(x0, leg_y, text="Легенда:",
+                       anchor="w", font=("Times New Roman",10,"bold"))
+        cols_per_row = 3
+        for i, v in enumerate(all_v):
+            lx = x0 + (i % cols_per_row)*240
+            ly = leg_y + 18 + (i // cols_per_row)*20
+            cv.create_rectangle(lx, ly, lx+13, ly+13,
+                                fill=cmap[v], outline="#888")
+            cv.create_text(lx+17, ly+7, text=v, anchor="w",
+                           font=("Times New Roman",9))
 
-        total_h = leg_y + 22 * (len(all_variants)//3 + 2) + 20
-        total_w = x0 + len(cols_set)*cell_w + 40
-        cv.configure(scrollregion=(0, 0, total_w, total_h))
+        tot_w = x0 + nc*cw + 20
+        tot_h = leg_y + 22*(len(all_v)//cols_per_row+2) + 10
+        cv.configure(scrollregion=(0, 0, tot_w, tot_h))
 
-    # ── Список рандомізації ───────────────────────────────────
-    def _fill_randomization(self, plan):
+    # ═══════════════════════════════════════════════════════
+    # Список рандомізації
+    # ═══════════════════════════════════════════════════════
+    def _fill_rand(self):
+        if not self._plan_data: return
+        d = self._plan_data; plan = d["plan"]
         self.rand_txt.configure(state="normal")
         self.rand_txt.delete("1.0", tk.END)
-        d = self._plan_data
         lines = [
-            f"ПЛАН РАНДОМІЗАЦІЇ",
-            f"{'═'*60}",
-            f"Дослід: {d['name'] or '—'}",
-            f"Рік: {d['year']}    Місце: {d['loc'] or '—'}",
-            f"Дизайн: {d['design']}",
-            f"Варіантів: {d['k']}    Повторностей: {d['reps']}",
-            f"Seed рандомізації: {d['seed']}",
-            f"Площа ділянки: {d['plot_w']} × {d['plot_l']} м = {d['plot_w']*d['plot_l']:.0f} м²",
-            f"Загальна площа досліду: {d['plot_w']*d['plot_l']*len(plan):.0f} м²",
-            f"{'─'*60}",
-            f"{'№ діл.':<8} {'Блок':<12} {'Варіант'}",
-            f"{'─'*60}",
+            "═"*62,
+            "     СПИСОК РАНДОМІЗАЦІЇ ПОЛЬОВОГО ДОСЛІДУ",
+            "═"*62,
+            f"  Назва:          {d.get('name') or '—'}",
+            f"  Рік:            {d.get('year','')}",
+            f"  Місце:          {d.get('loc') or '—'}",
+            f"  Відповідальний: {d.get('resp') or '—'}",
+            f"  Культура:       {d.get('culture','')}",
+            f"  Дизайн:         {d['design_name']}",
+            f"  Варіантів:      {d['k']}",
+            f"  Повторностей:   {d['reps']}",
+            f"  Ділянок:        {len(plan)}",
+            f"  Площа ділянки:  {d['pw']} × {d['pl']} м = {d['pw']*d['pl']:.1f} м²",
+            f"  Загальна площа: {d['pw']*d['pl']*len(plan):.0f} м²",
+            f"  Seed рандом.:   {d['seed']}  ← зберігайте цей номер!",
+            "─"*62,
+            f"  {'№':<6}  {'Повторність':<16}  Варіант",
+            "─"*62,
         ]
         for p in sorted(plan, key=lambda x: x["plot"]):
-            lines.append(f"{p['plot']:<8} {p['block']:<12} {p['variant']}")
-        lines += [f"{'─'*60}",
-                  f"Порядок закладки (за № ділянки від 1 до {len(plan)}):"]
+            lines.append(f"  {p['plot']:<6}  {p['rep']:<16}  {p['variant']}")
+        lines += [
+            "─"*62,
+            f"  Сформовано: {datetime.now().strftime('%d.%m.%Y  %H:%M')}",
+        ]
         self.rand_txt.insert("1.0", "\n".join(lines))
         self.rand_txt.configure(state="disabled")
 
-    # ── Польовий журнал ───────────────────────────────────────
-    def _fill_journal(self, plan, variants):
-        # Очищаємо Treeview
+    # ═══════════════════════════════════════════════════════
+    # Польовий журнал
+    # ═══════════════════════════════════════════════════════
+    def _fill_journal(self):
+        if not self._plan_data: return
+        plan = self._plan_data["plan"]
+        ind_text = self.ind_var.get().strip()
+        indicators = [s.strip() for s in ind_text.split(";") if s.strip()]
+        if not indicators:
+            indicators = ["Показник 1","Показник 2","Показник 3","Показник 4"]
+
         for item in self.journal_tv.get_children():
             self.journal_tv.delete(item)
 
-        cols = ("№", "Блок", "Варіант",
-                "Вимірювання 1", "Вимірювання 2",
-                "Вимірювання 3", "Вимірювання 4", "Примітки")
+        cols = ("№ ділянки","Повторність","Варіант") + tuple(indicators) + ("Примітки",)
         self.journal_tv["columns"] = cols
-        self.journal_tv["show"] = "headings"
-        widths = [50, 90, 200, 110, 110, 110, 110, 120]
-        for col, w in zip(cols, widths):
+        self.journal_tv["show"]    = "headings"
+        w_map = {"№ ділянки":60,"Повторність":110,"Варіант":180,"Примітки":100}
+        for col in cols:
             self.journal_tv.heading(col, text=col)
-            self.journal_tv.column(col, width=w, anchor="center" if w < 150 else "w")
+            w = w_map.get(col, 110)
+            self.journal_tv.column(col, width=w,
+                                   anchor="center" if w < 130 else "w")
 
-        # Чергування кольорів
-        self.journal_tv.tag_configure("even", background="#f5f5f5")
+        self.journal_tv.tag_configure("even", background="#f0f4ff")
         self.journal_tv.tag_configure("odd",  background="#ffffff")
         for i, p in enumerate(sorted(plan, key=lambda x: x["plot"])):
-            tag = "even" if i % 2 == 0 else "odd"
-            self.journal_tv.insert("", "end", values=(
-                p["plot"], p["block"], p["variant"],
-                "", "", "", "", ""), tags=(tag,))
+            vals = ((p["plot"], p["rep"], p["variant"])
+                    + tuple("" for _ in indicators) + ("",))
+            self.journal_tv.insert("","end", values=vals,
+                                   tags=("even" if i%2==0 else "odd",))
 
-    # ── Збереження у Excel ────────────────────────────────────
+    def _refresh_journal(self):
+        if not self._plan_data:
+            messagebox.showwarning("","Спочатку згенеруйте план."); return
+        self._fill_journal()
+
+    # ═══════════════════════════════════════════════════════
+    # Збереження
+    # ═══════════════════════════════════════════════════════
+    def _save_rand_txt(self):
+        if not self._plan_data:
+            messagebox.showwarning("","Спочатку згенеруйте план."); return
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".txt",
+            filetypes=[("Текстовий файл","*.txt")],
+            title="Зберегти список рандомізації")
+        if not path: return
+        try:
+            with open(path,"w",encoding="utf-8") as f:
+                f.write(self.rand_txt.get("1.0",tk.END))
+            messagebox.showinfo("Збережено",f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка",str(ex))
+
     def _save_excel(self):
         if not self._plan_data:
             messagebox.showwarning("","Спочатку згенеруйте план."); return
@@ -12204,184 +12410,199 @@ class TrialDesignWindow:
         path = filedialog.asksaveasfilename(
             parent=self.win, defaultextension=".xlsx",
             filetypes=[("Excel","*.xlsx")],
-            title="Зберегти план досліду")
+            title="Зберегти польовий журнал")
         if not path: return
 
         try:
             import openpyxl
-            from openpyxl.styles import (PatternFill, Font, Alignment,
-                                          Border, Side)
-            wb = openpyxl.Workbook()
-            d = self._plan_data; plan = d["plan"]
+            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+            d  = self._plan_data; plan = d["plan"]
+            ind_text   = self.ind_var.get().strip()
+            indicators = [s.strip() for s in ind_text.split(";") if s.strip()]
+            if not indicators:
+                indicators = ["Показник 1","Показник 2","Показник 3","Показник 4"]
 
-            # ── Лист 1: Список рандомізації ──────────────────
-            ws1 = wb.active; ws1.title = "Рандомізація"
-            hdr_fill = PatternFill("solid", fgColor="1A4B8C")
-            hdr_font = Font(color="FFFFFF", bold=True, name="Times New Roman", size=11)
-            bold_f   = Font(bold=True, name="Times New Roman", size=11)
-            norm_f   = Font(name="Times New Roman", size=11)
-            center   = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            thin     = Side(style="thin", color="AAAAAA")
-            border   = Border(left=thin, right=thin, top=thin, bottom=thin)
+            wb  = openpyxl.Workbook()
+            hfill = PatternFill("solid", fgColor="1A4B8C")
+            hfont = Font(color="FFFFFF", bold=True,
+                         name="Times New Roman", size=11)
+            nfont = Font(name="Times New Roman", size=11)
+            bfont = Font(name="Times New Roman", size=11, bold=True)
+            ca    = Alignment(horizontal="center", vertical="center",
+                              wrap_text=True)
+            thin  = Side(style="thin", color="AAAAAA")
+            brd   = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-            # Інформація про дослід
-            info = [
-                ("Дослід:",            d["name"] or "—"),
-                ("Рік:",               d["year"]),
-                ("Місцезнаходження:", d["loc"] or "—"),
-                ("Дизайн:",           d["design"]),
-                ("Варіантів:",        d["k"]),
-                ("Повторностей:",     d["reps"]),
-                ("Seed рандомізації:",d["seed"]),
-                ("Площа ділянки, м²:", d["plot_w"]*d["plot_l"]),
+            # ── Лист 1: Польовий журнал ─────────────────────
+            ws = wb.active; ws.title = "Польовий журнал"
+
+            # Шапка
+            ws.merge_cells("A1:A3")
+            ws["A1"] = "ПОЛЬОВИЙ ЖУРНАЛ СПОСТЕРЕЖЕНЬ"
+            ws["A1"].font = Font(bold=True, name="Times New Roman", size=13)
+            info_rows = [
+                f"Дослід: {d.get('name') or '—'}",
+                f"Рік: {d.get('year','')}    Місце: {d.get('loc') or '—'}    "
+                f"Відповідальний: {d.get('resp') or '—'}",
+                f"Культура: {d.get('culture','')}    Дизайн: {d['design_name']}    "
+                f"Варіантів: {d['k']}    Повторностей: {d['reps']}    "
+                f"Ділянок: {len(plan)}    Площа ділянки: {d['pw']}×{d['pl']} м",
             ]
-            for r_idx, (k_, v_) in enumerate(info, 1):
-                ws1.cell(r_idx, 1, k_).font = bold_f
-                ws1.cell(r_idx, 2, v_).font = norm_f
+            for ri, txt in enumerate(info_rows, 1):
+                ws.cell(ri, 1, txt).font = nfont if ri > 1 else bfont
 
-            # Таблиця рандомізації
-            start_row = len(info) + 2
-            headers = ["№ ділянки", "Блок", "Варіант"]
-            for ci, h in enumerate(headers, 1):
-                c = ws1.cell(start_row, ci, h)
-                c.fill = hdr_fill; c.font = hdr_font
-                c.alignment = center; c.border = border
+            # Таблиця журналу
+            hr = len(info_rows) + 2
+            j_hdrs = ["№ ділянки","Повторність","Варіант"] + indicators + ["Примітки"]
+            for ci, h in enumerate(j_hdrs, 1):
+                c = ws.cell(hr, ci, h)
+                c.fill = hfill; c.font = hfont
+                c.alignment = ca; c.border = brd
 
-            palettes_hex = ["AED6F1","A9DFBF","F9E79F","F1948A","D2B4DE",
+            PALETTES_HEX = ["AED6F1","A9DFBF","F9E79F","F1948A","D2B4DE",
                             "A3E4D7","FAD7A0","D5D8DC","82E0AA","F0B27A"]
-            all_variants = list(dict.fromkeys(p["variant"] for p in plan))
-            vcols = {v: palettes_hex[i%len(palettes_hex)] for i,v in enumerate(all_variants)}
+            all_v = list(dict.fromkeys(p["variant"] for p in plan))
+            vcols = {v: PALETTES_HEX[i % len(PALETTES_HEX)]
+                     for i, v in enumerate(all_v)}
 
             for ri, p in enumerate(sorted(plan, key=lambda x: x["plot"])):
-                row = start_row + 1 + ri
-                fill_c = PatternFill("solid", fgColor=vcols.get(p["variant"],"EEEEEE"))
-                for ci, val in enumerate([p["plot"], p["block"], p["variant"]], 1):
-                    c = ws1.cell(row, ci, val)
-                    c.font = norm_f; c.alignment = center
-                    c.border = border
-                    if ci == 3: c.fill = fill_c
+                row = hr + 1 + ri
+                even = ri % 2 == 0
+                rfill = PatternFill("solid",
+                                    fgColor="EEF4FF" if even else "FFFFFF")
+                for ci, val in enumerate(
+                    [p["plot"], p["rep"], p["variant"]]
+                    + [""] * len(indicators) + [""], 1
+                ):
+                    c = ws.cell(row, ci, val)
+                    c.font = nfont; c.alignment = ca; c.border = brd
+                    if ci <= 3 and even:
+                        c.fill = rfill
 
-            for ci, w in zip([1,2,3], [14, 16, 36]):
-                ws1.column_dimensions[chr(64+ci)].width = w
+            # Ширини стовпців
+            for ci, w in enumerate(
+                [9, 14, 32] + [14]*len(indicators) + [16], 1
+            ):
+                if ci <= 26:
+                    ws.column_dimensions[chr(64+ci)].width = w
+            ws.row_dimensions[hr].height = 30
 
-            # ── Лист 2: Польовий журнал ───────────────────────
-            ws2 = wb.create_sheet("Польовий журнал")
-            j_headers = ["№ ділянки", "Блок", "Варіант",
-                         "Вимір. 1", "Вимір. 2", "Вимір. 3", "Вимір. 4", "Примітки"]
-            for ci, h in enumerate(j_headers, 1):
+            # ── Лист 2: Рандомізація ────────────────────────
+            ws2 = wb.create_sheet("Рандомізація")
+            r_hdrs = ["№ ділянки","Повторність","Варіант"]
+            for ci, h in enumerate(r_hdrs, 1):
                 c = ws2.cell(1, ci, h)
-                c.fill = hdr_fill; c.font = hdr_font
-                c.alignment = center; c.border = border
-
+                c.fill = hfill; c.font = hfont
+                c.alignment = ca; c.border = brd
             for ri, p in enumerate(sorted(plan, key=lambda x: x["plot"])):
                 row = 2 + ri
-                row_fill = PatternFill("solid", fgColor="F5F5F5" if ri%2==0 else "FFFFFF")
-                for ci, val in enumerate([p["plot"],p["block"],p["variant"],"","","","",""], 1):
+                fc = PatternFill("solid",
+                                 fgColor=vcols.get(p["variant"],"EEEEEE"))
+                for ci, val in enumerate(
+                    [p["plot"], p["rep"], p["variant"]], 1
+                ):
                     c = ws2.cell(row, ci, val)
-                    c.font = norm_f; c.alignment = center
-                    c.border = border; c.fill = row_fill
-
-            for ci, w in zip(range(1,9), [12,14,36,14,14,14,14,20]):
+                    c.font = nfont; c.alignment = ca; c.border = brd
+                    if ci == 3: c.fill = fc
+            for ci, w in zip([1,2,3],[9,14,36]):
                 ws2.column_dimensions[chr(64+ci)].width = w
 
             wb.save(path)
             messagebox.showinfo("Збережено",
-                f"Файл збережено:\n{path}\n\n"
-                "Файл містить 2 листи:\n"
-                "  1. Рандомізація — список розміщення варіантів\n"
-                "  2. Польовий журнал — таблиця для запису вимірювань")
+                f"Збережено:\n{path}\n\n"
+                "Лист 1 — Польовий журнал\n"
+                "Лист 2 — Рандомізація")
         except Exception as ex:
             messagebox.showerror("Помилка збереження", str(ex))
 
-    # ── Друк / PDF ────────────────────────────────────────────
-    def _print_plan(self):
+    def _save_png(self):
         if not self._plan_data:
             messagebox.showwarning("","Спочатку згенеруйте план."); return
-
-        # Зберігаємо схему як PNG і відкриваємо для друку
-        path = filedialog.asksaveasfilename(
-            parent=self.win, defaultextension=".png",
-            filetypes=[("PNG зображення","*.png"),
-                       ("PDF документ","*.pdf")],
-            title="Зберегти для друку")
-        if not path: return
-
         if not HAS_MPL:
             messagebox.showwarning("","matplotlib недоступний."); return
 
-        d = self._plan_data; plan = d["plan"]
-        k = d["k"]; reps = d["reps"]
-        all_variants = list(dict.fromkeys(p["variant"] for p in plan))
-        palettes = ["#aed6f1","#a9dfbf","#f9e79f","#f1948a","#d2b4de",
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".png",
+            filetypes=[("PNG зображення","*.png")],
+            title="Зберегти схему як PNG")
+        if not path: return
+
+        d  = self._plan_data; plan = d["plan"]
+        all_v = list(dict.fromkeys(p["variant"] for p in plan))
+        PALETTES = ["#aed6f1","#a9dfbf","#f9e79f","#f1948a","#d2b4de",
                     "#a3e4d7","#fad7a0","#d5d8dc","#82e0aa","#f0b27a"]
-        col_map = {v: palettes[i%len(palettes)] for i,v in enumerate(all_variants)}
+        cmap = {v: PALETTES[i%len(PALETTES)] for i,v in enumerate(all_v)}
 
         cols_set = sorted(set(p["col"] for p in plan))
         rows_set = sorted(set(p["row"] for p in plan))
         nc = len(cols_set); nr = len(rows_set)
 
-        fig = Figure(figsize=(max(10, nc*1.5), max(6, nr*1.2+2)), dpi=120)
-        ax = fig.add_axes([0, 0.12, 1, 0.85])
-        ax.set_xlim(0, nc); ax.set_ylim(0, nr)
-        ax.set_aspect("equal")
+        fig = Figure(figsize=(max(10, nc*1.6+2), max(5, nr*1.1+3)), dpi=130)
+        ax  = fig.add_axes([0.09, 0.16, 0.88, 0.72])
+        ax.set_xlim(0, nc); ax.set_ylim(0, nr); ax.set_aspect("equal")
+        ax.axis("off")
 
-        title = f"{d['name'] or 'План досліду'}  |  {d['design']}"
-        subtitle = (f"Рік: {d['year']}  |  {d['loc'] or ''}  |  "
-                    f"Варіантів: {k}  |  Повторностей: {reps}  |  Seed: {d['seed']}")
-        fig.suptitle(title, fontsize=11, fontweight="bold", y=0.99, fontfamily="Times New Roman")
-        ax.set_title(subtitle, fontsize=8, fontfamily="Times New Roman")
+        rep_map = {}
+        for p in plan: rep_map[rows_set.index(p["row"])] = p["rep"]
 
+        # Ділянки
         for p in plan:
             ci = cols_set.index(p["col"])
             ri = rows_set.index(p["row"])
             rect = matplotlib.patches.FancyBboxPatch(
-                (ci+0.05, nr-ri-0.95), 0.9, 0.88,
-                boxstyle="round,pad=0.03",
-                facecolor=col_map.get(p["variant"],"#eeeeee"),
-                edgecolor="#666666", linewidth=0.7)
+                (ci+0.04, nr-ri-0.95), 0.91, 0.89,
+                boxstyle="round,pad=0.02",
+                facecolor=cmap.get(p["variant"],"#eee"),
+                edgecolor="#777", linewidth=0.7)
             ax.add_patch(rect)
-            v_short = p["variant"][:14]+"…" if len(p["variant"])>14 else p["variant"]
-            ax.text(ci+0.5, nr-ri-0.5, v_short,
-                    ha="center", va="center", fontsize=6.5,
-                    fontfamily="Times New Roman", wrap=True)
-            ax.text(ci+0.1, nr-ri-0.12, f"№{p['plot']}",
-                    ha="left", va="top", fontsize=5.5, color="#444",
+            short = (p["variant"][:13]+"…"
+                     if len(p["variant"]) > 13 else p["variant"])
+            ax.text(ci+0.5, nr-ri-0.5, short, ha="center", va="center",
+                    fontsize=6.5, fontfamily="Times New Roman")
+            ax.text(ci+0.07, nr-ri-0.1, f"#{p['plot']}",
+                    ha="left", va="top", fontsize=5.5, color="#555",
                     fontfamily="Courier New")
 
-        # Підписи осей
-        ax.set_xticks([c+0.5 for c in range(nc)])
-        ax.set_xticklabels([f"С{c+1}" for c in range(nc)], fontsize=7)
-        ax.set_yticks([r+0.5 for r in range(nr)])
-        block_labels = {}
-        for p in plan: block_labels[rows_set.index(p["row"])] = p["block"]
-        ax.set_yticklabels([block_labels.get(r,"")
-                            for r in range(nr-1,-1,-1)], fontsize=7)
-        ax.tick_params(length=0)
-        ax.spines[:].set_visible(False)
+        # Мітки рядків і стовпців
+        for i,r in enumerate(rows_set):
+            ax.text(-0.08, nr-i-0.5, rep_map.get(i,""),
+                    ha="right", va="center", fontsize=7,
+                    fontfamily="Times New Roman")
+        for j,c in enumerate(cols_set):
+            p_ = next(p for p in plan if p["col"]==c)
+            lbl = p_.get("col_label", f"#{c}")
+            ax.text(j+0.5, nr+0.08, lbl, ha="center", va="bottom",
+                    fontsize=7, fontfamily="Times New Roman")
+
+        # Заголовок
+        name = d.get("name") or "План досліду"
+        fig.suptitle(
+            f"{name}  |  {d.get('year','')}",
+            fontsize=11, fontfamily="Times New Roman", fontweight="bold", y=0.98)
+        ax.set_title(
+            f"Культура: {d.get('culture','')}  |  Дизайн: {d['design_name']}  "
+            f"|  Варіантів: {d['k']}  |  Повторностей: {d['reps']}  "
+            f"|  Seed: {d['seed']}",
+            fontsize=8, fontfamily="Times New Roman")
 
         # Легенда
         from matplotlib.patches import Patch
-        handles = [Patch(facecolor=col_map[v], edgecolor="#666", label=v)
-                   for v in all_variants]
+        handles = [Patch(facecolor=cmap[v], edgecolor="#777", label=v)
+                   for v in all_v]
         fig.legend(handles=handles, loc="lower center",
-                   ncol=min(4, len(all_variants)),
-                   fontsize=7, framealpha=0.8,
-                   bbox_to_anchor=(0.5, 0.01))
+                   ncol=min(4, len(all_v)), fontsize=7,
+                   framealpha=0.8, bbox_to_anchor=(0.5, 0.01))
         try:
             fig.savefig(path, dpi=150, bbox_inches="tight")
-            messagebox.showinfo("Збережено",
-                f"Схему збережено:\n{path}\n\n"
-                "Відкрийте файл і роздрукуйте.")
-            import subprocess, sys
-            if sys.platform == "win32":
-                import os; os.startfile(path)
+            messagebox.showinfo("Збережено", f"PNG збережено:\n{path}")
+            import sys, os
+            if sys.platform == "win32": os.startfile(path)
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
 
 
-# ═══════════════════════════════════════════════════════════════
-# ГОЛОВНИЙ ЕКРАН SADTk
-# ═══════════════════════════════════════════════════════════════
+
+
 def _SADTk_new_init(self, root):
     _SADTk_orig_init(self, root)
     # Replace main frame content
