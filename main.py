@@ -406,6 +406,18 @@ def cld(levels_order, means_dict, sig_matrix):
 # ═══════════════════════════════════════════════════════════════
 # LEVENE TEST
 # ═══════════════════════════════════════════════════════════════
+def groups_by(long, fkeys):
+    """Групує значення з long по комбінаціям рівнів факторів fkeys.
+    Повертає dict: {tuple_of_levels: [values]}
+    Для одного ключа fkeys=(f,) → {(level,): [values]}
+    """
+    from collections import defaultdict
+    result = defaultdict(list)
+    for r in long:
+        key = tuple(r.get(f, "") for f in fkeys)
+        result[key].append(r["value"])
+    return dict(result)
+
 def levene_test(groups_dict):
     arrs = [np.array(v, dtype=float) for v in groups_dict.values() if len(v) > 0]
     if len(arrs) < 2: return np.nan, np.nan
