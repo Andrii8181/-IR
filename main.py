@@ -11998,7 +11998,10 @@ class TrialDesignWindow:
             messagebox.showerror("Помилка", str(ex))
 
 
-
+# ═══════════════════════════════════════════════════════════════
+# ГОЛОВНИЙ ЕКРАН SADTk
+# ═══════════════════════════════════════════════════════════════
+def _SADTk_new_init(self, root):
     _SADTk_orig_init(self, root)
     # Replace main frame content
     for w in root.winfo_children(): w.destroy()
