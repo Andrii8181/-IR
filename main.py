@@ -802,7 +802,56 @@ def anova_rcbd(long, fkeys, lbf, bk="BLOCK", ss_type="III"):
     return {"table": table, "SS_error": sse, "df_error": dfe, "MS_error": mse,
             "SS_total": sst, "residuals": res.tolist(), "NIR05": _nir05(long, fkeys, mse, dfe, lbf)}
 
-def anova_split(long, fkeys, main_f, bk="BLOCK", ss_type="III"):
+def anova_latin_square(long, fkeys, lbf, ss_type="III"):
+    """
+    Латинський квадрат: Y = μ + τᵢ + ρⱼ + γₖ + εᵢⱼₖ
+    τ = варіант, ρ = рядок, γ = стовпець
+    df_помилка = (k-1)(k-2)
+    """
+    # Кодуємо рядки і стовпці як блокові ефекти
+    rows_vals = [r.get("ROW","") for r in long]
+    cols_vals = [r.get("COL","") for r in long]
+    row_lvls  = first_seen([v for v in rows_vals if v])
+    col_lvls  = first_seen([v for v in cols_vals if v])
+
+    # Перевірка k×k структури
+    k = len(lbf.get(fkeys[0], []))
+    if len(row_lvls) != k or len(col_lvls) != k:
+        raise ValueError(
+            f"Латинський квадрат вимагає k={k} рядків і k={k} стовпців.\n"
+            f"Знайдено: рядків={len(row_lvls)}, стовпців={len(col_lvls)}.\n"
+            f"Перевірте що стовпці «Рядок» і «Стовпець» заповнені правильно.")
+
+    row_c, row_n = _encode(rows_vals, row_lvls)
+    col_c, col_n = _encode(cols_vals, col_lvls)
+    extra = [("Рядки", row_c, row_n), ("Стовпці", col_c, col_n)]
+
+    y, X, ts, _ = _build_X(long, fkeys, lbf, extra)
+    terms, sse, dfe, mse, res = _ss_dispatch(ss_type, y, X, ts, fkeys)
+
+    # Теоретичний df помилки = (k-1)(k-2)
+    df_theory = (k-1)*(k-2)
+    if df_theory > 0 and dfe != df_theory:
+        # Використовуємо теоретичний df якщо числовий хибний
+        if sse > 0:
+            mse = sse / df_theory
+            dfe = df_theory
+
+    sst = float(np.sum((y - np.mean(y))**2))
+    table = []
+    for nm in [("Рядки", "Рядки"), ("Стовпці", "Стовпці")] + \
+              [(f"Фактор {f}", f"Фактор {f}") for f in fkeys]:
+        key = nm[1]
+        table.append([nm[0], *terms.get(key, (np.nan, 0, np.nan, np.nan, np.nan))])
+    table.append(["Залишок",  sse, dfe, mse, np.nan, np.nan])
+    table.append(["Загальна", sst, len(y)-1, np.nan, np.nan, np.nan])
+
+    return {"table": table, "SS_error": sse, "df_error": dfe, "MS_error": mse,
+            "SS_total": sst, "residuals": res.tolist(),
+            "NIR05": _nir05(long, fkeys, mse, dfe, lbf),
+            "latin_k": k, "latin_rows": len(row_lvls), "latin_cols": len(col_lvls)}
+
+
     if main_f not in fkeys: main_f = fkeys[0]
     bc, bn, _ = _block_dum(long, bk)
     ml = first_seen([r.get(main_f) for r in long if r.get(main_f) is not None])
@@ -2219,6 +2268,36 @@ class SADTk:
 ПОРАДА:
   При 3 факторах рекомендується Тип III SS.
   Кількість рядків = k_A × k_B × k_C (де k = кількість рівнів).
+
+═══════════════════════════════════════════════════════════
+ОСОБЛИВИЙ ВИПАДОК: ЛАТИНСЬКИЙ КВАДРАТ (у 3-факторному)
+═══════════════════════════════════════════════════════════
+
+Якщо у вас Латинський квадрат — використовуйте саме
+3-факторний аналіз з таким призначенням факторів:
+
+  Фактор A = Варіант  (назви обробок: N60, N90, N120...)
+  Фактор B = Рядок    (номери рядів поля: 1, 2, 3...)
+  Фактор C = Стовпець (номери стовпців поля: 1, 2, 3...)
+
+Структура таблиці (k=4 варіанти, 4×4 квадрат):
+  | Варіант | Рядок | Стовп | Значення |
+  | N60     |   1   |   1   |   18.4   |
+  | N90     |   1   |   2   |   21.3   |
+  | N120    |   1   |   3   |   22.8   |
+  | N0      |   1   |   4   |   15.2   |
+  | N0      |   2   |   1   |   14.8   |
+  ...
+
+Кожен рядок таблиці = одна ділянка = одне значення.
+Стовпець "Значення" вводьте у колонку «Повт.1».
+
+У вікні параметрів оберіть:  Дизайн → Латинський квадрат
+
+Програма автоматично:
+  ✓ Виносить SS_рядки і SS_стовпці з помилки
+  ✓ Розраховує правильний df = (k-1)(k-2)
+  ✓ Перевіряє що k варіантів = k рядків = k стовпців
 """,
             4: """
 ЧОТИРИФАКТОРНИЙ ДИСПЕРСІЙНИЙ АНАЛІЗ
@@ -2599,6 +2678,7 @@ class SADTk:
         self.table_win = tw = tk.Toplevel(self.root)
         factor_names = {1:"Однофакторний", 2:"Двофакторний",
                         3:"Трифакторний",  4:"Чотирифакторний"}
+        # Для 3-факторного — додаємо опис ЛК у довідку
         tw.title(f"S.A.D. — {factor_names.get(fc,str(fc)+'-факторний')} дисперсійний аналіз")
         tw.geometry("1280x720"); set_icon(tw)
 
@@ -2736,7 +2816,19 @@ class SADTk:
                 except Exception: continue
                 rec = {"value": val}
                 for ki, fk in enumerate(self.factor_keys): rec[fk] = lvls[ki]
-                if design in ("rcbd", "split"): rec["BLOCK"] = f"Блок {ic+1}"
+                if design in ("rcbd", "split"):
+                    rec["BLOCK"] = f"Блок {ic+1}"
+                elif design == "latin":
+                    # Для латинського квадрату: перший фактор = варіант,
+                    # другий фактор = рядок (ROW), третій = стовпець (COL)
+                    # якщо factors_count >= 3 — беремо з таблиці
+                    if self.factors_count >= 3:
+                        rec["ROW"] = lvls[1] if len(lvls) > 1 else f"Ряд {i+1}"
+                        rec["COL"] = lvls[2] if len(lvls) > 2 else f"Стовп {ic+1}"
+                    else:
+                        # factors_count == 1: автогенерація ROW/COL з номерів
+                        rec["ROW"] = f"Ряд {i+1}"
+                        rec["COL"] = f"Стовп {ic+1}"
                 long.append(rec)
         return long, rep
 
@@ -2783,10 +2875,30 @@ class SADTk:
 
         dv = tk.StringVar(value="crd")
         df = tk.Frame(frm); df.grid(row=4, column=0, columnspan=2, sticky="w", pady=8)
+        # Показуємо підказку ЛК при виборі
+        def _on_design(*_):
+            if dv.get() == "latin":
+                latin_hint.grid()
+            else:
+                latin_hint.grid_remove()
+            sp_frm.grid() if dv.get() == "split" else sp_frm.grid_remove()
+        dv.trace_add("write", _on_design)
+
         for txt, val in [("CRD", "crd"), ("RCBD", "rcbd"),
+                          ("Латинський квадрат", "latin"),
                           ("Split-plot (лише параметричний)", "split")]:
             tk.Radiobutton(df, text=txt, variable=dv, value=val,
-                           font=rb_f).pack(side=tk.LEFT, padx=10)
+                           font=rb_f).pack(side=tk.LEFT, padx=8)
+
+        # Підказка для латинського квадрату
+        latin_hint = tk.Label(frm,
+            text="ℹ Латинський квадрат: у таблиці відкрийте 3-факторний аналіз.\n"
+                 "  Фактор A = Варіант,  Фактор B = Рядок,  Фактор C = Стовпець.\n"
+                 "  Кожен рядок таблиці = одна ділянка. Повторність = 1 значення на рядок.",
+            font=("Times New Roman",10), fg="#1a4b8c",
+            bg="#eef4ff", relief=tk.FLAT, padx=8, pady=4, justify="left")
+        latin_hint.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0,4))
+        latin_hint.grid_remove()
 
         mfv = tk.StringVar(value=self.factor_keys[0] if self.factor_keys else "A")
         sp_frm = tk.Frame(frm); sp_frm.grid(row=5, column=0, columnspan=2, sticky="w", pady=(0,4))
@@ -2794,9 +2906,7 @@ class SADTk:
         ttk.Combobox(sp_frm, textvariable=mfv, width=6, state="readonly",
                      values=self.factor_keys).pack(side=tk.LEFT, padx=6)
         sp_frm.grid_remove()
-        def _upd(*_):
-            sp_frm.grid() if dv.get() == "split" else sp_frm.grid_remove()
-        dv.trace_add("write", _upd)
+
 
         # ── Тип SS ───────────────────────────────────────────
         ttk.Separator(frm, orient="horizontal").grid(
@@ -2848,40 +2958,82 @@ class SADTk:
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
         normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
         rb_f = ("Times New Roman", 13)
+        ordinal = getattr(self, '_ordinal_mode', False)
 
-        if normal:
-            tk.Label(frm, text="Дані відповідають нормальному розподілу (Shapiro–Wilk).",
-                     justify="left").pack(anchor="w", pady=(0, 8))
-            options = [("НІР₀₅ (LSD)", "lsd"), ("Тест Тьюкі", "tukey"),
-                       ("Тест Дункана", "duncan"), ("Бонферроні", "bonferroni"),
+        if ordinal:
+            # ── Режим бальних даних: ЛИШЕ непараметричні ────
+            tk.Label(frm,
+                     text="⚠ Бальна шкала → ЛИШЕ непараметричні методи",
+                     fg="#c62828", font=("Times New Roman",12,"bold")
+                     ).pack(anchor="w", pady=(0,4))
+            tk.Label(frm,
+                     text=(
+                         "Параметричні методи (НІР, Тьюкі, Дункан) заблоковані.\n"
+                         "Причина: бальні дані є порядковими — середнє і\n"
+                         "стандартне відхилення методично некоректні для них.\n"
+                         "Оберіть непараметричний критерій:"
+                     ),
+                     fg="#555", font=("Times New Roman",11), justify="left"
+                     ).pack(anchor="w", pady=(0,10))
+            if design == "crd":
+                options = [
+                    ("Краскел-Уолліс + Манн-Уітні (Бонферроні)  ← рекомендовано", "kw"),
+                ]
+            elif n_var == 2:
+                options = [("Вілкоксон (парний)  ← рекомендовано для 2 варіантів", "wilcoxon")]
+            else:
+                options = [("Фрідман + Вілкоксон (Бонферроні)  ← рекомендовано", "friedman")]
+
+        elif normal:
+            tk.Label(frm, text="✓ Дані відповідають нормальному розподілу (Shapiro–Wilk).",
+                     justify="left", fg="#1a6b1a",
+                     font=("Times New Roman",11)).pack(anchor="w", pady=(0, 8))
+            options = [("НІР₀₅ (LSD)", "lsd"),
+                       ("Тест Тьюкі", "tukey"),
+                       ("Тест Дункана", "duncan"),
+                       ("Бонферроні", "bonferroni"),
                        ("🔁 arcsin(√p) + параметричний", "arcsin_param")]
         else:
             if design == "split":
-                tk.Label(frm, text="Split-plot: лише параметричний.\nЗалишки не нормальні → аналіз некоректний.\nРекомендація: трансформуйте або оберіть CRD/RCBD.",
-                         fg="#c62828", justify="left").pack(anchor="w"); options = []
+                tk.Label(frm,
+                         text="Split-plot: лише параметричний.\n"
+                              "Залишки не нормальні → аналіз некоректний.\n"
+                              "Рекомендація: трансформуйте або оберіть CRD/RCBD.",
+                         fg="#c62828", justify="left",
+                         font=("Times New Roman",11)).pack(anchor="w")
+                options = []
             else:
-                tk.Label(frm, text="Дані НЕ відповідають нормальному розподілу.\nОберіть метод:",
-                         fg="#c62828", justify="left").pack(anchor="w", pady=(0, 8))
+                tk.Label(frm,
+                         text="⚠ Дані НЕ відповідають нормальному розподілу.\n"
+                              "Оберіть метод:",
+                         fg="#c62828", justify="left",
+                         font=("Times New Roman",11)).pack(anchor="w", pady=(0, 8))
                 if design == "crd":
-                    options = [("Краскела–Уолліса", "kw"),
-                               ("Манна-Уітні", "mw"),
-                               ("🔁 arcsin(√p) + параметричний","arcsin_param"),
-                               ("🔁 ln(x) + параметричний", "log_param"),
-                               ("🔁 √x + параметричний",    "sqrt_param"),
-                               ("🔁 log₁₀(x) + параметричний", "log10_param")]
+                    options = [
+                        ("Краскела–Уолліса", "kw"),
+                        ("Манна-Уітні", "mw"),
+                        ("🔁 arcsin(√p) + параметричний", "arcsin_param"),
+                        ("🔁 ln(x) + параметричний",      "log_param"),
+                        ("🔁 √x + параметричний",          "sqrt_param"),
+                        ("🔁 log₁₀(x) + параметричний",   "log10_param"),
+                    ]
                 else:
                     if n_var == 2:
-                        options = [("Wilcoxon (парний)", "wilcoxon"),
-                                   ("🔁 arcsin(√p) + параметричний","arcsin_param"),
-                                   ("🔁 ln(x) + параметричний",    "log_param"),
-                                   ("🔁 √x + параметричний",       "sqrt_param"),
-                                   ("🔁 log₁₀(x) + параметричний","log10_param")]
+                        options = [
+                            ("Wilcoxon (парний)", "wilcoxon"),
+                            ("🔁 arcsin(√p) + параметричний", "arcsin_param"),
+                            ("🔁 ln(x) + параметричний",      "log_param"),
+                            ("🔁 √x + параметричний",          "sqrt_param"),
+                            ("🔁 log₁₀(x) + параметричний",   "log10_param"),
+                        ]
                     else:
-                        options = [("Friedman", "friedman"),
-                                   ("🔁 arcsin(√p) + параметричний","arcsin_param"),
-                                   ("🔁 ln(x) + параметричний",    "log_param"),
-                                   ("🔁 √x + параметричний",       "sqrt_param"),
-                                   ("🔁 log₁₀(x) + параметричний","log10_param")]
+                        options = [
+                            ("Friedman", "friedman"),
+                            ("🔁 arcsin(√p) + параметричний", "arcsin_param"),
+                            ("🔁 ln(x) + параметричний",      "log_param"),
+                            ("🔁 √x + параметричний",          "sqrt_param"),
+                            ("🔁 log₁₀(x) + параметричний",   "log10_param"),
+                        ]
         out = {"ok": False, "method": None}
         if not options:
             tk.Button(frm, text="OK", width=10, command=dlg.destroy).pack(pady=(10, 0))
@@ -2974,6 +3126,43 @@ class SADTk:
                         "У звіті середні наведено у вихідних відсотках.\n"
                         "Літери значущості (НІР) — за трансформованими даними.")
 
+        # ── Автоматичне виявлення бальних (порядкових) даних ──
+        is_ordinal_units = any(u in units.lower() for u in
+                               ["бал", "score", "rank", "rang", "ранг",
+                                "очко", "пункт", "клас", "ступін", "ступен"])
+        ordinal_detected = False
+        ordinal_forced   = False   # чи примусово переведено на непараметричний
+
+        if is_ordinal_units and not arcsin_applied:
+            vmin_o = float(np.min(values)); vmax_o = float(np.max(values))
+            # Додаткова перевірка: всі значення цілі і діапазон ≤ 20
+            all_int = np.all(values == np.floor(values))
+            small_range = (vmax_o - vmin_o) <= 20
+
+            if all_int and small_range:
+                ordinal_detected = True
+                messagebox.showwarning(
+                    "⚠ Виявлено бальну (порядкову) шкалу",
+                    f"Одиниці вимірювання: «{units}»\n"
+                    f"Діапазон значень: {int(vmin_o)} – {int(vmax_o)} балів\n\n"
+                    "МЕТОДИЧНА ВИМОГА:\n"
+                    "Бальні шкали є ПОРЯДКОВИМИ (ordinal) даними.\n"
+                    "Це означає що:\n"
+                    "  • Різниця між балами нерівномірна\n"
+                    "  • Розподіл зазвичай ненормальний\n"
+                    "  • Параметрична ANOVA методично НЕКОРЕКТНА\n\n"
+                    "Програма автоматично застосує:\n"
+                    "  ✓ Непараметричний аналіз (Краскел-Уолліс / Фрідман)\n"
+                    "  ✓ Медіана [Q1; Q3] замість Mean ± SD у звіті\n"
+                    "  ✓ Boxplot або Dot plot для візуалізації\n\n"
+                    "Параметричні методи заблоковано для цих даних.\n"
+                    "Натисніть OK щоб продовжити з правильним методом.")
+                ordinal_forced = True
+
+        # Зберігаємо прапор для choose_method і show_report
+        self._ordinal_mode  = ordinal_detected and ordinal_forced
+        self._ordinal_units = units
+
         # ── Мінімальна кількість спостережень ──────────────────
         if len(values) < 6:
             messagebox.showwarning("Замало даних",
@@ -2995,6 +3184,40 @@ class SADTk:
                 f"Для дизайну {design.upper()} потрібно щонайменше 2 повторності (блоки).\n"
                 f"Наразі: {len(used_rep)}."); return
 
+        # ── Перевірка Латинського квадрату ─────────────────────
+        if design == "latin":
+            if self.factors_count < 3:
+                messagebox.showerror("Латинський квадрат — помилка структури",
+                    "Для Латинського квадрату відкрийте 3-факторний аналіз:\n\n"
+                    "  Фактор A = Варіант (назви варіантів)\n"
+                    "  Фактор B = Рядок (номери рядів: 1, 2, 3...)\n"
+                    "  Фактор C = Стовпець (номери стовпців: 1, 2, 3...)\n\n"
+                    "Кожен рядок таблиці = одна ділянка, одне значення у колонці «Повт.1»"); return
+            # Перевіряємо k = n_рядків = n_стовпців
+            fk = self.factor_keys
+            k_var  = len(lbf.get(fk[0], []))
+            k_rows = len(lbf.get(fk[1], [])) if len(fk) > 1 else 0
+            k_cols = len(lbf.get(fk[2], [])) if len(fk) > 2 else 0
+            if not (k_var == k_rows == k_cols):
+                messagebox.showerror("Латинський квадрат — помилка k×k",
+                    f"Латинський квадрат вимагає k варіантів = k рядків = k стовпців.\n\n"
+                    f"Знайдено:\n"
+                    f"  Варіантів (Фактор A): {k_var}\n"
+                    f"  Рядків (Фактор B):    {k_rows}\n"
+                    f"  Стовпців (Фактор C):  {k_cols}\n\n"
+                    f"Перевірте що всі три значення однакові."); return
+            if k_var < 3:
+                messagebox.showwarning("Замало варіантів",
+                    f"Латинський квадрат вимагає щонайменше 3 варіанти (k≥3).\n"
+                    f"Знайдено: {k_var}. Рекомендується k=4-6."); return
+            if k_var > 8:
+                ans = messagebox.askyesno("Попередження: великий квадрат",
+                    f"k={k_var} варіантів → {k_var}×{k_var} = {k_var**2} ділянок.\n"
+                    f"При k>8 Латинський квадрат стає громіздким.\n"
+                    f"Рекомендується RCBD для великої кількості варіантів.\n\n"
+                    "Продовжити?")
+                if not ans: return
+
         var_order = first_seen([tuple(r.get(f) for f in self.factor_keys) for r in long])
         v_names = [" | ".join(map(str, k)) for k in var_order]
         n_var = len(var_order)
@@ -3014,8 +3237,12 @@ class SADTk:
                 if not ans: return
 
         try:
-            if design == "crd":    res = anova_crd(long, self.factor_keys, lbf, ss_type)
-            elif design == "rcbd": res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
+            if design == "crd":
+                res = anova_crd(long, self.factor_keys, lbf, ss_type)
+            elif design == "rcbd":
+                res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
+            elif design == "latin":
+                res = anova_latin_square(long, self.factor_keys, lbf, ss_type)
             else:
                 if split_main not in self.factor_keys: split_main = self.factor_keys[0]
                 res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
@@ -3070,9 +3297,10 @@ class SADTk:
             log_applied = True
             # Перераховуємо модель на трансформованих даних
             try:
-                if design == "crd":    res = anova_crd(long, self.factor_keys, lbf, ss_type)
-                elif design == "rcbd": res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
-                else:                  res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
+                if design == "crd":      res = anova_crd(long, self.factor_keys, lbf, ss_type)
+                elif design == "rcbd":   res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
+                elif design == "latin":  res = anova_latin_square(long, self.factor_keys, lbf, ss_type)
+                else:                    res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
             except Exception as ex: messagebox.showerror("Помилка моделі", str(ex)); return
             residuals = np.array(res.get("residuals",[]), dtype=float)
             try: W, p_norm = shapiro(residuals) if len(residuals)>=3 else (np.nan,np.nan)
@@ -3116,9 +3344,10 @@ class SADTk:
 
             # ── Re-run model on transformed data ─────────────────
             try:
-                if design == "crd":    res = anova_crd(long, self.factor_keys, lbf, ss_type)
-                elif design == "rcbd": res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
-                else:                  res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
+                if design == "crd":      res = anova_crd(long, self.factor_keys, lbf, ss_type)
+                elif design == "rcbd":   res = anova_rcbd(long, self.factor_keys, lbf, ss_type=ss_type)
+                elif design == "latin":  res = anova_latin_square(long, self.factor_keys, lbf, ss_type)
+                else:                    res = anova_split(long, self.factor_keys, split_main, ss_type=ss_type)
             except Exception as ex: messagebox.showerror("Помилка моделі", str(ex)); return
 
             residuals = np.array(res.get("residuals", []), dtype=float)
@@ -3337,6 +3566,7 @@ class SADTk:
         self.show_report(
             created=created, indicator=indicator, units=units, design=design,
             arcsin_applied=arcsin_applied,
+            ordinal_mode=getattr(self, '_ordinal_mode', False),
             ss_type=ss_type, method=method, log_applied=log_applied,
             transform_label=transform_label,
             n_var=n_var, n_rep=len(used_rep), n_obs=len(long),
@@ -3433,6 +3663,10 @@ class SADTk:
             _txt("⚠ Застосовано трансформацію arcsin(√p) для відсоткових даних. "
                  "Середні у звіті наведено у вихідних відсотках. "
                  "Літери значущості (НІР) визначено за трансформованими даними.")
+        elif d.get('ordinal_mode'):
+            _txt("ℹ БАЛЬНА ШКАЛА: у звіті наведено медіану [Q1; Q3] замість Mean ± SD. "
+                 "Параметричні методи заблоковані. "
+                 "Для візуалізації використовуйте Boxplot або Dot plot.")
         elif d['log_applied']:
             tl = d.get('transform_label', 'ln(x)')
             _txt(f"⚠ Застосовано трансформацію {tl}. Середні у звіті — у трансформованій шкалі.")
@@ -3543,17 +3777,164 @@ class SADTk:
         gw.title("Графічний звіт"); gw.geometry("1300x860"); set_icon(gw)
         top = tk.Frame(gw, padx=6, pady=5); top.pack(fill=tk.X)
         tk.Button(top, text="⚙ Налаштування",
-                  command=lambda: self._open_gs(gw, long, letters_factor, indicator, units, eff_rows, pe2_rows)
+                  command=lambda: self._open_gs(gw, long, letters_factor,
+                                                indicator, units, eff_rows, pe2_rows)
                   ).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="📋 Копіювати:", font=("Times New Roman", 10)).pack(side=tk.LEFT, padx=(8, 2))
-        tk.Label(top, text="(кнопки з'являться після побудови графіків)",
-                 font=("Times New Roman", 9), fg="#888").pack(side=tk.LEFT)
+
+        # ── Для бальних даних — вибір типу графіка ──────────
+        ordinal = getattr(self, '_ordinal_mode', False)
+        if ordinal:
+            tk.Label(top, text="Тип графіка для бальних даних:",
+                     font=("Times New Roman",11)).pack(side=tk.LEFT, padx=(12,4))
+            self._ordinal_graph_var = tk.StringVar(value="boxplot")
+            ttk.Combobox(top, textvariable=self._ordinal_graph_var,
+                         values=["Boxplot (медіана + квартилі)",
+                                 "Dot plot (точки + медіана)"],
+                         state="readonly", width=28,
+                         font=("Times New Roman",11)).pack(side=tk.LEFT, padx=2)
+            tk.Button(top, text="▶ Перебудувати",
+                      font=("Times New Roman",11), bg="#c62828", fg="white",
+                      command=lambda: self._rebuild_ordinal_graph(
+                          self._graph_frame, long, letters_factor,
+                          indicator, units)).pack(side=tk.LEFT, padx=6)
+            tk.Label(top,
+                     text="ℹ Для бальних даних Boxplot показує медіану і квартилі — "
+                          "методично правильніше ніж стовпчастий графік середніх",
+                     font=("Times New Roman",9), fg="#555"
+                     ).pack(side=tk.LEFT, padx=4)
+        else:
+            tk.Label(top, text="📋 Копіювати:", font=("Times New Roman", 10)
+                     ).pack(side=tk.LEFT, padx=(8, 2))
+            tk.Label(top, text="(кнопки з'являться після побудови графіків)",
+                     font=("Times New Roman", 9), fg="#888").pack(side=tk.LEFT)
 
         self._graph_frame = tk.Frame(gw); self._graph_frame.pack(fill=tk.BOTH, expand=True)
         self._g_long = long; self._g_lf = letters_factor
         self._g_ind = indicator; self._g_units = units
         self._g_eff = eff_rows; self._g_pe2 = pe2_rows
-        self._draw_graphs(self._graph_frame, long, letters_factor, indicator, units, eff_rows, pe2_rows)
+
+        if ordinal:
+            self._rebuild_ordinal_graph(self._graph_frame, long, letters_factor,
+                                        indicator, units)
+        else:
+            self._draw_graphs(self._graph_frame, long, letters_factor,
+                              indicator, units, eff_rows, pe2_rows)
+
+    def _rebuild_ordinal_graph(self, frame, long, letters_factor, indicator, units):
+        """Будує boxplot або dot plot для бальних даних."""
+        for w in frame.winfo_children(): w.destroy()
+        choice = getattr(self, '_ordinal_graph_var',
+                         tk.StringVar(value="boxplot")).get()
+        use_dot = "Dot" in choice or "dot" in choice
+
+        # Групуємо дані по варіантах (перша комбінація факторів)
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for r in long:
+            key = " | ".join(str(r.get(f, "")) for f in self.factor_keys)
+            groups[key].append(r["value"])
+
+        labels = list(groups.keys())
+        data   = [groups[lbl] for lbl in labels]
+        n_grps = len(labels)
+
+        colors = ["#4c72b0","#dd8452","#55a868","#c44e52",
+                  "#8172b2","#937860","#da8bc3","#8c8c8c"]
+
+        fig = Figure(figsize=(max(8, n_grps*1.4+2), 5.5), dpi=100)
+        ax  = fig.add_subplot(111)
+
+        if not use_dot:
+            # ── BOXPLOT ──────────────────────────────────────
+            bp = ax.boxplot(data, patch_artist=True,
+                            medianprops=dict(color="#c62828", linewidth=2.5),
+                            whiskerprops=dict(linewidth=1.2),
+                            capprops=dict(linewidth=1.2),
+                            flierprops=dict(marker="o", markerfacecolor="#c62828",
+                                           markersize=5, alpha=0.6))
+            for patch, color in zip(bp["boxes"], colors):
+                patch.set_facecolor(color); patch.set_alpha(0.75)
+
+            # Додаємо медіану як текст над кожним боксом
+            for i, d_ in enumerate(data):
+                med = float(np.median(d_))
+                q1  = float(np.percentile(d_, 25))
+                q3  = float(np.percentile(d_, 75))
+                ax.text(i+1, q3+0.08, f"Me={med:.1f}",
+                        ha="center", va="bottom", fontsize=8, color="#333")
+
+            ax.set_title(f"{indicator} ({units}) — Boxplot (медіана ± квартилі)\n"
+                         "Лінія в боксі = медіана, бокс = Q1–Q3, вуса = діапазон, ● = викиди",
+                         fontsize=9, fontfamily="Times New Roman")
+            ax.set_ylabel(f"{indicator}, {units}", fontsize=9)
+
+        else:
+            # ── DOT PLOT (strip plot + медіана) ──────────────
+            rng = np.random.default_rng(42)
+            for i, (lbl, d_) in enumerate(zip(labels, data)):
+                x_jitter = rng.uniform(-0.18, 0.18, len(d_))
+                ax.scatter([i+1+j for j in x_jitter], d_,
+                           color=colors[i % len(colors)],
+                           s=40, alpha=0.75, zorder=3,
+                           edgecolors="white", linewidths=0.5)
+                # Медіана — горизонтальна лінія
+                med = float(np.median(d_))
+                ax.plot([i+0.72, i+1.28], [med, med],
+                        color="#c62828", lw=2.5, zorder=4)
+                ax.text(i+1, med+0.08, f"Me={med:.1f}",
+                        ha="center", va="bottom", fontsize=8, color="#c62828")
+
+            ax.set_title(f"{indicator} ({units}) — Dot plot\n"
+                         "Кожна точка = одне спостереження,  червона лінія = медіана",
+                         fontsize=9, fontfamily="Times New Roman")
+            ax.set_ylabel(f"{indicator}, {units}", fontsize=9)
+
+        # Спільне оформлення
+        ax.set_xticks(range(1, n_grps+1))
+        ax.set_xticklabels(labels, rotation=20 if max(len(l) for l in labels)>10 else 0,
+                           ha="right", fontsize=8, fontfamily="Times New Roman")
+
+        # Значущість з post-hoc (літери)
+        for i, lbl in enumerate(labels):
+            letter = ""
+            for f in self.factor_keys:
+                lvl = list(groups.keys())[i].split(" | ")[self.factor_keys.index(f)] \
+                      if " | " in list(groups.keys())[i] else list(groups.keys())[i]
+                letter = letters_factor.get(f, {}).get(lvl, "")
+                if letter: break
+            if letter:
+                ymax = float(np.max(data[i])) + 0.2
+                ax.text(i+1, ymax, letter, ha="center", va="bottom",
+                        fontsize=11, fontweight="bold", color="#1a4b8c")
+
+        # Цілочисельна вісь Y для балів
+        y_min = max(0, float(np.min([v for d_ in data for v in d_]))-0.5)
+        y_max = float(np.max([v for d_ in data for v in d_]))+0.8
+        ax.set_ylim(y_min, y_max)
+        ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(integer=True))
+        ax.yaxis.grid(True, linestyle="--", alpha=0.35)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+
+        # Примітка про методику
+        ax.annotate("Для бальних (порядкових) даних: медіана є правильною мірою центральної тенденції",
+                    xy=(0.01, 0.01), xycoords="figure fraction",
+                    fontsize=7.5, color="#888", fontfamily="Times New Roman")
+
+        fig.tight_layout()
+        self._ordinal_fig = fig
+        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Кнопка копіювання
+        tb2 = tk.Frame(frame); tb2.pack(fill=tk.X, padx=6, pady=2)
+        tk.Button(tb2, text="📋 Копіювати графік",
+                  font=("Times New Roman",10),
+                  command=lambda: (
+                      lambda ok, msg: (
+                          messagebox.showinfo("","Скопійовано. Вставте у Word через Ctrl+V.")
+                          if ok else messagebox.showwarning("",f"Помилка: {msg}")
+                      ))(*_copy_fig_to_clipboard(self._ordinal_fig))
+                  ).pack(side=tk.LEFT, padx=4)
 
     def _open_gs(self, gw, long, lf, ind, units, eff, pe2):
         dlg = GraphSettingsDlg(gw, self.graph_settings)
