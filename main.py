@@ -2927,9 +2927,13 @@ class SADTk:
                  ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(0,4))
         tk.Label(frm,
                  text=(
-                     "Тип I — Послідовний. Для збалансованих дизайнів, порядок факторів важливий.\n"
-                     "Тип III — Частковий (стандарт). Для незбалансованих даних і взаємодій.\n"
-                     "Рекомендується: Тип III якщо не впевнені."
+                     "Тип I — Послідовний: кожен фактор після попередніх.\n"
+                     "  Порядок факторів важливий. Тільки для збалансованих дизайнів.\n\n"
+                     "Тип II — Ієрархічний: кожен фактор після решти головних ефектів\n"
+                     "  (без взаємодій). Для незбалансованих даних без взаємодій.\n\n"
+                     "Тип III — Частковий ← РЕКОМЕНДУЄТЬСЯ: кожен ефект при всіх інших.\n"
+                     "  Стандарт SPSS/SAS. Не залежить від порядку. Взаємодії враховані.\n\n"
+                     "Тип IV — Для сильно незбалансованих дизайнів з порожніми клітинками."
                  ),
                  font=("Times New Roman",10), justify="left",
                  bg="#f0f4ff", relief=tk.FLAT, padx=8, pady=4
@@ -4347,103 +4351,73 @@ class SADTk:
                               ).pack(side=tk.LEFT, padx=1)
         except Exception: pass
 
-
-        fig_bp = Figure(figsize=(11, 5.5), dpi=100); ax = fig_bp.add_subplot(111)
-        positions = []; data = []; xlbls = []; let_list = []; fcentres = []
+    def _draw_bp(self, frame, long, lf, indicator, units, gs):
+        """Побудова boxplot."""
+        for w in frame.winfo_children(): w.destroy()
+        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
+        ff = gs["font_family"]; fz = gs["font_size"]
+        fig_bp = Figure(figsize=(max(8, len(self.factor_keys)*3+2), 5.5), dpi=100)
+        ax = fig_bp.add_subplot(111)
+        positions = []; data_bp = []; xlbls = []; let_list = []; fcentres = []
         x = 1.; gap = 1.
         for f in self.factor_keys:
-            lvls = self._lbf_cache.get(f, first_seen([r.get(f) for r in long if r.get(f) is not None]))
+            lvls = self._lbf_cache.get(f, first_seen(
+                [r.get(f) for r in long if r.get(f) is not None]))
             if not lvls: continue
             sx = x
             for lv in lvls:
-                arr = [float(r["value"]) for r in long if r.get(f) == lv and r.get("value") is not None]
-                arr = [v for v in arr if not math.isnan(v)]
-                data.append(arr); positions.append(x); xlbls.append(str(lv))
-                let_list.append((f, lv)); x += 1.
+                arr = [float(r["value"]) for r in long
+                       if r.get(f) == lv and r.get("value") is not None
+                       and not math.isnan(float(r["value"]))]
+                data_bp.append(arr); positions.append(x)
+                xlbls.append(str(lv)); let_list.append((f, lv)); x += 1.
             fcentres.append(((sx + x - 1) / 2., self.ftitle(f))); x += gap
-        if data:
-            bp = ax.boxplot(data, positions=positions, widths=0.6, showfliers=True, patch_artist=True)
-            for patch in bp["boxes"]:    patch.set(facecolor=gs["box_color"])
-            for line in bp["medians"]:   line.set(color=gs["median_color"], linewidth=2)
-            for line in bp["whiskers"] + bp["caps"]: line.set(color=gs["whisker_color"])
-            for fl in bp["fliers"]:      fl.set(markerfacecolor=gs["flier_color"], marker="o", markersize=4)
+        if data_bp:
+            bp = ax.boxplot(data_bp, positions=positions, widths=0.6,
+                            showfliers=True, patch_artist=True)
+            for patch in bp["boxes"]:
+                patch.set(facecolor=gs["box_color"])
+            for line in bp["medians"]:
+                line.set(color=gs["median_color"], linewidth=2)
+            for line in bp["whiskers"] + bp["caps"]:
+                line.set(color=gs["whisker_color"])
+            for fl in bp["fliers"]:
+                fl.set(markerfacecolor=gs["flier_color"], marker="o", markersize=4)
             ax.set_title(f"{indicator}, {units}", **fp)
             ax.set_ylabel(units, **fp)
-            ax.set_xticks(positions); ax.set_xticklabels(xlbls, rotation=90,
-                fontfamily=ff, fontsize=max(8, fz - 1))
+            ax.set_xticks(positions)
+            ax.set_xticklabels(xlbls, rotation=90,
+                               fontfamily=ff, fontsize=max(8, fz-1))
             ax.yaxis.grid(True, linestyle="-", lw=0.5, alpha=0.35)
-            allv = [v for a in data for v in a]
-            dy = max(allv) - min(allv) if len(allv) > 1 else 1.
-            off = 0.04 * dy if dy > 0 else 0.5
-            for i, (f_, lv_) in enumerate(let_list):
-                lt = (lf.get(f_, {}) or {}).get(lv_, "")
-                if lt and data[i]: ax.text(positions[i], max(data[i]) + off, lt, ha="center", va="bottom", **fp)
+            allv = [v for a in data_bp for v in a]
+            if len(allv) > 1:
+                dy = max(allv) - min(allv)
+                off = 0.04*dy if dy > 0 else 0.5
+                for i, (f_, lv_) in enumerate(let_list):
+                    lt = (lf.get(f_, {}) or {}).get(lv_, "")
+                    if lt and data_bp[i]:
+                        ax.text(positions[i], max(data_bp[i])+off, lt,
+                                ha="center", va="bottom", **fp)
             fig_bp.subplots_adjust(bottom=0.32, top=0.91, left=0.08, right=0.98)
             for cx, fnm in fcentres:
-                ax.text(cx, -0.22, fnm, ha="center", va="top", transform=ax.get_xaxis_transform(), **fp)
+                ax.text(cx, -0.22, fnm, ha="center", va="top",
+                        transform=ax.get_xaxis_transform(), **fp)
+        else:
+            ax.text(0.5, 0.5, "Немає даних для побудови",
+                    ha="center", va="center", transform=ax.transAxes)
+            ax.axis("off")
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig_bp.tight_layout()
         self._graph_figs["bp"] = fig_bp
-        cv_bp = FigureCanvasTkAgg(fig_bp, master=bp_frame); cv_bp.draw()
-        cv_bp.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        # ── TAB 2: Venn — сила впливу (% SS) ──────────────────
-        vn_frame = tk.Frame(nb); nb.add(vn_frame, text="Сила впливу факторів (Венн)")
-        fig_vn = Figure(figsize=(7, 6), dpi=100); ax2 = fig_vn.add_subplot(111)
-
-        # Separate main factors from interactions
-        main_eff  = [(nm, float(pct)) for nm, pct in eff_rows
-                     if pct and "×" not in str(nm)]
-        inter_eff = {frozenset(): None}  # placeholder
-        inter_map = {}
-        factor_labels = [self.ftitle(f) for f in self.factor_keys]
-        for nm, pct in eff_rows:
-            if "×" in str(nm) and pct:
-                parts = str(nm).split("×")
-                idxs  = frozenset(i for i, fl in enumerate(factor_labels) if fl in parts)
-                inter_map[idxs] = (str(nm), float(pct))
-
-        if main_eff:
-            draw_venn(ax2, factor_values=main_eff, interaction_values=inter_map,
-                      colors=gs["venn_colors"], alpha=gs["venn_alpha"],
-                      font_size=gs["venn_font_size"], font_color=gs["venn_font_color"],
-                      font_family=gs["font_family"], title="Сила впливу факторів (% від SS)")
-        else:
-            ax2.text(0.5, 0.5, "Недостатньо даних", ha="center", va="center", transform=ax2.transAxes)
-            ax2.axis("off")
-        self._graph_figs["vn"] = fig_vn
-        cv_vn = FigureCanvasTkAgg(fig_vn, master=vn_frame); cv_vn.draw()
-        cv_vn.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        # ── TAB 3: Venn — сила ефекту (partial η²) ────────────
-        pe_frame = tk.Frame(nb); nb.add(pe_frame, text="Сила ефекту (partial η²)")
-        fig_pe = Figure(figsize=(7, 6), dpi=100); ax3 = fig_pe.add_subplot(111)
-
-        main_pe   = [(nm, float(pct) * 100) for nm, pct, _ in pe2_rows
-                     if pct and "×" not in str(nm)]
-        inter_pe  = {}
-        for nm, pct, _ in pe2_rows:
-            if "×" in str(nm) and pct:
-                parts = str(nm).split("×")
-                idxs  = frozenset(i for i, fl in enumerate(factor_labels) if fl in parts)
-                inter_pe[idxs] = (str(nm), float(pct) * 100)
-
-        if main_pe:
-            draw_venn(ax3, factor_values=main_pe, interaction_values=inter_pe,
-                      colors=gs["venn_colors"], alpha=gs["venn_alpha"],
-                      font_size=gs["venn_font_size"], font_color=gs["venn_font_color"],
-                      font_family=gs["font_family"], title="Розмір ефекту (partial η², %)")
-        else:
-            ax3.text(0.5, 0.5, "Недостатньо даних", ha="center", va="center", transform=ax3.transAxes)
-            ax3.axis("off")
-        self._graph_figs["pe"] = fig_pe
-        cv_pe = FigureCanvasTkAgg(fig_pe, master=pe_frame); cv_pe.draw()
-        cv_pe.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        cv = FigureCanvasTkAgg(fig_bp, master=frame); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def _copy_fig(self, key):
         fig = self._graph_figs.get(key)
-        if fig is None: messagebox.showwarning("", "Графік відсутній."); return
+        if fig is None: messagebox.showwarning("","Графік відсутній."); return
         ok, msg = _copy_fig_to_clipboard(fig)
-        if ok: messagebox.showinfo("", "Графік скопійовано (PNG).")
-        else:  messagebox.showwarning("", f"Помилка: {msg}")
+        if ok: messagebox.showinfo("","Графік скопійовано (PNG).\nВставте у Word через Ctrl+V.")
+        else:  messagebox.showwarning("",f"Помилка: {msg}")
 
 
 
