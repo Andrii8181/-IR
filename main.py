@@ -736,34 +736,36 @@ def _nir05(long, fkeys, mse, dfe, lbf):
 
 def build_eff_rows(table):
     """
-    Таблиця сили впливу (% від SS_total).
-    Включає: фактори, взаємодії, Залишок (не включає «Загальна» і WP-error).
-    Гарантія: сума всіх рядків = рівно 100.00% (остання строка коригується).
+    Таблиця сили впливу (% від суми SS компонентів).
+    Завжди дає суму = 100% незалежно від типу SS.
+
+    Для Type III SS сума компонентів ≠ SS_total через часткову природу SS.
+    Тому ділимо на СУМУ самих компонентів (факторів + залишку),
+    а не на SS_total з рядка «Загальна».
     """
-    ss_tot = np.nan
-    for row in table:
-        if row[0] == "Загальна" and row[1] is not None                 and not (isinstance(row[1], float) and math.isnan(row[1])):
-            ss_tot = float(row[1]); break
-    if math.isnan(ss_tot):
-        total = 0.
-        for row in table:
-            if row[1] is not None and not (isinstance(row[1], float) and math.isnan(row[1]))                     and row[0] != "Загальна":
-                total += float(row[1])
-        ss_tot = total if total > 0 else np.nan
-    if math.isnan(ss_tot) or ss_tot <= 0:
-        return []
-    out = []
+    # Збираємо всі значущі рядки (крім «Загальна» і WP-error/Блоки)
+    components = []
     for row in table:
         nm, SSv = row[0], row[1]
         if nm == "Загальна": continue
         if "WP-error" in str(nm): continue
         if SSv is None or (isinstance(SSv, float) and math.isnan(SSv)): continue
-        out.append([nm, float(SSv) / ss_tot * 100])
-    if not out: return []
-    # Коригуємо останній рядок щоб сума = рівно 100%
-    total_pct = sum(r[1] for r in out)
-    if abs(total_pct - 100.0) < 5.0:   # розумне відхилення
-        out[-1][1] += 100.0 - total_pct
+        if float(SSv) < 0: continue
+        components.append([nm, float(SSv)])
+
+    if not components: return []
+
+    # Сума компонентів — це знаменник для %
+    total_ss = sum(c[1] for c in components)
+    if total_ss <= 0: return []
+
+    # Розраховуємо % від реальної суми
+    out = [[nm, ss / total_ss * 100] for nm, ss in components]
+
+    # Коригуємо останній рядок для точної суми = 100%
+    current_sum = sum(r[1] for r in out)
+    out[-1][1] += 100.0 - current_sum
+
     return [[r[0], fmt(r[1], 2)] for r in out]
 
 
@@ -793,9 +795,12 @@ def anova_crd(long, fkeys, lbf, ss_type="III"):
         for c in combinations(fkeys, r2): ord_.append("Фактор " + "×".join(c))
     table = [[nm, *terms.get(nm, (np.nan, 0, np.nan, np.nan, np.nan))] for nm in ord_]
     table.append(["Залишок", sse, dfe, mse, np.nan, np.nan])
+    # SS_total = реальна сума (для Type I = sst; для III може відрізнятись)
+    # Завжди показуємо математичне SS_total = Σ(yi - ȳ)²
     table.append(["Загальна", sst, len(y) - 1, np.nan, np.nan, np.nan])
     return {"table": table, "SS_error": sse, "df_error": dfe, "MS_error": mse,
-            "SS_total": sst, "residuals": res.tolist(), "NIR05": _nir05(long, fkeys, mse, dfe, lbf)}
+            "SS_total": sst, "ss_type": ss_type,
+            "residuals": res.tolist(), "NIR05": _nir05(long, fkeys, mse, dfe, lbf)}
 
 def anova_rcbd(long, fkeys, lbf, bk="BLOCK", ss_type="III"):
     bc, bn, _ = _block_dum(long, bk)
@@ -2895,11 +2900,19 @@ class SADTk:
 
         # Підказка для латинського квадрату
         latin_hint = tk.Label(frm,
-            text="ℹ Латинський квадрат: відкрийте 3-факторний аналіз.\n"
-                 "  Фактор A = Варіант,  Фактор B = Рядок,  Фактор C = Стовпець.\n"
-                 "  1 рядок таблиці = 1 ділянка, 1 значення у «Повт.1».",
+            text="ℹ ЛАТИНСЬКИЙ КВАДРАТ — інструкція:\n"
+                 "  1. Відкрийте 3-ФАКТОРНИЙ аналіз (кнопка «3 фактори» на головній).\n"
+                 "  2. Перейменуйте фактори (подвійний клік):\n"
+                 "     Фактор A = Варіант  (назви обробок або сортів)\n"
+                 "     Фактор B = Рядок    (1, 2, 3... — ряди поля)\n"
+                 "     Фактор C = Стовпець (1, 2, 3... — стовпці поля)\n"
+                 "  3. Кожен рядок таблиці = одна ділянка (k²  рядків).\n"
+                 "     Значення вводьте у колонку «Повт.1».\n"
+                 "  4. Вимога: k варіантів = k рядів = k стовпців (k ≥ 3).\n"
+                 "  Модель: Y = μ + Варіант + Рядок + Стовпець + ε\n"
+                 "  df(похибка) = (k-1)(k-2)",
             font=("Times New Roman",10), fg="#1a4b8c",
-            bg="#eef4ff", relief=tk.FLAT, padx=8, pady=4, justify="left")
+            bg="#eef4ff", relief=tk.FLAT, padx=8, pady=6, justify="left")
         latin_hint.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0,4))
         latin_hint.grid_remove()
 
@@ -3618,7 +3631,10 @@ class SADTk:
             groups1=groups1, ph_rows=ph_rows, fpt=fpt,
             rcbd_ph=rcbd_ph, nonparam=nonparam, res=res,
         )
-        self.show_graphs(long, lf, indicator, units, eff_rows, pe2_rows)
+        self.show_graphs(long, lf, indicator, units, eff_rows, pe2_rows,
+                         parent_win=self.report_win if (
+                             self.report_win and
+                             tk.Toplevel.winfo_exists(self.report_win)) else None)
 
     # ════════════════════════════════════════════════════════════
     # REPORT WINDOW
@@ -3627,37 +3643,73 @@ class SADTk:
         if self.report_win and tk.Toplevel.winfo_exists(self.report_win):
             self.report_win.destroy()
         self.report_win = rw = tk.Toplevel(self.table_win or self.root)
-        rw.title("Звіт"); rw.geometry("1200x820"); set_icon(rw)
+        rw.title("Звіт ANOVA — " + kw.get("indicator",""))
+        try: rw.state("zoomed")
+        except Exception: rw.geometry("1400x900")
+        set_icon(rw)
 
-        top = tk.Frame(rw, padx=8, pady=6); top.pack(fill=tk.X)
+        # ── Бокова панель + контент ──────────────────────────
+        main_frame = tk.Frame(rw); main_frame.pack(fill=tk.BOTH, expand=True)
+        sidebar = tk.Frame(main_frame, width=190, bg="#2c3e50")
+        sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+        content = tk.Frame(main_frame); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        tk.Label(sidebar, text="ЗВІТ", bg="#2c3e50", fg="#ecf0f1",
+                 font=("Times New Roman",12,"bold"), pady=12).pack(fill=tk.X)
+
+        self._active_panel = None
+        self._active_rpt_btn = None
+
+        def _show_panel(frame, btn):
+            if self._active_panel: self._active_panel.pack_forget()
+            if self._active_rpt_btn:
+                self._active_rpt_btn.configure(bg="#2c3e50", fg="#bdc3c7")
+            frame.pack(fill=tk.BOTH, expand=True)
+            self._active_panel = frame
+            btn.configure(bg="#c62828", fg="white")
+            self._active_rpt_btn = btn
+
+        def _sidebar_btn(text, tooltip):
+            fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
+            b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+                          font=("Times New Roman",11), relief=tk.FLAT,
+                          anchor="w", padx=12, pady=6,
+                          activebackground="#c62828", activeforeground="white")
+            b.pack(fill=tk.X)
+            tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
+                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+            tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
+            return b
+
+        # ── Панель 1: Текстовий звіт ─────────────────────────
+        rpt_frame = tk.Frame(content)
+
+        # Toolbar звіту
+        rpt_tb = tk.Frame(rpt_frame, padx=6, pady=4); rpt_tb.pack(fill=tk.X)
         self._report_buf = []
         def copy_all():
             rw.clipboard_clear()
-            # build plain-text with fixed-width columns for Word
-            lines = self._report_buf
-            rw.clipboard_append("\n".join(lines))
-            messagebox.showinfo("", "Текстовий звіт скопійовано.")
-        tk.Button(top, text="Копіювати звіт (текст)", command=copy_all).pack(side=tk.LEFT, padx=4)
+            rw.clipboard_append("\n".join(self._report_buf))
+            messagebox.showinfo("","Текстовий звіт скопійовано у буфер.\nВставте у Word через Ctrl+V.")
+        tk.Button(rpt_tb, text="📋 Копіювати звіт",
+                  font=("Times New Roman",11), command=copy_all).pack(side=tk.LEFT, padx=4)
 
-        # Scrollable body
-        outer = tk.Frame(rw); outer.pack(fill=tk.BOTH, expand=True)
+        # Scrollable body звіту
+        outer = tk.Frame(rpt_frame); outer.pack(fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(outer, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         hsb = ttk.Scrollbar(outer, orient="horizontal"); hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        cv  = tk.Canvas(outer, yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        cv = tk.Canvas(outer, yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         cv.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.config(command=cv.yview); hsb.config(command=cv.xview)
-        body = tk.Frame(cv); cv.create_window((0, 0), window=body, anchor="nw")
-        body.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
-        # mousewheel — bind to window level so it works everywhere in report
-        def _mw(e): cv.yview_scroll(int(-1 * (e.delta / 120)), "units")
-        def _bind_mw(w):
-            w.bind("<MouseWheel>", _mw)
-            for ch in w.winfo_children(): _bind_mw(ch)
-        rw.bind("<MouseWheel>", _mw)
-        cv.bind("<MouseWheel>", _mw)
-        body.bind("<MouseWheel>", _mw)
-        # re-bind after each widget is added
-        body.bind("<Configure>", lambda e: (cv.configure(scrollregion=cv.bbox("all")), _bind_mw(body)))
+        body = tk.Frame(cv); cv.create_window((0,0), window=body, anchor="nw")
+        def _mw(e): cv.yview_scroll(int(-1*(e.delta/120)),"units")
+        body.bind("<Configure>",
+                  lambda e: (cv.configure(scrollregion=cv.bbox("all"))))
+        rw.bind("<MouseWheel>", _mw); cv.bind("<MouseWheel>", _mw)
+
+        # Кнопки бокової панелі
+        b_rpt = _sidebar_btn("📄 Текстовий звіт",  "ANOVA таблиця, НІР, висновки")
+        b_rpt.configure(command=lambda: _show_panel(rpt_frame, b_rpt))
 
         buf = self._report_buf
         def _txt(s):
@@ -3799,18 +3851,71 @@ class SADTk:
         _sep()
         _txt(f"Звіт сформовано: {d['created'].strftime('%d.%m.%Y, %H:%M')}")
 
+        # Показуємо текстовий звіт як першу вкладку
+        _show_panel(rpt_frame, b_rpt)
+
+        # Зберігаємо sidebar/content/show_panel для show_graphs
+        self._rpt_sidebar = sidebar
+        self._rpt_content = content
+        self._rpt_show_panel = _show_panel
+        self._rpt_sidebar_btn = _sidebar_btn
+
     # ════════════════════════════════════════════════════════════
-    # GRAPHICAL REPORT  — 3 tabs
+    # GRAPHICAL REPORT  — sidebar tabs
     # ════════════════════════════════════════════════════════════
-    def show_graphs(self, long, letters_factor, indicator, units, eff_rows, pe2_rows):
+    def show_graphs(self, long, letters_factor, indicator, units,
+                    eff_rows, pe2_rows, parent_win=None):
         if not HAS_MPL:
             messagebox.showwarning("", "matplotlib недоступний."); return
-        if self.graph_win and tk.Toplevel.winfo_exists(self.graph_win):
-            self.graph_win.destroy()
-        self.graph_win = gw = tk.Toplevel(self.table_win or self.root)
-        gw.title(f"Графічний звіт — {indicator}")
-        gw.state("zoomed") if hasattr(gw, 'state') else gw.geometry("1400x900")
-        set_icon(gw)
+
+        # Якщо є вікно звіту — вбудовуємось у його бокову панель
+        if (hasattr(self, '_rpt_sidebar') and
+                self.report_win and tk.Toplevel.winfo_exists(self.report_win)):
+            gw = self.report_win
+            sidebar   = self._rpt_sidebar
+            content   = self._rpt_content
+            _show_panel = self._rpt_show_panel
+            _sidebar_btn = self._rpt_sidebar_btn
+            # Роздільник між звітом і графіками
+            tk.Frame(sidebar, bg="#1a3a4a", height=2).pack(fill=tk.X)
+            tk.Label(sidebar, text="ГРАФІКИ", bg="#2c3e50", fg="#ecf0f1",
+                     font=("Times New Roman",11,"bold"),
+                     pady=8).pack(fill=tk.X)
+        else:
+            # Відкриваємо окреме вікно
+            if self.graph_win and tk.Toplevel.winfo_exists(self.graph_win):
+                self.graph_win.destroy()
+            self.graph_win = gw = tk.Toplevel(self.table_win or self.root)
+            gw.title(f"Графічний звіт — {indicator}")
+            try: gw.state("zoomed")
+            except Exception: gw.geometry("1400x900")
+            set_icon(gw)
+            main = tk.Frame(gw); main.pack(fill=tk.BOTH, expand=True)
+            sidebar = tk.Frame(main, width=190, bg="#2c3e50")
+            sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+            content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            tk.Label(sidebar, text="ГРАФІКИ", bg="#2c3e50", fg="#ecf0f1",
+                     font=("Times New Roman",11,"bold"), pady=12).pack(fill=tk.X)
+            self._active_panel = None; self._active_rpt_btn = None
+            def _show_panel(frame, btn):
+                if self._active_panel: self._active_panel.pack_forget()
+                if self._active_rpt_btn:
+                    self._active_rpt_btn.configure(bg="#2c3e50", fg="#bdc3c7")
+                frame.pack(fill=tk.BOTH, expand=True)
+                self._active_panel = frame
+                btn.configure(bg="#c62828", fg="white")
+                self._active_rpt_btn = btn
+            def _sidebar_btn(text, tooltip):
+                fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
+                b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+                              font=("Times New Roman",11), relief=tk.FLAT,
+                              anchor="w", padx=12, pady=6,
+                              activebackground="#c62828", activeforeground="white")
+                b.pack(fill=tk.X)
+                tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
+                         font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+                tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
+                return b
 
         # Зберігаємо дані для перебудови
         self._g_long = long; self._g_lf = letters_factor
