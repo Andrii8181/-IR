@@ -12822,9 +12822,398 @@ class TrialDesignWindow:
 
 def _SADTk_new_init(self, root):
     _SADTk_orig_init(self, root)
-    # Replace main frame content
     for w in root.winfo_children(): w.destroy()
-    root.geometry("1060x640")
+    root.geometry("1280x780")
+    root.minsize(1100, 680)
+    root.configure(bg="#0f1117")
+    root.title("S.A.D. — Статистичний аналіз даних")
+    set_icon(root)
+
+    # ── Кольорова схема ─────────────────────────────────────
+    C = {
+        "bg":       "#0f1117",   # основний фон
+        "sidebar":  "#161b27",   # бокова панель
+        "card":     "#1e2336",   # картка
+        "card_hov": "#252d45",   # картка hover
+        "accent":   "#4a90d9",   # синій акцент
+        "red":      "#c0392b",   # кнопка аналіз
+        "text":     "#e8eaf0",   # основний текст
+        "sub":      "#8892a4",   # підтекст
+        "border":   "#2a3350",   # межі
+        "sep":      "#1e2336",   # роздільник
+        "green":    "#27ae60",
+        "purple":   "#8e44ad",
+        "orange":   "#d35400",
+        "teal":     "#16a085",
+    }
+
+    # ── Статистика використання (зберігається між сесіями) ──
+    usage_file = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              ".sad_usage.json")
+    usage = {}
+    try:
+        if os.path.exists(usage_file):
+            with open(usage_file, "r", encoding="utf-8") as _f:
+                usage = json.load(_f)
+    except Exception: pass
+
+    def _record_usage(key):
+        usage[key] = usage.get(key, 0) + 1
+        try:
+            with open(usage_file, "w", encoding="utf-8") as _f:
+                json.dump(usage, _f)
+        except Exception: pass
+
+    # ── Визначення всіх аналізів ────────────────────────────
+    ANALYSES = [
+        # key, назва, опис, категорія_колір, клас, needs_gs
+        ("anova1",  "Однофакторний ANOVA",   "CRD · RCBD · ЛК",         "#1a4b8c", None, False, lambda: self.open_table(1)),
+        ("anova2",  "Двофакторний ANOVA",    "CRD · RCBD · Split-plot",  "#1a4b8c", None, False, lambda: self.open_table(2)),
+        ("anova3",  "Трифакторний ANOVA",    "Латинський квадрат",       "#1a4b8c", None, False, lambda: self.open_table(3)),
+        ("anova4",  "Чотирифакторний ANOVA", "Складні дизайни",          "#1a4b8c", None, False, lambda: self.open_table(4)),
+        ("desc",    "Описова статистика",    "Mean · SD · Median · CV",  C["green"], DescriptiveWindow, True, None),
+        ("ttest",   "t-тест / Манн-Уітні",  "Порівняння двох груп",     C["green"], TTestWindow, False, None),
+        ("corr",    "Кореляційний аналіз",   "Пірсон · Спірмен · Heat",  C["accent"], CorrelationWindow, True, None),
+        ("reg",     "Регресійний аналіз",    "7 моделей · R² · p",       C["purple"], RegressionWindow, True, None),
+        ("ancova",  "ANCOVA",               "Коваріаційний аналіз",     C["purple"], AncovaWindow, True, None),
+        ("manova",  "MANOVA",               "Багатовимірний дисп. ан.", C["purple"], ManovaWindow, True, None),
+        ("rm",      "Повторні виміри",       "Within-subjects ANOVA",    C["orange"], RepeatedMeasuresWindow, True, None),
+        ("mix",     "Змішаний RM",          "Split-plot у часі",        C["orange"], MixedRepeatedWindow, True, None),
+        ("cluster", "Кластерний аналіз",    "K-means · Ієрархічний",    C["teal"], ClusterWindow, True, None),
+        ("pca",     "PCA",                  "Головні компоненти",       C["teal"], PCAWindow, True, None),
+        ("stab",    "Аналіз стабільності",  "Eberhart-Russell · GGE",   "#8c1a1a", StabilityWindow, True, None),
+        ("sample",  "Розмір вибірки",       "Потужність · n · α",       C["sub"], SampleSizeWindow, False, None),
+        ("trial",   "Генерація плану",      "CRD · RCBD · Split-plot",  C["teal"], TrialDesignWindow, False, None),
+    ]
+
+    def _open(key, cls, needs_gs, custom_fn=None):
+        _record_usage(key)
+        _refresh_recent()
+        if custom_fn:
+            custom_fn()
+        elif needs_gs:
+            cls(root, self.graph_settings)
+        else:
+            cls(root)
+
+    # ── HEADER ──────────────────────────────────────────────
+    header = tk.Frame(root, bg="#0d1020", height=52)
+    header.pack(fill=tk.X, side=tk.TOP)
+    header.pack_propagate(False)
+
+    # Логотип і назва
+    logo_frm = tk.Frame(header, bg="#0d1020")
+    logo_frm.pack(side=tk.LEFT, padx=16, pady=8)
+    try:
+        from PIL import Image, ImageTk
+        img = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "icon.ico")).resize((34,34), Image.LANCZOS)
+        _logo_img = ImageTk.PhotoImage(img); root._logo_img = _logo_img
+        tk.Label(logo_frm, image=_logo_img, bg="#0d1020").pack(side=tk.LEFT, padx=(0,8))
+    except Exception: pass
+    tk.Label(logo_frm, text="S.A.D.", bg="#0d1020", fg=C["text"],
+             font=("Arial",16,"bold")).pack(side=tk.LEFT)
+    tk.Label(logo_frm, text=" Статистичний аналіз даних", bg="#0d1020",
+             fg=C["sub"], font=("Arial",10)).pack(side=tk.LEFT, pady=(4,0))
+
+    # Права частина header — версія, розробник, підтримка
+    hr = tk.Frame(header, bg="#0d1020"); hr.pack(side=tk.RIGHT, padx=16)
+    def _about():
+        dlg = tk.Toplevel(root); dlg.title("Про програму")
+        dlg.geometry("420x320"); dlg.resizable(False,False)
+        dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
+        try:
+            from PIL import Image, ImageTk
+            img2 = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                           "icon.ico")).resize((64,64), Image.LANCZOS)
+            _li = ImageTk.PhotoImage(img2); dlg._li = _li
+            tk.Label(dlg, image=_li, bg=C["card"]).pack(pady=(20,4))
+        except Exception: pass
+        tk.Label(dlg, text="S.A.D.", bg=C["card"], fg=C["text"],
+                 font=("Arial",20,"bold")).pack()
+        tk.Label(dlg, text="Статистичний аналіз даних", bg=C["card"],
+                 fg=C["sub"], font=("Arial",11)).pack()
+        tk.Label(dlg, text=f"Версія {APP_VER}", bg=C["card"],
+                 fg=C["accent"], font=("Arial",10)).pack(pady=(8,2))
+        tk.Label(dlg, text="© 2024 – 2025", bg=C["card"],
+                 fg=C["sub"], font=("Arial",9)).pack()
+        tk.Label(dlg, text="Для агрономічних та біологічних досліджень",
+                 bg=C["card"], fg=C["sub"], font=("Arial",9)).pack(pady=(2,16))
+        tk.Button(dlg, text="OK", bg=C["accent"], fg="white",
+                  font=("Arial",11), relief=tk.FLAT, padx=24, pady=4,
+                  command=dlg.destroy).pack()
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+    def _support():
+        import webbrowser
+        msg = ("Технічна підтримка S.A.D.\n\n"
+               "Email: support@sad-stat.com\n"
+               "Документація: docs.sad-stat.com\n\n"
+               "Або напишіть нам — ми відповімо\n"
+               "протягом 1 робочого дня.")
+        messagebox.showinfo("Технічна підтримка", msg)
+
+    for txt, cmd in [("Розробник", _about), ("Підтримка", _support)]:
+        tk.Button(hr, text=txt, bg="#0d1020", fg=C["sub"],
+                  font=("Arial",9), relief=tk.FLAT, cursor="hand2",
+                  activebackground="#0d1020", activeforeground=C["text"],
+                  command=cmd).pack(side=tk.LEFT, padx=6)
+    tk.Label(hr, text=f"v{APP_VER}", bg="#0d1020",
+             fg=C["border"], font=("Arial",9)).pack(side=tk.LEFT, padx=(4,0))
+
+    # ── MAIN AREA ────────────────────────────────────────────
+    body = tk.Frame(root, bg=C["bg"]); body.pack(fill=tk.BOTH, expand=True)
+
+    # ════════════════════════════════════════════════════════
+    # БОКОВА ПАНЕЛЬ
+    # ════════════════════════════════════════════════════════
+    sidebar = tk.Frame(body, bg=C["sidebar"], width=220)
+    sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+
+    # Пошук
+    sf = tk.Frame(sidebar, bg=C["sidebar"], pady=8, padx=10)
+    sf.pack(fill=tk.X)
+    search_var = tk.StringVar()
+    search_entry = tk.Entry(sf, textvariable=search_var,
+                            bg=C["card"], fg=C["text"], insertbackground=C["text"],
+                            relief=tk.FLAT, font=("Arial",10),
+                            highlightthickness=1, highlightbackground=C["border"])
+    search_entry.pack(fill=tk.X, ipady=5)
+    search_entry.insert(0, "🔍  Пошук аналізу...")
+    search_entry.config(fg=C["sub"])
+    def _search_focus_in(e):
+        if search_entry.get().startswith("🔍"):
+            search_entry.delete(0, tk.END); search_entry.config(fg=C["text"])
+    def _search_focus_out(e):
+        if not search_entry.get().strip():
+            search_entry.insert(0, "🔍  Пошук аналізу..."); search_entry.config(fg=C["sub"])
+    search_entry.bind("<FocusIn>", _search_focus_in)
+    search_entry.bind("<FocusOut>", _search_focus_out)
+
+    # Роздільник
+    tk.Frame(sidebar, bg=C["border"], height=1).pack(fill=tk.X)
+
+    # Список аналізів у sidebar
+    sb_canvas = tk.Canvas(sidebar, bg=C["sidebar"], highlightthickness=0)
+    sb_vsb = tk.Scrollbar(sidebar, orient="vertical", command=sb_canvas.yview)
+    sb_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+    sb_canvas.pack(fill=tk.BOTH, expand=True)
+    sb_canvas.configure(yscrollcommand=sb_vsb.set)
+    sb_inner = tk.Frame(sb_canvas, bg=C["sidebar"])
+    sb_canvas.create_window((0,0), window=sb_inner, anchor="nw")
+    sb_inner.bind("<Configure>",
+                  lambda e: sb_canvas.configure(scrollregion=sb_canvas.bbox("all")))
+    sidebar.bind("<MouseWheel>",
+                 lambda e: sb_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+    CATEGORIES = [
+        ("ANOVA",             ["anova1","anova2","anova3","anova4"]),
+        ("Базові методи",     ["desc","ttest"]),
+        ("Зв'язок змінних",  ["corr","reg","ancova"]),
+        ("Багатовимірні",     ["manova","rm","mix"]),
+        ("Багатовимірний ML", ["cluster","pca"]),
+        ("Спеціальні",        ["stab","sample","trial"]),
+    ]
+    _ana_map = {a[0]: a for a in ANALYSES}
+    _sb_btns = {}
+
+    def _make_sidebar():
+        for w in sb_inner.winfo_children(): w.destroy()
+        q = search_var.get().lower().strip()
+        if q.startswith("🔍"): q = ""
+        for cat_name, keys in CATEGORIES:
+            filtered = [k for k in keys if not q or q in _ana_map[k][1].lower()
+                        or q in _ana_map[k][2].lower()]
+            if not filtered: continue
+            tk.Label(sb_inner, text=cat_name.upper(), bg=C["sidebar"],
+                     fg=C["sub"], font=("Arial",8,"bold"),
+                     anchor="w", padx=12, pady=(8,2)
+                     ).pack(fill=tk.X)
+            for k in filtered:
+                a = _ana_map[k]
+                col = a[3]
+                btn_f = tk.Frame(sb_inner, bg=C["sidebar"]); btn_f.pack(fill=tk.X)
+                cnt = usage.get(k,0)
+                lbl_txt = f"  {a[1]}"
+                b = tk.Label(btn_f, text=lbl_txt, bg=C["sidebar"], fg=C["text"],
+                             font=("Arial",10), anchor="w", padx=10, pady=5,
+                             cursor="hand2")
+                b.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                if cnt > 0:
+                    tk.Label(btn_f, text=str(cnt), bg=C["sidebar"],
+                             fg=C["sub"], font=("Arial",8),
+                             padx=6).pack(side=tk.RIGHT)
+                # Кольоровий лівий бордер
+                border = tk.Frame(btn_f, bg=col, width=3)
+                border.place(relx=0, rely=0, relheight=1)
+                def _enter(e, f=btn_f, brd=border):
+                    f.configure(bg=C["card_hov"])
+                    for ch in f.winfo_children(): ch.configure(bg=C["card_hov"])
+                    brd.configure(bg=C["accent"])
+                def _leave(e, f=btn_f, brd=border, c=col):
+                    f.configure(bg=C["sidebar"])
+                    for ch in f.winfo_children(): ch.configure(bg=C["sidebar"])
+                    brd.configure(bg=c)
+                for w2 in [btn_f, b]:
+                    w2.bind("<Enter>", _enter)
+                    w2.bind("<Leave>", _leave)
+                    w2.bind("<Button-1>", lambda e, k2=k, a2=a:
+                            _open(k2, a2[4], a2[5], a2[6]))
+                _sb_btns[k] = btn_f
+            tk.Frame(sb_inner, bg=C["border"], height=1).pack(fill=tk.X, padx=10)
+
+    search_var.trace_add("write", lambda *_: _make_sidebar())
+    _make_sidebar()
+
+    # ════════════════════════════════════════════════════════
+    # ПРАВА ЧАСТИНА — КАРТКИ
+    # ════════════════════════════════════════════════════════
+    right = tk.Frame(body, bg=C["bg"]); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    # Заголовок
+    top_r = tk.Frame(right, bg=C["bg"], padx=24, pady=16)
+    top_r.pack(fill=tk.X)
+    tk.Label(top_r, text="Оберіть тип аналізу", bg=C["bg"],
+             fg=C["text"], font=("Arial",18,"bold")).pack(side=tk.LEFT)
+
+    # Кнопки проекту справа
+    proj_f = tk.Frame(top_r, bg=C["bg"]); proj_f.pack(side=tk.RIGHT)
+    for ptxt, pcmd in [("📂 Відкрити проект", self.load_project),
+                        ("💾 Зберегти проект", self.save_project)]:
+        tk.Button(proj_f, text=ptxt, bg=C["card"], fg=C["text"],
+                  font=("Arial",10), relief=tk.FLAT, padx=12, pady=6,
+                  cursor="hand2", activebackground=C["card_hov"],
+                  command=pcmd).pack(side=tk.LEFT, padx=4)
+
+    # Прокручуваний контент
+    content_canvas = tk.Canvas(right, bg=C["bg"], highlightthickness=0)
+    c_vsb = tk.Scrollbar(right, orient="vertical", command=content_canvas.yview)
+    c_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+    content_canvas.pack(fill=tk.BOTH, expand=True)
+    content_canvas.configure(yscrollcommand=c_vsb.set)
+    cf = tk.Frame(content_canvas, bg=C["bg"])
+    cf_win = content_canvas.create_window((0,0), window=cf, anchor="nw")
+    cf.bind("<Configure>",
+            lambda e: content_canvas.configure(scrollregion=content_canvas.bbox("all")))
+    content_canvas.bind("<Configure>",
+                        lambda e: content_canvas.itemconfig(cf_win, width=e.width))
+    right.bind("<MouseWheel>",
+               lambda e: content_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+    content_canvas.bind("<MouseWheel>",
+                        lambda e: content_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+    def _card(parent, key, name, desc, color, cls, needs_gs, custom_fn,
+              large=False):
+        """Створює картку аналізу."""
+        w = 260 if large else 200
+        h = 110 if large else 88
+        pad = 14 if large else 10
+        name_sz = 13 if large else 11
+        desc_sz = 9 if large else 8
+
+        frm = tk.Frame(parent, bg=color, width=w, height=h,
+                       cursor="hand2", relief=tk.FLAT)
+        frm.pack_propagate(False)
+
+        # Внутрішній frame з відступом
+        inner = tk.Frame(frm, bg=color, padx=pad, pady=pad)
+        inner.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(inner, text=name, bg=color, fg="white",
+                 font=("Arial", name_sz, "bold"),
+                 wraplength=w-pad*2, justify="left", anchor="w"
+                 ).pack(anchor="w")
+        tk.Label(inner, text=desc, bg=color, fg="rgba(255,255,255,0.7)",
+                 font=("Arial", desc_sz),
+                 wraplength=w-pad*2, justify="left", anchor="w",
+                 fg="#ffffffaa"
+                 ).pack(anchor="w", pady=(2,0))
+
+        # Лічильник використань
+        cnt = usage.get(key, 0)
+        if cnt > 0 and large:
+            tk.Label(inner, text=f"↳ відкривали {cnt}×",
+                     bg=color, fg="#ffffff88",
+                     font=("Arial",7)).pack(anchor="w", pady=(4,0))
+
+        # Hover ефект
+        _dark = _darken(color)
+        def _e(e, f=frm, i2=inner, d=_dark):
+            f.configure(bg=d); i2.configure(bg=d)
+            for ch in i2.winfo_children(): ch.configure(bg=d)
+        def _l(e, f=frm, i2=inner, c=color):
+            f.configure(bg=c); i2.configure(bg=c)
+            for ch in i2.winfo_children(): ch.configure(bg=c)
+        for w2 in [frm, inner] + list(inner.winfo_children()):
+            w2.bind("<Enter>", _e); w2.bind("<Leave>", _l)
+            w2.bind("<Button-1>",
+                    lambda e, k=key, cl=cls, ng=needs_gs, cf2=custom_fn:
+                    _open(k, cl, ng, cf2))
+        return frm
+
+    def _darken(hex_color):
+        """Трохи темніший колір для hover."""
+        try:
+            h = hex_color.lstrip("#")
+            r,g,b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+            r2,g2,b2 = max(0,r-25), max(0,g-25), max(0,b-25)
+            return f"#{r2:02x}{g2:02x}{b2:02x}"
+        except Exception: return hex_color
+
+    def _refresh_recent():
+        """Перебудовує секцію «Нещодавні»."""
+        for w in cf.winfo_children(): w.destroy()
+
+        padx = 24
+
+        # ── Нещодавні / Часті (великі картки) ──────────────
+        recent_keys = sorted(usage.keys(), key=lambda k: -usage.get(k,0))
+        recent_keys = [k for k in recent_keys if k in _ana_map][:6]
+
+        if recent_keys:
+            sec1 = tk.Frame(cf, bg=C["bg"]); sec1.pack(fill=tk.X, padx=padx, pady=(8,4))
+            tk.Label(sec1, text="Нещодавні та часті", bg=C["bg"],
+                     fg=C["sub"], font=("Arial",10,"bold")).pack(anchor="w")
+            cards_f1 = tk.Frame(cf, bg=C["bg"]); cards_f1.pack(fill=tk.X, padx=padx, pady=(4,16))
+            for k in recent_keys:
+                a = _ana_map[k]
+                c = _card(cards_f1, k, a[1], a[2], a[3], a[4], a[5], a[6], large=True)
+                c.pack(side=tk.LEFT, padx=(0,10), pady=4)
+            tk.Frame(cf, bg=C["border"], height=1).pack(fill=tk.X, padx=padx, pady=4)
+
+        # ── Всі аналізи по категоріях ───────────────────────
+        for cat_name, keys in CATEGORIES:
+            sec = tk.Frame(cf, bg=C["bg"]); sec.pack(fill=tk.X, padx=padx, pady=(12,4))
+            tk.Label(sec, text=cat_name, bg=C["bg"],
+                     fg=C["text"], font=("Arial",12,"bold")).pack(anchor="w")
+            row_f = tk.Frame(cf, bg=C["bg"]); row_f.pack(fill=tk.X, padx=padx, pady=(4,8))
+            for k in keys:
+                a = _ana_map[k]
+                c = _card(row_f, k, a[1], a[2], a[3], a[4], a[5], a[6])
+                c.pack(side=tk.LEFT, padx=(0,8), pady=4)
+
+        # ── Footer ──────────────────────────────────────────
+        footer = tk.Frame(cf, bg=C["bg"]); footer.pack(fill=tk.X, padx=padx, pady=(16,12))
+        tk.Label(footer,
+                 text="S.A.D. — Статистичний аналіз даних для агрономічних досліджень",
+                 bg=C["bg"], fg=C["sub"], font=("Arial",8)).pack(side=tk.LEFT)
+        tk.Label(footer, text=f"v{APP_VER}  ©2024",
+                 bg=C["bg"], fg=C["border"], font=("Arial",8)).pack(side=tk.RIGHT)
+
+    _refresh_recent()
+
+    # ── Стан ────────────────────────────────────────────────
+    self.table_win = None; self.report_win = None; self.graph_win = None
+    self._graph_figs = {}
+    self._active_cell = None; self._active_prev = None
+    self._sel_anchor = None; self._sel_cells = set(); self._sel_orig = {}
+    self._fill_drag = False; self._fill_rows = []; self._fill_cols = []
+    self.factor_title_map = {}
+    self.graph_settings = dict(DEF_GS)
+    self._current_project_path = None
+    self._lbf_cache = {}
+    if not hasattr(self, '_gs_titles'): self._gs_titles = {}
+
+
 
     mf = tk.Frame(root, bg="white"); mf.pack(expand=True, fill=tk.BOTH)
     tk.Label(mf, text="S.A.D. — Статистичний аналіз даних",
