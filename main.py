@@ -1541,7 +1541,7 @@ class CorrelationWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва показника {idx+1}:",
-                 font=("Times New Roman", 12)).pack(padx=16, pady=(14, 4))
+                 font=("Times New Roman", 12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
         e = tk.Entry(dlg, textvariable=var, font=("Times New Roman", 12), width=28)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
@@ -1752,7 +1752,7 @@ class CorrelationWindow:
         # ── Метод кореляції ──────────────────────────────────
         tk.Label(frm, text="Метод кореляції:",
                  font=("Times New Roman", 12, "bold")).grid(
-                 row=0, column=0, columnspan=2, sticky="w", pady=(0,6))
+                 row=0, column=0, columnspan=2, sticky="w", pady=0)
         meth_var = tk.StringVar(value="auto")
         methods = [
             ("auto",
@@ -1777,7 +1777,7 @@ class CorrelationWindow:
         # ── Поправка на множинні порівняння ──────────────────
         tk.Label(frm, text="Поправка на множинні порівняння:",
                  font=("Times New Roman", 12, "bold")).grid(
-                 row=5, column=0, columnspan=2, sticky="w", pady=(0,6))
+                 row=5, column=0, columnspan=2, sticky="w", pady=0)
         corr_var = tk.StringVar(value="bonferroni")
         corrections = [
             ("bonferroni",
@@ -2646,7 +2646,7 @@ class SADTk:
         dlg.title("Перейменувати фактор"); dlg.resizable(False, False)
         set_icon(dlg); dlg.grab_set()
         tk.Label(dlg, text=f"Назва фактору {fk}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+                 font=("Times New Roman",12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=old)
         e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=28)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
@@ -2869,7 +2869,7 @@ class SADTk:
 
         # ── Дизайн ───────────────────────────────────────────
         tk.Label(frm, text="Дизайн досліду:", font=("Times New Roman",12,"bold")
-                 ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(14,4))
+                 ).grid(row=2, column=0, columnspan=2, sticky="w", pady=14)
 
         design_info = tk.Frame(frm); design_info.grid(row=3, column=0, columnspan=2, sticky="w")
         tk.Label(design_info,
@@ -2937,7 +2937,7 @@ class SADTk:
         ttk.Separator(frm, orient="horizontal").grid(
             row=6, column=0, columnspan=2, sticky="ew", pady=8)
         tk.Label(frm, text="Тип суми квадратів (SS):", font=("Times New Roman",12,"bold")
-                 ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(0,4))
+                 ).grid(row=7, column=0, columnspan=2, sticky="w", pady=0)
         tk.Label(frm,
                  text=(
                      "Тип I — Послідовний: кожен фактор після попередніх.\n"
@@ -2994,7 +2994,7 @@ class SADTk:
             tk.Label(frm,
                      text="⚠ Бальна шкала → ЛИШЕ непараметричні методи",
                      fg="#c62828", font=("Times New Roman",12,"bold")
-                     ).pack(anchor="w", pady=(0,4))
+                     ).pack(anchor="w", pady=0)
             tk.Label(frm,
                      text=(
                          "Параметричні методи (НІР, Тьюкі, Дункан) заблоковані.\n"
@@ -3016,7 +3016,7 @@ class SADTk:
         elif normal:
             tk.Label(frm, text="✓ Дані відповідають нормальному розподілу (Shapiro–Wilk).",
                      justify="left", fg="#1a6b1a",
-                     font=("Times New Roman",11)).pack(anchor="w", pady=(0, 8))
+                     font=("Times New Roman",11)).pack(anchor="w", pady=0)
             options = [("НІР₀₅ (LSD)", "lsd"),
                        ("Тест Тьюкі", "tukey"),
                        ("Тест Дункана", "duncan"),
@@ -3718,7 +3718,7 @@ class SADTk:
             buf.append(s)
         def _head(s):
             tk.Label(body, text=s, font=("Times New Roman", 13, "bold"), fg="#000000",
-                     justify="left", anchor="w").pack(fill=tk.X, padx=12, pady=(8, 2))
+                     justify="left", anchor="w").pack(fill=tk.X, padx=12, pady=8)
             buf.append("\n" + s)
         def _sep():
             ttk.Separator(body, orient="horizontal").pack(fill=tk.X, padx=12, pady=4)
@@ -4934,7 +4934,7 @@ class DescriptiveWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва показника {idx+1}:",
-                 font=("Times New Roman", 12)).pack(padx=16, pady=(14, 4))
+                 font=("Times New Roman", 12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
         e = tk.Entry(dlg, textvariable=var, font=("Times New Roman", 12), width=28)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
@@ -5438,7 +5438,7 @@ SHAPIRO-WILK:
         # ── Тип тесту ────────────────────────────────────────
         frm = tk.Frame(self.win, padx=12); frm.pack(fill=tk.BOTH, expand=True)
         tk.Label(frm, text="Тип тесту:",
-                 font=("Times New Roman",12,"bold")).grid(row=0, column=0, sticky="w", pady=(4,2))
+                 font=("Times New Roman",12,"bold")).grid(row=0, column=0, sticky="w", pady=4)
         self.test_var = tk.StringVar(value="ind")
         rf = ("Times New Roman",12)
         tests = [("Незалежні вибірки (2 різні групи)", "ind"),
@@ -5451,7 +5451,7 @@ SHAPIRO-WILK:
 
         # ── Поля введення ─────────────────────────────────────
         tk.Label(frm, text="Група 1 / Вибірка:",
-                 font=("Times New Roman",12)).grid(row=4, column=0, sticky="w", pady=(10,2))
+                 font=("Times New Roman",12)).grid(row=4, column=0, sticky="w", pady=10)
         self.e1 = tk.Text(frm, width=55, height=5, font=("Times New Roman",11))
         self.e1.grid(row=5, column=0, columnspan=2, sticky="ew")
         tk.Label(frm, text="Вводьте через кому, пробіл або кожне значення з нового рядка",
@@ -5459,7 +5459,7 @@ SHAPIRO-WILK:
                  ).grid(row=6, column=0, columnspan=2, sticky="w")
 
         self.lbl2 = tk.Label(frm, text="Група 2:", font=("Times New Roman",12))
-        self.lbl2.grid(row=7, column=0, sticky="w", pady=(8,2))
+        self.lbl2.grid(row=7, column=0, sticky="w", pady=8)
         self.e2 = tk.Text(frm, width=55, height=5, font=("Times New Roman",11))
         self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
 
@@ -5822,9 +5822,9 @@ class RegressionWindow:
         # ── Поля введення даних ───────────────────────────────
         mid = tk.Frame(self.win, padx=8); mid.pack(fill=tk.X)
         tk.Label(mid, text="x  (незалежна змінна)",
-                 font=("Times New Roman",11,"bold")).grid(row=0, column=0, padx=4, pady=(4,2))
+                 font=("Times New Roman",11,"bold")).grid(row=0, column=0, padx=4, pady=4)
         tk.Label(mid, text="y  (залежна змінна)",
-                 font=("Times New Roman",11,"bold")).grid(row=0, column=1, padx=4, pady=(4,2))
+                 font=("Times New Roman",11,"bold")).grid(row=0, column=1, padx=4, pady=4)
         self.tx = tk.Text(mid, width=36, height=13, font=("Times New Roman",11))
         self.tx.grid(row=1, column=0, padx=4, pady=2)
         self.ty = tk.Text(mid, width=36, height=13, font=("Times New Roman",11))
@@ -6043,7 +6043,7 @@ class RegressionWindow:
         tk.Label(self.res_frame, text=info, font=("Times New Roman",11),
                  justify="left", anchor="w",
                  bg="#f8f8f8", relief=tk.FLAT, padx=8, pady=6
-                 ).pack(fill=tk.X, pady=(0,4))
+                 ).pack(fill=tk.X, pady=0)
 
         # ── Графіки ──────────────────────────────────────────
         if not HAS_MPL:
@@ -6608,7 +6608,7 @@ class ClusterWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва стовпця {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+                 font=("Times New Roman",12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
         e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
@@ -7077,7 +7077,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва показника {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+                 font=("Times New Roman",12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
         e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
@@ -7735,7 +7735,7 @@ class RepeatedMeasuresWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати часову точку")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва часової точки {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+                 font=("Times New Roman",12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.col_vars[idx].get())
         e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
@@ -8069,7 +8069,7 @@ class RepeatedMeasuresWindow:
 
         def _head(txt):
             tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
-                     bg="#e8eeff", anchor="w", padx=8, pady=3).pack(fill=tk.X, padx=6, pady=(8,2))
+                     bg="#e8eeff", anchor="w", padx=8, pady=3).pack(fill=tk.X, padx=6, pady=8)
         def _txt(txt, color="#000000"):
             tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
@@ -8385,7 +8385,7 @@ class MixedRepeatedWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати дату")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва дати/точки {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+                 font=("Times New Roman",12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.time_vars[idx].get())
         e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=24)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
@@ -8803,12 +8803,12 @@ class MixedRepeatedWindow:
         def _head(t):
             tk.Label(body, text=t, font=("Times New Roman",12,"bold"),
                      bg="#e8eeff", anchor="w", padx=8, pady=3
-                     ).pack(fill=tk.X, padx=6, pady=(8,2))
+                     ).pack(fill=tk.X, padx=6, pady=8)
         def _txt(t, color="#000"):
             tk.Label(body, text=t, font=("Times New Roman",11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
         def _tbl(hdrs, rows):
-            f, _ = make_tv(body, hdrs, rows); f.pack(fill=tk.X, padx=8, pady=(2,6))
+            f, _ = make_tv(body, hdrs, rows); f.pack(fill=tk.X, padx=8, pady=2)
 
         _head("Змішаний аналіз повторних вимірювань (Split-plot у часі)")
         _txt(f"Варіантів: {len(var_levels)}   |   Повторностей: {list(n_reps.values())}   "
@@ -9177,7 +9177,7 @@ class StabilityWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати середовище")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва середовища {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+                 font=("Times New Roman",12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.env_vars[idx].get())
         e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=24)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
@@ -9895,12 +9895,12 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         def _head(txt):
             tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
-                     anchor="w").pack(fill=tk.X, padx=10, pady=(8,2))
+                     anchor="w").pack(fill=tk.X, padx=10, pady=8)
         def _txt(txt, color="#000000"):
             tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=10, pady=1)
         def _tbl(headers, rows):
-            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=(2,8))
+            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=2)
 
         _head("ANCOVA — Коваріаційний аналіз")
         _txt(f"R² = {fmt(R2,4)}   |   MSE = {fmt(mse,4)}   |   df_error = {dfe}")
@@ -10575,12 +10575,12 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         def _head(txt):
             tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
                      bg="#e8eeff", anchor="w", padx=8, pady=3
-                     ).pack(fill=tk.X, padx=6, pady=(10,2))
+                     ).pack(fill=tk.X, padx=6, pady=10)
         def _txt(txt, color="#000000"):
             tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
         def _tbl(headers, rows):
-            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=(2,8))
+            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=2)
 
         # ── Заголовок ────────────────────────────────────────
         tk.Label(body,
@@ -12171,7 +12171,7 @@ class TrialDesignWindow:
         self._design_hint = tk.Label(df, text="", font=("Times New Roman", 9),
                                      fg="#1a4b8c", bg="#eef4ff",
                                      justify="left", wraplength=320, padx=4, pady=3)
-        self._design_hint.pack(fill=tk.X, pady=(4, 0))
+        self._design_hint.pack(fill=tk.X, pady=4)
 
         # Split-plot додатковий фактор
         self.sp_frame = tk.LabelFrame(lf, text="Sub-plot варіанти",
@@ -12914,7 +12914,7 @@ def _SADTk_new_init(self, root):
     tk.Label(logo_frm, text="S.A.D.", bg="#0d1020", fg=C["text"],
              font=("Arial",16,"bold")).pack(side=tk.LEFT)
     tk.Label(logo_frm, text=" Статистичний аналіз даних", bg="#0d1020",
-             fg=C["sub"], font=("Arial",10)).pack(side=tk.LEFT, pady=(4,0))
+             fg=C["sub"], font=("Arial",10)).pack(side=tk.LEFT, pady=4)
 
     # Права частина header — версія, розробник, підтримка
     hr = tk.Frame(header, bg="#0d1020"); hr.pack(side=tk.RIGHT, padx=16)
@@ -12927,18 +12927,18 @@ def _SADTk_new_init(self, root):
             img2 = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                            "icon.ico")).resize((64,64), Image.LANCZOS)
             _li = ImageTk.PhotoImage(img2); dlg._li = _li
-            tk.Label(dlg, image=_li, bg=C["card"]).pack(pady=(20,4))
+            tk.Label(dlg, image=_li, bg=C["card"]).pack(pady=20)
         except Exception: pass
         tk.Label(dlg, text="S.A.D.", bg=C["card"], fg=C["text"],
                  font=("Arial",20,"bold")).pack()
         tk.Label(dlg, text="Статистичний аналіз даних", bg=C["card"],
                  fg=C["sub"], font=("Arial",11)).pack()
         tk.Label(dlg, text=f"Версія {APP_VER}", bg=C["card"],
-                 fg=C["accent"], font=("Arial",10)).pack(pady=(8,2))
+                 fg=C["accent"], font=("Arial",10)).pack(pady=8)
         tk.Label(dlg, text="© 2024 – 2025", bg=C["card"],
                  fg=C["sub"], font=("Arial",9)).pack()
         tk.Label(dlg, text="Для агрономічних та біологічних досліджень",
-                 bg=C["card"], fg=C["sub"], font=("Arial",9)).pack(pady=(2,16))
+                 bg=C["card"], fg=C["sub"], font=("Arial",9)).pack(pady=2)
         tk.Button(dlg, text="OK", bg=C["accent"], fg="white",
                   font=("Arial",11), relief=tk.FLAT, padx=24, pady=4,
                   command=dlg.destroy).pack()
@@ -13026,7 +13026,7 @@ def _SADTk_new_init(self, root):
             if not filtered: continue
             tk.Label(sb_inner, text=cat_name.upper(), bg=C["sidebar"],
                      fg=C["sub"], font=("Arial",8,"bold"),
-                     anchor="w", padx=12, pady=(8,2)
+                     anchor="w", padx=12, pady=8
                      ).pack(fill=tk.X)
             for k in filtered:
                 a = _ana_map[k]
@@ -13133,7 +13133,7 @@ def _SADTk_new_init(self, root):
         if cnt > 0 and large:
             tk.Label(inner, text=f"↳ відкривали {cnt}×",
                      bg=color, fg="#ffffff88",
-                     font=("Arial",7)).pack(anchor="w", pady=(4,0))
+                     font=("Arial",7)).pack(anchor="w", pady=4)
 
         # Hover ефект
         _dark = _darken(color)
@@ -13173,7 +13173,7 @@ def _SADTk_new_init(self, root):
             sec1 = tk.Frame(cf, bg=C["bg"]); sec1.pack(fill=tk.X, padx=padx, pady=(8,4))
             tk.Label(sec1, text="Нещодавні та часті", bg=C["bg"],
                      fg=C["sub"], font=("Arial",10,"bold")).pack(anchor="w")
-            cards_f1 = tk.Frame(cf, bg=C["bg"]); cards_f1.pack(fill=tk.X, padx=padx, pady=(4,16))
+            cards_f1 = tk.Frame(cf, bg=C["bg"]); cards_f1.pack(fill=tk.X, padx=padx, pady=4)
             for k in recent_keys:
                 a = _ana_map[k]
                 c = _card(cards_f1, k, a[1], a[2], a[3], a[4], a[5], a[6], large=True)
@@ -13185,7 +13185,7 @@ def _SADTk_new_init(self, root):
             sec = tk.Frame(cf, bg=C["bg"]); sec.pack(fill=tk.X, padx=padx, pady=(12,4))
             tk.Label(sec, text=cat_name, bg=C["bg"],
                      fg=C["text"], font=("Arial",12,"bold")).pack(anchor="w")
-            row_f = tk.Frame(cf, bg=C["bg"]); row_f.pack(fill=tk.X, padx=padx, pady=(4,8))
+            row_f = tk.Frame(cf, bg=C["bg"]); row_f.pack(fill=tk.X, padx=padx, pady=4)
             for k in keys:
                 a = _ana_map[k]
                 c = _card(row_f, k, a[1], a[2], a[3], a[4], a[5], a[6])
