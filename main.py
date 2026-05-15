@@ -13125,14 +13125,14 @@ def _SADTk_new_init(self, root):
         tk.Label(inner, text=desc, bg=color,
                  font=("Arial", desc_sz),
                  wraplength=w-pad*2, justify="left", anchor="w",
-                 fg="#ffffffaa"
+                 fg="#aaaaaa"
                  ).pack(anchor="w", pady=(2,0))
 
         # Лічильник використань
         cnt = usage.get(key, 0)
         if cnt > 0 and large:
             tk.Label(inner, text=f"↳ відкривали {cnt}×",
-                     bg=color, fg="#ffffff88",
+                     bg=color, fg="#888888",
                      font=("Arial",7)).pack(anchor="w", pady=4)
 
         # Hover ефект
