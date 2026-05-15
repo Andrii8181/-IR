@@ -13122,7 +13122,7 @@ def _SADTk_new_init(self, root):
                  font=("Arial", name_sz, "bold"),
                  wraplength=w-pad*2, justify="left", anchor="w"
                  ).pack(anchor="w")
-        tk.Label(inner, text=desc, bg=color, fg="rgba(255,255,255,0.7)",
+        tk.Label(inner, text=desc, bg=color,
                  font=("Arial", desc_sz),
                  wraplength=w-pad*2, justify="left", anchor="w",
                  fg="#ffffffaa"
