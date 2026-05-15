@@ -4149,7 +4149,6 @@ class SADTk:
     # ── TAB 1: Boxplot ─────────────────────────────────────────
     def _build_bp_tab(self, frame, long, lf, indicator, units, gs, gw=None):
         for w in frame.winfo_children(): w.destroy()
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         def _rebuild():
             self._build_bp_tab(frame, long, lf, indicator, units,
@@ -4161,6 +4160,7 @@ class SADTk:
                 ("Показати сітку:", "show_grid", True, "check", None),
             ])
         self._tab_toolbar(frame, "bp", _rebuild, _settings)
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         ff = gs["font_family"]; fz = gs["font_size"]
@@ -4217,7 +4217,6 @@ class SADTk:
     # ── TAB 2: Середні ± SE ────────────────────────────────────
     def _build_bar_tab(self, frame, long, lf, indicator, units, gs, gw=None):
         for w in frame.winfo_children(): w.destroy()
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         def _rebuild():
             self._build_bar_tab(frame, long, lf, indicator, units,
@@ -4228,6 +4227,7 @@ class SADTk:
                 ("Показати сітку:", "show_grid", True, "check", None),
             ])
         self._tab_toolbar(frame, "bar", _rebuild, _settings)
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         ff = gs["font_family"]; fz = gs["font_size"]
@@ -4282,7 +4282,6 @@ class SADTk:
     # ── TAB 3: Взаємодія ───────────────────────────────────────
     def _build_int_tab(self, frame, long, lf, indicator, units, gs, gw=None):
         for w in frame.winfo_children(): w.destroy()
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         def _rebuild():
             self._build_int_tab(frame, long, lf, indicator, units,
@@ -4295,6 +4294,7 @@ class SADTk:
                 ("Показати сітку:", "show_grid", True, "check", None),
             ])
         self._tab_toolbar(frame, "int", _rebuild, _settings)
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         colors_list = ["#4c72b0","#dd8452","#55a868","#c44e52",
@@ -4352,7 +4352,6 @@ class SADTk:
     # ── TAB 4: Динаміка по рівнях ──────────────────────────────
     def _build_line_tab(self, frame, long, lf, indicator, units, gs, gw=None):
         for w in frame.winfo_children(): w.destroy()
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         def _rebuild():
             self._build_line_tab(frame, long, lf, indicator, units,
@@ -4365,6 +4364,7 @@ class SADTk:
                 ("Показати сітку:", "show_grid", True, "check", None),
             ])
         self._tab_toolbar(frame, "line", _rebuild, _settings)
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         colors_list = ["#4c72b0","#dd8452","#55a868","#c44e52",
@@ -4417,7 +4417,6 @@ class SADTk:
     # ── TAB 5: Залишки ─────────────────────────────────────────
     def _build_hist_tab(self, frame, long, gs, indicator, units, gw=None):
         for w in frame.winfo_children(): w.destroy()
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         def _rebuild():
             self._build_hist_tab(frame, long, self.graph_settings,
@@ -4427,6 +4426,7 @@ class SADTk:
                 ("Колір гістограми:", "hist_color", "#4c72b0", "color", None),
             ])
         self._tab_toolbar(frame, "hist", _rebuild, _settings)
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         title = self._gs_titles.get("hist", "Аналіз залишків")
@@ -4468,7 +4468,6 @@ class SADTk:
     # ── TAB 6: Сила впливу ─────────────────────────────────────
     def _build_vn_tab(self, frame, eff_rows, gs, gw=None):
         for w in frame.winfo_children(): w.destroy()
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         def _rebuild():
             self._build_vn_tab(frame, self._g_eff, self.graph_settings, gw)
@@ -4480,6 +4479,7 @@ class SADTk:
                  "color", None),
             ])
         self._tab_toolbar(frame, "vn", _rebuild, _settings)
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         title = self._gs_titles.get("vn", "Сила впливу факторів (% від суми SS)")
@@ -4519,7 +4519,6 @@ class SADTk:
     # ── TAB 7: Розмір ефекту ───────────────────────────────────
     def _build_pe_tab(self, frame, pe2_rows, gs, gw=None):
         for w in frame.winfo_children(): w.destroy()
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         def _rebuild():
             self._build_pe_tab(frame, self._g_pe2, self.graph_settings, gw)
@@ -4531,6 +4530,7 @@ class SADTk:
                  "color", None),
             ])
         self._tab_toolbar(frame, "pe", _rebuild, _settings)
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         title = self._gs_titles.get("pe", "Розмір ефекту (partial η²)")
