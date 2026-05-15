@@ -3921,142 +3921,666 @@ class SADTk:
         self._g_long = long; self._g_lf = letters_factor
         self._g_ind  = indicator; self._g_units = units
         self._g_eff  = eff_rows; self._g_pe2 = pe2_rows
+        self._graph_figs = {}
+        if not hasattr(self, '_gs_titles'): self._gs_titles = {}
+        self._lbf_cache = {f: list(letters_factor.get(f, {}).keys())
+                           for f in self.factor_keys}
 
         ordinal = getattr(self, '_ordinal_mode', False)
 
-        # ── Основна область: бокова панель + контент ────────
-        main = tk.Frame(gw); main.pack(fill=tk.BOTH, expand=True)
+        # Якщо вбудовуємось у вікно звіту — використовуємо його sidebar і content
+        if (hasattr(self, '_rpt_sidebar') and
+                self.report_win and tk.Toplevel.winfo_exists(self.report_win)):
+            sidebar      = self._rpt_sidebar
+            content      = self._rpt_content
+            _show_panel  = self._rpt_show_panel
+            gw = self.report_win
+        else:
+            # Окреме вікно (запасний варіант)
+            if self.graph_win and tk.Toplevel.winfo_exists(self.graph_win):
+                self.graph_win.destroy()
+            self.graph_win = gw = tk.Toplevel(self.table_win or self.root)
+            gw.title(f"Графічний звіт — {indicator}")
+            try: gw.state("zoomed")
+            except Exception: gw.geometry("1400x900")
+            set_icon(gw)
+            outer_f = tk.Frame(gw); outer_f.pack(fill=tk.BOTH, expand=True)
+            sidebar = tk.Frame(outer_f, width=195, bg="#2c3e50")
+            sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+            content = tk.Frame(outer_f)
+            content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            tk.Label(sidebar, text="ГРАФІКИ", bg="#2c3e50", fg="#ecf0f1",
+                     font=("Times New Roman",11,"bold"), pady=10).pack(fill=tk.X)
+            self._active_panel = None; self._active_rpt_btn = None
+            def _show_panel(frame, btn):
+                if self._active_panel: self._active_panel.pack_forget()
+                if self._active_rpt_btn:
+                    self._active_rpt_btn.configure(bg="#2c3e50", fg="#bdc3c7")
+                frame.pack(fill=tk.BOTH, expand=True)
+                self._active_panel = frame
+                btn.configure(bg="#c62828", fg="white")
+                self._active_rpt_btn = btn
 
-        # ── БОКОВА ПАНЕЛЬ (ліворуч) ──────────────────────────
-        sidebar = tk.Frame(main, width=190, bg="#2c3e50",
-                           relief=tk.FLAT)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        sidebar.pack_propagate(False)
+        gs = self.graph_settings
 
-        tk.Label(sidebar, text="ГРАФІКИ", bg="#2c3e50", fg="#ecf0f1",
-                 font=("Times New Roman",11,"bold"),
-                 pady=12).pack(fill=tk.X)
-
-        # Контентна область (права частина)
-        content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Поточний активний фрейм
-        self._active_graph_frame = None
-        self._active_btn = None
-
-        def _show_tab(key, btn):
-            """Показати вкладку key, підсвітити кнопку btn."""
-            if self._active_graph_frame:
-                self._active_graph_frame.pack_forget()
-            if self._active_btn:
-                self._active_btn.configure(bg="#2c3e50", fg="#bdc3c7",
-                                           relief=tk.FLAT)
-            frames[key].pack(fill=tk.BOTH, expand=True)
-            self._active_graph_frame = frames[key]
-            btn.configure(bg="#c62828", fg="white", relief=tk.FLAT)
-            self._active_btn = btn
-
-        # ── Бальні дані — спрощений вигляд ──────────────────
-        if ordinal:
-            frames = {"ord": tk.Frame(content)}
-            self._ordinal_graph_var = tk.StringVar(value="Boxplot (медіана + квартилі)")
-            ctrl = tk.Frame(sidebar, bg="#2c3e50"); ctrl.pack(fill=tk.X, pady=4)
-            for lbl, val in [("📦 Boxplot", "Boxplot (медіана + квартилі)"),
-                             ("● Dot plot", "Dot plot (точки + медіана)")]:
-                b = tk.Button(ctrl, text=lbl, bg="#2c3e50", fg="#bdc3c7",
-                              font=("Times New Roman",11), relief=tk.FLAT,
-                              activebackground="#c62828", activeforeground="white",
-                              command=lambda v=val: (
-                                  self._ordinal_graph_var.set(v),
-                                  self._rebuild_ordinal_graph(
-                                      frames["ord"], long, letters_factor,
-                                      indicator, units)))
-                b.pack(fill=tk.X, padx=8, pady=2)
-            frames["ord"].pack(fill=tk.BOTH, expand=True)
-            self._rebuild_ordinal_graph(frames["ord"], long, letters_factor,
-                                        indicator, units)
-            return
-
-        # ── Звичайні дані — всі вкладки ──────────────────────
-        tab_defs = [
-            ("bp",   "📦 Boxplot",           "Розподіл даних по варіантах"),
-            ("bar",  "📊 Середні ± SE",       "Стовпчикова з планками помилок"),
-            ("int",  "↗ Взаємодія",           "Графік взаємодії факторів"),
-            ("line", "📈 Динаміка по рівнях", "Лінійний графік рівнів"),
-            ("hist", "〰 Залишки",            "Гістограма і Q-Q залишків"),
-            ("vn",   "🎯 Сила впливу",        "Горизонтальна діаграма % SS"),
-            ("pe",   "💡 Розмір ефекту",      "Горизонтальна діаграма η²"),
-        ]
-
-        frames = {k: tk.Frame(content) for k, *_ in tab_defs}
-
-        first_btn = None
-        for key, lbl, tooltip in tab_defs:
-            btn_frame = tk.Frame(sidebar, bg="#2c3e50"); btn_frame.pack(fill=tk.X)
-            b = tk.Button(btn_frame, text=f"  {lbl}",
-                          bg="#2c3e50", fg="#bdc3c7",
+        def _make_btn(lbl, tooltip):
+            fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
+            b = tk.Button(fr, text=f"  {lbl}", bg="#2c3e50", fg="#bdc3c7",
                           font=("Times New Roman",11), relief=tk.FLAT,
-                          anchor="w", padx=12, pady=6,
+                          anchor="w", padx=10, pady=5,
                           activebackground="#c62828", activeforeground="white")
             b.pack(fill=tk.X)
-            b.configure(command=lambda k=key, bt=b: _show_tab(k, bt))
-            if first_btn is None: first_btn = (key, b)
-
-            # Підказка під назвою
-            tk.Label(btn_frame, text=f"    {tooltip}",
-                     bg="#2c3e50", fg="#7f8c8d",
-                     font=("Times New Roman",8), anchor="w"
-                     ).pack(fill=tk.X)
-
-            # Роздільник
+            tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
+                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
             tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
+            return b
 
-        # Заголовок аналізу внизу бокової панелі
-        tk.Label(sidebar, text=f"\n{indicator}\n{units}",
+        if ordinal:
+            self._ordinal_graph_var = tk.StringVar(value="Boxplot")
+            ord_frame = tk.Frame(content)
+            b_box = _make_btn("📦 Boxplot", "Медіана + квартилі")
+            b_dot = _make_btn("● Dot plot", "Точки + медіана")
+            def _show_ord(val, btn):
+                self._ordinal_graph_var.set(val)
+                _show_panel(ord_frame, btn)
+                self._rebuild_ordinal_graph(ord_frame, long, letters_factor,
+                                            indicator, units)
+            b_box.configure(command=lambda: _show_ord("Boxplot", b_box))
+            b_dot.configure(command=lambda: _show_ord("Dot plot", b_dot))
+            self._rebuild_ordinal_graph(ord_frame, long, letters_factor,
+                                        indicator, units)
+            # НЕ показуємо автоматично — чекаємо кліку користувача
+            return
+
+        # ── Звичайні вкладки ────────────────────────────────────
+        tab_defs = [
+            ("bp",   "📦 Boxplot",           "Розподіл даних"),
+            ("bar",  "📊 Середні ± SE",       "Стовпчики з планками"),
+            ("int",  "↗ Взаємодія",           "Профіль взаємодії"),
+            ("line", "📈 Динаміка рівнів",    "Лінійний по рівнях"),
+            ("hist", "〰 Залишки",            "Гістограма + Q-Q"),
+            ("vn",   "🎯 Сила впливу",        "% від SS"),
+            ("pe",   "💡 Розмір ефекту",      "Partial η²"),
+        ]
+
+        frames = {}
+        for key, lbl, tooltip in tab_defs:
+            f = tk.Frame(content); frames[key] = f
+            b = _make_btn(lbl, tooltip)
+            b.configure(command=lambda k=key, bt=b: _show_panel(frames[k], bt))
+
+        tk.Label(sidebar, text=f"{indicator}\n{units}",
                  bg="#2c3e50", fg="#95a5a6",
-                 font=("Times New Roman",9), justify="center",
-                 wraplength=170).pack(side=tk.BOTTOM, pady=8)
+                 font=("Times New Roman",8), justify="center",
+                 wraplength=180).pack(side=tk.BOTTOM, pady=6)
 
-        # ── Будуємо графіки ───────────────────────────────────
-        gs = self.graph_settings
-        self._graph_figs = {}
-        self._lbf_cache  = {f: list(letters_factor.get(f, {}).keys())
-                            for f in self.factor_keys}
+        # Будуємо всі графіки (але не показуємо жодного)
+        self._build_bp_tab(  frames["bp"],   long, letters_factor,
+                             indicator, units, gs, gw)
+        self._build_bar_tab( frames["bar"],  long, letters_factor,
+                             indicator, units, gs, gw)
+        self._build_int_tab( frames["int"],  long, letters_factor,
+                             indicator, units, gs, gw)
+        self._build_line_tab(frames["line"], long, letters_factor,
+                             indicator, units, gs, gw)
+        self._build_hist_tab(frames["hist"], long, gs, indicator, units, gw)
+        self._build_vn_tab(  frames["vn"],   eff_rows, gs, gw)
+        self._build_pe_tab(  frames["pe"],   pe2_rows, gs, gw)
+        # НЕ показуємо жодну вкладку автоматично
 
-        self._build_bp_tab(   frames["bp"],   long, lf=letters_factor,
-                               indicator=indicator, units=units, gs=gs)
-        self._build_bar_tab(  frames["bar"],  long, lf=letters_factor,
-                               indicator=indicator, units=units, gs=gs)
-        self._build_int_tab(  frames["int"],  long, lf=letters_factor,
-                               indicator=indicator, units=units, gs=gs)
-        self._build_line_tab( frames["line"], long, lf=letters_factor,
-                               indicator=indicator, units=units, gs=gs)
-        self._build_hist_tab( frames["hist"], long, gs=gs,
-                               indicator=indicator, units=units)
-        self._build_vn_tab(   frames["vn"],   eff_rows=eff_rows, gs=gs)
-        self._build_pe_tab(   frames["pe"],   pe2_rows=pe2_rows, gs=gs)
 
-        # Показуємо першу вкладку
-        if first_btn:
-            _show_tab(*first_btn)
 
-    # ── Допоміжний: toolbar кожної вкладки ────────────────────
-    def _tab_toolbar(self, frame, fig_key, indicator="", on_settings=None):
-        """Повертає toolbar frame з кнопками копіювання і налаштувань."""
-        tb = tk.Frame(frame, padx=4, pady=3); tb.pack(fill=tk.X, side=tk.BOTTOM)
+    # ── Toolbar кожної вкладки з PNG і налаштуваннями ─────────
+    def _tab_toolbar(self, frame, fig_key, rebuild_fn=None, settings_fn=None):
+        tb = tk.Frame(frame, bg="#f0f0f0", padx=4, pady=4)
+        tb.pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Button(tb, text="💾 Зберегти PNG",
+                  font=("Times New Roman",10),
+                  command=lambda: self._save_fig_png(fig_key)
+                  ).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📋 Копіювати",
                   font=("Times New Roman",10),
                   command=lambda: self._copy_fig(fig_key)
                   ).pack(side=tk.LEFT, padx=4)
-        if on_settings:
+        if settings_fn:
             tk.Button(tb, text="⚙ Налаштування",
                       font=("Times New Roman",10),
-                      command=on_settings
+                      bg="#1a4b8c", fg="white",
+                      command=settings_fn
                       ).pack(side=tk.LEFT, padx=4)
         return tb
 
+    def _save_fig_png(self, key):
+        fig = self._graph_figs.get(key)
+        if fig is None: messagebox.showwarning("","Графік відсутній."); return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG","*.png"),("SVG","*.svg")],
+            title="Зберегти графік")
+        if not path: return
+        try:
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
+
+    def _settings_dialog(self, gw, key, rebuild_fn, extra_params=None):
+        """Уніфікований діалог налаштувань графіка з заголовком + специфічні опції."""
+        if not hasattr(self, '_gs_titles'): self._gs_titles = {}
+        dlg = tk.Toplevel(gw or self.report_win or self.root)
+        dlg.title("Налаштування графіка"); dlg.resizable(False, False)
+        set_icon(dlg); dlg.grab_set()
+        rf = ("Times New Roman",12)
+        frm = tk.Frame(dlg, padx=16, pady=12); frm.pack()
+
+        # Заголовок графіка
+        tk.Label(frm, text="Заголовок графіка:", font=rf
+                 ).grid(row=0, column=0, sticky="w", pady=4)
+        cur = self._gs_titles.get(key, "")
+        tv = tk.StringVar(value=cur)
+        tk.Entry(frm, textvariable=tv, width=36, font=rf
+                 ).grid(row=0, column=1, sticky="w", padx=8)
+
+        # Шрифт і розмір
+        gs = self.graph_settings
+        tk.Label(frm, text="Шрифт:", font=rf
+                 ).grid(row=1, column=0, sticky="w", pady=4)
+        ff_v = tk.StringVar(value=gs.get("font_family","Times New Roman"))
+        ttk.Combobox(frm, textvariable=ff_v,
+                     values=["Times New Roman","Arial","Calibri","Georgia"],
+                     state="readonly", width=18
+                     ).grid(row=1, column=1, sticky="w", padx=8)
+
+        tk.Label(frm, text="Розмір шрифту:", font=rf
+                 ).grid(row=2, column=0, sticky="w", pady=4)
+        fz_v = tk.IntVar(value=gs.get("font_size",10))
+        tk.Spinbox(frm, from_=7, to=18, textvariable=fz_v, width=7
+                   ).grid(row=2, column=1, sticky="w", padx=8)
+
+        # Специфічні параметри для цього графіка
+        extra_vars = {}
+        row_offset = 3
+        if extra_params:
+            for ri, (lbl, key2, default, wtype, opts) in enumerate(extra_params):
+                tk.Label(frm, text=lbl, font=rf
+                         ).grid(row=row_offset+ri, column=0, sticky="w", pady=4)
+                var = tk.StringVar(value=str(gs.get(key2, default)))
+                extra_vars[key2] = var
+                if wtype == "combo":
+                    ttk.Combobox(frm, textvariable=var, values=opts,
+                                 state="readonly", width=16
+                                 ).grid(row=row_offset+ri, column=1, sticky="w", padx=8)
+                elif wtype == "color":
+                    def _pick(v=var):
+                        c = colorchooser.askcolor(color=v.get(), parent=dlg)
+                        if c and c[1]: v.set(c[1])
+                    tk.Button(frm, text="Обрати колір",
+                              command=_pick, font=rf
+                              ).grid(row=row_offset+ri, column=1, sticky="w", padx=8)
+                elif wtype == "check":
+                    bv = tk.BooleanVar(value=bool(gs.get(key2, default)))
+                    extra_vars[key2] = bv
+                    tk.Checkbutton(frm, variable=bv
+                                   ).grid(row=row_offset+ri, column=1, sticky="w", padx=8)
+                else:
+                    tk.Entry(frm, textvariable=var, width=10, font=rf
+                             ).grid(row=row_offset+ri, column=1, sticky="w", padx=8)
+
+        def _apply():
+            # Зберігаємо заголовок
+            self._gs_titles[key] = tv.get().strip()
+            # Зберігаємо налаштування шрифту
+            self.graph_settings["font_family"] = ff_v.get()
+            self.graph_settings["font_size"]   = fz_v.get()
+            # Специфічні
+            for k2, v2 in extra_vars.items():
+                self.graph_settings[k2] = v2.get()
+            dlg.destroy()
+            if rebuild_fn: rebuild_fn()
+
+        bf = tk.Frame(frm); bf.grid(row=row_offset+len(extra_params or [])+1,
+                                    column=0, columnspan=2, pady=(12,0))
+        tk.Button(bf, text="✓ Застосувати", bg="#c62828", fg="white",
+                  font=rf, command=_apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rf,
+                  command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
     # ── TAB 1: Boxplot ─────────────────────────────────────────
-    def _build_bp_tab(self, frame, long, lf, indicator, units, gs):
+    def _build_bp_tab(self, frame, long, lf, indicator, units, gs, gw=None):
+        for w in frame.winfo_children(): w.destroy()
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+
+        def _rebuild():
+            self._build_bp_tab(frame, long, lf, indicator, units,
+                               self.graph_settings, gw)
+        def _settings():
+            self._settings_dialog(gw, "bp", _rebuild, extra_params=[
+                ("Колір боксів:", "box_color", "#aed6f1", "color", None),
+                ("Колір медіани:", "median_color", "#c62828", "color", None),
+                ("Показати сітку:", "show_grid", True, "check", None),
+            ])
+        self._tab_toolbar(frame, "bp", _rebuild, _settings)
+
+        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
+        ff = gs["font_family"]; fz = gs["font_size"]
+        title = self._gs_titles.get("bp", f"{indicator}, {units}")
+        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        positions=[]; data=[]; xlbls=[]; let_list=[]; fcentres=[]
+        x=1.; gap=1.
+        for f in self.factor_keys:
+            lvls = list(lf.get(f,{}).keys()) or first_seen(
+                [r.get(f) for r in long if r.get(f)])
+            if not lvls: continue
+            sx=x
+            for lv in lvls:
+                arr=[float(r["value"]) for r in long if r.get(f)==lv
+                     and not math.isnan(float(r.get("value",float("nan"))))]
+                data.append(arr); positions.append(x)
+                xlbls.append(str(lv)); let_list.append((f,lv)); x+=1.
+            fcentres.append(((sx+x-1)/2., self.ftitle(f))); x+=gap
+        if data:
+            bp=ax.boxplot(data, positions=positions, widths=0.6,
+                          showfliers=True, patch_artist=True)
+            for p in bp["boxes"]:
+                p.set(facecolor=gs.get("box_color","#aed6f1"), alpha=0.85)
+            for m in bp["medians"]:
+                m.set(color=gs.get("median_color","#c62828"), linewidth=2)
+            for w in bp["whiskers"]+bp["caps"]:
+                w.set(color=gs.get("whisker_color","#555"), linewidth=1.2)
+            for fl in bp["fliers"]:
+                fl.set(markerfacecolor=gs.get("flier_color","#c62828"),
+                       marker="o", markersize=4)
+            ax.set_xticks(positions)
+            ax.set_xticklabels(xlbls, rotation=30, ha="right",
+                               fontfamily=ff, fontsize=max(7,fz-1))
+            allv=[v for a in data for v in a]
+            if len(allv)>1 and max(allv)>min(allv):
+                off=0.04*(max(allv)-min(allv))
+                for i,(f_,lv_) in enumerate(let_list):
+                    lt=lf.get(f_,{}).get(lv_,"")
+                    if lt and data[i]:
+                        ax.text(positions[i], max(data[i])+off, lt,
+                                ha="center", va="bottom", **fp)
+            for cx,fnm in fcentres:
+                ax.text(cx,-0.22,fnm,ha="center",va="top",
+                        transform=ax.get_xaxis_transform(),**fp)
+            fig.subplots_adjust(bottom=0.28,top=0.91,left=0.08,right=0.98)
+        ax.set_title(title, **fp); ax.set_ylabel(units, **fp)
+        if gs.get("show_grid", True):
+            ax.yaxis.grid(True, linestyle="--", alpha=0.35)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        self._graph_figs["bp"]=fig
+        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # ── TAB 2: Середні ± SE ────────────────────────────────────
+    def _build_bar_tab(self, frame, long, lf, indicator, units, gs, gw=None):
+        for w in frame.winfo_children(): w.destroy()
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+
+        def _rebuild():
+            self._build_bar_tab(frame, long, lf, indicator, units,
+                                self.graph_settings, gw)
+        def _settings():
+            self._settings_dialog(gw, "bar", _rebuild, extra_params=[
+                ("Колір стовпців:", "bar_color", "#4c72b0", "color", None),
+                ("Показати сітку:", "show_grid", True, "check", None),
+            ])
+        self._tab_toolbar(frame, "bar", _rebuild, _settings)
+
+        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
+        ff = gs["font_family"]; fz = gs["font_size"]
+        colors_list = ["#4c72b0","#dd8452","#55a868","#c44e52",
+                       "#8172b2","#937860","#da8bc3","#8c8c8c"]
+        title = self._gs_titles.get("bar", f"{indicator}, {units}")
+        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        positions=[]; means=[]; ses=[]; xlbls=[]; let_list=[]; fcentres=[]
+        bar_colors=[]; x=1.; gap=1.; ci=0
+        for f in self.factor_keys:
+            lvls = list(lf.get(f,{}).keys()) or first_seen(
+                [r.get(f) for r in long if r.get(f)])
+            if not lvls: continue
+            sx=x
+            for lv in lvls:
+                arr=[float(r["value"]) for r in long if r.get(f)==lv
+                     and not math.isnan(float(r.get("value",float("nan"))))]
+                n=len(arr); m=float(np.mean(arr)) if arr else 0.
+                se=float(np.std(arr,ddof=1)/math.sqrt(n)) if n>1 else 0.
+                means.append(m); ses.append(se); positions.append(x)
+                xlbls.append(str(lv)); let_list.append((f,lv))
+                bar_colors.append(colors_list[ci%len(colors_list)])
+                x+=1.; ci+=1
+            fcentres.append(((sx+x-1)/2., self.ftitle(f))); x+=gap
+        if means:
+            ax.bar(positions, means, yerr=ses, capsize=4, width=0.65,
+                   color=bar_colors, edgecolor="white", linewidth=0.8,
+                   error_kw={"ecolor":"#444","lw":1.2,"capthick":1.2})
+            allv=[m+se for m,se in zip(means,ses)]
+            if allv and means:
+                off=max(0.02*(max(allv)-min(means)) if len(allv)>1 else 0.3, 0.3)
+                for i,(f_,lv_) in enumerate(let_list):
+                    lt=lf.get(f_,{}).get(lv_,"")
+                    if lt:
+                        ax.text(positions[i], means[i]+ses[i]+off, lt,
+                                ha="center", va="bottom", **fp)
+            ax.set_xticks(positions)
+            ax.set_xticklabels(xlbls, rotation=30, ha="right",
+                               fontfamily=ff, fontsize=max(7,fz-1))
+            for cx,fnm in fcentres:
+                ax.text(cx,-0.22,fnm,ha="center",va="top",
+                        transform=ax.get_xaxis_transform(),**fp)
+            fig.subplots_adjust(bottom=0.28,top=0.91,left=0.08,right=0.98)
+        ax.set_title(title, **fp); ax.set_ylabel(units, **fp)
+        if gs.get("show_grid", True):
+            ax.yaxis.grid(True, linestyle="--", alpha=0.35)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        self._graph_figs["bar"]=fig
+        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # ── TAB 3: Взаємодія ───────────────────────────────────────
+    def _build_int_tab(self, frame, long, lf, indicator, units, gs, gw=None):
+        for w in frame.winfo_children(): w.destroy()
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+
+        def _rebuild():
+            self._build_int_tab(frame, long, lf, indicator, units,
+                                self.graph_settings, gw)
+        def _settings():
+            self._settings_dialog(gw, "int", _rebuild, extra_params=[
+                ("Товщина лінії:", "line_width", 1.8, "entry", None),
+                ("Маркер:", "marker_style", "o", "combo",
+                 ["o","s","^","D","v","*"]),
+                ("Показати сітку:", "show_grid", True, "check", None),
+            ])
+        self._tab_toolbar(frame, "int", _rebuild, _settings)
+
+        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
+        colors_list = ["#4c72b0","#dd8452","#55a868","#c44e52",
+                       "#8172b2","#937860","#da8bc3","#8c8c8c"]
+        title = self._gs_titles.get("int",
+            "Графік взаємодії факторів (профіль середніх)")
+        fkeys = self.factor_keys
+        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        lw = float(gs.get("line_width", 1.8))
+        mk = gs.get("marker_style", "o")
+        if len(fkeys) >= 2:
+            f1, f2 = fkeys[0], fkeys[1]
+            lvls1 = list(lf.get(f1,{}).keys()) or first_seen(
+                [r.get(f1) for r in long if r.get(f1)])
+            lvls2 = list(lf.get(f2,{}).keys()) or first_seen(
+                [r.get(f2) for r in long if r.get(f2)])
+            for gi, lv2 in enumerate(lvls2):
+                means_=[float(np.mean([r["value"] for r in long
+                    if r.get(f1)==lv1 and r.get(f2)==lv2
+                    and not math.isnan(r.get("value",float("nan")))] or [float("nan")]))
+                    for lv1 in lvls1]
+                ax.plot(range(len(lvls1)), means_, marker=mk, label=str(lv2),
+                        color=colors_list[gi%len(colors_list)],
+                        linewidth=lw, markersize=7)
+            ax.set_xticks(range(len(lvls1)))
+            ax.set_xticklabels([str(l) for l in lvls1],
+                               rotation=20, ha="right", **fp)
+            ax.set_xlabel(self.ftitle(f1), **fp)
+            ax.legend(title=self.ftitle(f2), fontsize=fp["fontsize"]-1,
+                      title_fontsize=fp["fontsize"]-1)
+        elif len(fkeys) == 1:
+            f1 = fkeys[0]
+            lvls1 = list(lf.get(f1,{}).keys()) or first_seen(
+                [r.get(f1) for r in long if r.get(f1)])
+            means_=[float(np.mean([r["value"] for r in long if r.get(f1)==lv
+                and not math.isnan(r.get("value",float("nan")))] or [float("nan")]))
+                for lv in lvls1]
+            ax.plot(range(len(lvls1)), means_, marker=mk,
+                    color=colors_list[0], linewidth=lw, markersize=8)
+            ax.set_xticks(range(len(lvls1)))
+            ax.set_xticklabels([str(l) for l in lvls1], **fp)
+        else:
+            ax.text(0.5,0.5,"Потрібно ≥ 2 фактори",
+                    ha="center",va="center",transform=ax.transAxes,**fp)
+            ax.axis("off")
+        ax.set_title(title, **fp); ax.set_ylabel(units, **fp)
+        if gs.get("show_grid", True):
+            ax.yaxis.grid(True, linestyle="--", alpha=0.35)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        self._graph_figs["int"]=fig
+        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # ── TAB 4: Динаміка по рівнях ──────────────────────────────
+    def _build_line_tab(self, frame, long, lf, indicator, units, gs, gw=None):
+        for w in frame.winfo_children(): w.destroy()
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+
+        def _rebuild():
+            self._build_line_tab(frame, long, lf, indicator, units,
+                                 self.graph_settings, gw)
+        def _settings():
+            self._settings_dialog(gw, "line", _rebuild, extra_params=[
+                ("Товщина лінії:", "line_width", 1.8, "entry", None),
+                ("Маркер:", "marker_style", "o", "combo",
+                 ["o","s","^","D","v","*"]),
+                ("Показати сітку:", "show_grid", True, "check", None),
+            ])
+        self._tab_toolbar(frame, "line", _rebuild, _settings)
+
+        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
+        colors_list = ["#4c72b0","#dd8452","#55a868","#c44e52",
+                       "#8172b2","#937860","#da8bc3","#8c8c8c"]
+        title = self._gs_titles.get("line",
+            "Середні ± SE по рівнях кожного фактора")
+        fkeys = self.factor_keys; n = len(fkeys)
+        lw = float(gs.get("line_width", 1.8))
+        mk = gs.get("marker_style", "o")
+        fig = Figure(dpi=100)
+        if n == 0:
+            ax = fig.add_subplot(111)
+            ax.text(0.5,0.5,"Немає факторів",ha="center",va="center")
+            ax.axis("off")
+        else:
+            for fi, f in enumerate(fkeys):
+                ax = fig.add_subplot(1, n, fi+1)
+                lvls = list(lf.get(f,{}).keys()) or first_seen(
+                    [r.get(f) for r in long if r.get(f)])
+                means_=[]; ses_=[]
+                for lv in lvls:
+                    arr=[r["value"] for r in long if r.get(f)==lv
+                         and not math.isnan(r.get("value",float("nan")))]
+                    means_.append(float(np.mean(arr)) if arr else float("nan"))
+                    ses_.append(float(np.std(arr,ddof=1)/math.sqrt(len(arr)))
+                                if len(arr)>1 else 0.)
+                ax.errorbar(range(len(lvls)), means_, yerr=ses_,
+                           marker=mk, color=colors_list[fi%len(colors_list)],
+                           linewidth=lw, markersize=7, capsize=4, ecolor="#555")
+                ax.set_xticks(range(len(lvls)))
+                ax.set_xticklabels([str(l) for l in lvls],
+                                   rotation=20, ha="right", **fp)
+                ax.set_title(self.ftitle(f), **fp)
+                ax.set_ylabel(units if fi==0 else "", **fp)
+                if gs.get("show_grid", True):
+                    ax.yaxis.grid(True, linestyle="--", alpha=0.35)
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+                for i,lv in enumerate(lvls):
+                    lt=lf.get(f,{}).get(lv,"")
+                    if lt and not math.isnan(means_[i]):
+                        ax.text(i, means_[i]+ses_[i]+0.3, lt,
+                                ha="center", va="bottom", **fp)
+            fig.suptitle(title, **fp)
+            fig.tight_layout()
+        self._graph_figs["line"]=fig
+        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # ── TAB 5: Залишки ─────────────────────────────────────────
+    def _build_hist_tab(self, frame, long, gs, indicator, units, gw=None):
+        for w in frame.winfo_children(): w.destroy()
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+
+        def _rebuild():
+            self._build_hist_tab(frame, long, self.graph_settings,
+                                 indicator, units, gw)
+        def _settings():
+            self._settings_dialog(gw, "hist", _rebuild, extra_params=[
+                ("Колір гістограми:", "hist_color", "#4c72b0", "color", None),
+            ])
+        self._tab_toolbar(frame, "hist", _rebuild, _settings)
+
+        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
+        title = self._gs_titles.get("hist", "Аналіз залишків")
+        fig = Figure(dpi=100)
+        residuals = getattr(self, '_last_residuals', None)
+        if residuals and len(residuals) > 2:
+            res = np.array(residuals)
+            ax1 = fig.add_subplot(121)
+            ax1.hist(res, bins="auto",
+                     color=gs.get("hist_color","#4c72b0"),
+                     edgecolor="white", alpha=0.85)
+            ax1.set_title("Гістограма залишків", **fp)
+            ax1.set_xlabel("Залишок", **fp); ax1.set_ylabel("Частота", **fp)
+            ax1.yaxis.grid(True, linestyle="--", alpha=0.3)
+            ax1.spines["top"].set_visible(False); ax1.spines["right"].set_visible(False)
+            from scipy.stats import probplot
+            ax2 = fig.add_subplot(122)
+            (osm,osr),(slope,intercept,r)=probplot(res, plot=None)
+            ax2.plot(osm, osr, "o",
+                     color=gs.get("box_color","#aed6f1"),
+                     markersize=5, alpha=0.8)
+            ax2.plot([min(osm),max(osm)],
+                     [slope*min(osm)+intercept, slope*max(osm)+intercept],
+                     color=gs.get("median_color","#c62828"), lw=1.5)
+            ax2.set_title(f"Q-Q графік (R²={r**2:.3f})", **fp)
+            ax2.set_xlabel("Теоретичні квантилі", **fp)
+            ax2.set_ylabel("Вибіркові квантилі", **fp)
+            ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
+        else:
+            ax = fig.add_subplot(111)
+            ax.text(0.5,0.5,"Залишки недоступні.\nВиконайте аналіз і відкрийте знову.",
+                    ha="center",va="center",transform=ax.transAxes,**fp)
+            ax.axis("off")
+        fig.suptitle(title, **fp); fig.tight_layout()
+        self._graph_figs["hist"]=fig
+        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # ── TAB 6: Сила впливу ─────────────────────────────────────
+    def _build_vn_tab(self, frame, eff_rows, gs, gw=None):
+        for w in frame.winfo_children(): w.destroy()
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+
+        def _rebuild():
+            self._build_vn_tab(frame, self._g_eff, self.graph_settings, gw)
+        def _settings():
+            self._settings_dialog(gw, "vn", _rebuild, extra_params=[
+                ("Колір головних ефектів:", "vn_main_color", "#1a4b8c",
+                 "color", None),
+                ("Колір взаємодій:", "vn_inter_color", "#c62828",
+                 "color", None),
+            ])
+        self._tab_toolbar(frame, "vn", _rebuild, _settings)
+
+        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
+        title = self._gs_titles.get("vn", "Сила впливу факторів (% від суми SS)")
+        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        valid = [(str(nm), float(pct)) for nm,pct in eff_rows
+                 if pct and not math.isnan(float(pct)) and float(pct)>0]
+        if valid:
+            valid.sort(key=lambda x: x[1])
+            labels_ = [v[0] for v in valid]
+            values_ = [v[1] for v in valid]
+            main_c  = gs.get("vn_main_color","#1a4b8c")
+            inter_c = gs.get("vn_inter_color","#c62828")
+            colors_ = [inter_c if "×" in l else main_c for l in labels_]
+            bars = ax.barh(range(len(labels_)), values_,
+                           color=colors_, edgecolor="white", height=0.6)
+            for i,(bar,val) in enumerate(zip(bars,values_)):
+                ax.text(val+0.3, i, f"{val:.1f}%", va="center", **fp)
+            ax.set_yticks(range(len(labels_)))
+            ax.set_yticklabels(labels_, **fp)
+            ax.set_xlabel("% від суми SS", **fp)
+            ax.xaxis.grid(True, linestyle="--", alpha=0.35)
+            from matplotlib.patches import Patch
+            ax.legend(handles=[
+                Patch(color=main_c,  label="Головний ефект"),
+                Patch(color=inter_c, label="Взаємодія"),
+            ], fontsize=fp["fontsize"]-1, loc="lower right")
+        else:
+            ax.text(0.5,0.5,"Немає даних",ha="center",va="center",
+                    transform=ax.transAxes,**fp); ax.axis("off")
+        ax.set_title(title, **fp)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        self._graph_figs["vn"]=fig
+        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    # ── TAB 7: Розмір ефекту ───────────────────────────────────
+    def _build_pe_tab(self, frame, pe2_rows, gs, gw=None):
+        for w in frame.winfo_children(): w.destroy()
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+
+        def _rebuild():
+            self._build_pe_tab(frame, self._g_pe2, self.graph_settings, gw)
+        def _settings():
+            self._settings_dialog(gw, "pe", _rebuild, extra_params=[
+                ("Колір головних ефектів:", "pe_main_color", "#1a6b1a",
+                 "color", None),
+                ("Колір взаємодій:", "pe_inter_color", "#c62828",
+                 "color", None),
+            ])
+        self._tab_toolbar(frame, "pe", _rebuild, _settings)
+
+        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
+        title = self._gs_titles.get("pe", "Розмір ефекту (partial η²)")
+        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        valid = [(str(nm), float(pct)) for nm,pct,_ in pe2_rows
+                 if pct and not math.isnan(float(pct)) and float(pct)>0]
+        if valid:
+            valid.sort(key=lambda x: x[1])
+            labels_ = [v[0] for v in valid]
+            values_ = [v[1] for v in valid]
+            main_c  = gs.get("pe_main_color","#1a6b1a")
+            inter_c = gs.get("pe_inter_color","#c62828")
+            colors_ = [inter_c if "×" in l else main_c for l in labels_]
+            ax.barh(range(len(labels_)), values_,
+                    color=colors_, edgecolor="white", height=0.6)
+            for i,val in enumerate(values_):
+                strength = ("дуже слабкий" if val<0.01 else
+                            "слабкий" if val<0.06 else
+                            "середній" if val<0.14 else "сильний")
+                ax.text(val+0.002, i, f"η²={val:.3f} ({strength})",
+                        va="center", **fp)
+            ax.set_yticks(range(len(labels_)))
+            ax.set_yticklabels(labels_, **fp)
+            ax.set_xlabel("partial η²", **fp)
+            for thresh, lbl, col in [(0.01,"мала","#aaa"),
+                                     (0.06,"середня","#888"),
+                                     (0.14,"велика","#555")]:
+                ax.axvline(thresh, color=col, lw=0.8, linestyle="--")
+                ax.text(thresh, len(labels_)-0.5, lbl,
+                        color=col, fontsize=max(7,fp["fontsize"]-2),
+                        ha="center", va="bottom")
+            ax.xaxis.grid(True, linestyle="--", alpha=0.25)
+        else:
+            ax.text(0.5,0.5,"Немає даних",ha="center",va="center",
+                    transform=ax.transAxes,**fp); ax.axis("off")
+        ax.set_title(title, **fp)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        self._graph_figs["pe"]=fig
+        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _tab_settings(self, *args, **kwargs): pass  # замінено _settings_dialog
+
+    def _open_gs(self, gw, long, lf, ind, units, eff, pe2):
+        dlg = GraphSettingsDlg(gw, self.graph_settings)
+        gw.wait_window(dlg)
+        if dlg.result: self.graph_settings = dlg.result
+
+
         plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
         self._tab_toolbar(frame, "bp",
             on_settings=lambda: self._tab_settings(
@@ -4111,341 +4635,6 @@ class SADTk:
                             plot_f.winfo_height()/100 or 5)
 
     # ── TAB 2: Середні ± SE ────────────────────────────────────
-    def _build_bar_tab(self, frame, long, lf, indicator, units, gs):
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
-        self._tab_toolbar(frame, "bar",
-            on_settings=lambda: self._tab_settings(
-                frame, "bar", indicator, units,
-                rebuild=lambda: self._build_bar_tab(
-                    frame, long, lf, indicator, units, self.graph_settings)))
-        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
-        ff = gs["font_family"]; fz = gs["font_size"]
-        colors_list = gs.get("colors", ["#4c72b0","#dd8452","#55a868","#c44e52",
-                                         "#8172b2","#937860","#da8bc3","#8c8c8c"])
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
-        positions=[]; means=[]; ses=[]; xlbls=[]; let_list=[]; fcentres=[]
-        bar_colors=[]; x=1.; gap=1.
-        ci_colors = 0
-        for f in self.factor_keys:
-            lvls = list(lf.get(f,{}).keys()) or first_seen(
-                [r.get(f) for r in long if r.get(f)])
-            if not lvls: continue
-            sx=x
-            for lv in lvls:
-                arr=[float(r["value"]) for r in long if r.get(f)==lv
-                     and not math.isnan(float(r.get("value",float("nan"))))]
-                n=len(arr)
-                m=float(np.mean(arr)) if arr else 0.
-                se=float(np.std(arr,ddof=1)/math.sqrt(n)) if n>1 else 0.
-                means.append(m); ses.append(se); positions.append(x)
-                xlbls.append(str(lv)); let_list.append((f,lv))
-                bar_colors.append(colors_list[ci_colors%len(colors_list)])
-                x+=1.; ci_colors+=1
-            fcentres.append(((sx+x-1)/2., self.ftitle(f))); x+=gap
-        title = getattr(self, '_gs_titles', {}).get("bar", f"{indicator}, {units}")
-        if means:
-            bars=ax.bar(positions,means,yerr=ses,capsize=4,width=0.65,
-                       color=bar_colors,edgecolor="white",linewidth=0.8,
-                       error_kw={"ecolor":"#444","lw":1.2,"capthick":1.2})
-            allv=[m+se for m,se in zip(means,ses)]
-            off=max(0.01*(max(allv)-min(means)) if allv else 0.3, 0.3)
-            for i,(f_,lv_) in enumerate(let_list):
-                lt=(lf.get(f_,{})).get(lv_,"")
-                if lt:
-                    ax.text(positions[i],means[i]+ses[i]+off,lt,
-                            ha="center",va="bottom",**fp)
-            ax.set_xticks(positions)
-            ax.set_xticklabels(xlbls,rotation=90,fontfamily=ff,fontsize=max(7,fz-1))
-            for cx,fnm in fcentres:
-                ax.text(cx,-0.22,fnm,ha="center",va="top",
-                        transform=ax.get_xaxis_transform(),**fp)
-            fig.subplots_adjust(bottom=0.32,top=0.91,left=0.08,right=0.98)
-        ax.set_title(title,**fp); ax.set_ylabel(units,**fp)
-        ax.yaxis.grid(True,linestyle="--",alpha=0.35)
-        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-        self._graph_figs["bar"]=fig
-        cv=FigureCanvasTkAgg(fig,master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
-
-    # ── TAB 3: Взаємодія ───────────────────────────────────────
-    def _build_int_tab(self, frame, long, lf, indicator, units, gs):
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
-        self._tab_toolbar(frame, "int",
-            on_settings=lambda: self._tab_settings(
-                frame, "int", indicator, units,
-                rebuild=lambda: self._build_int_tab(
-                    frame, long, lf, indicator, units, self.graph_settings)))
-        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
-        colors_list = gs.get("colors", ["#4c72b0","#dd8452","#55a868","#c44e52"])
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
-        fkeys = self.factor_keys
-        title = getattr(self, '_gs_titles', {}).get("int",
-            "Графік взаємодії факторів — профіль середніх")
-        if len(fkeys) >= 2:
-            f1, f2 = fkeys[0], fkeys[1]
-            lvls1 = list(lf.get(f1,{}).keys()) or first_seen([r.get(f1) for r in long if r.get(f1)])
-            lvls2 = list(lf.get(f2,{}).keys()) or first_seen([r.get(f2) for r in long if r.get(f2)])
-            x_pos = range(len(lvls1))
-            for gi, lv2 in enumerate(lvls2):
-                means_=[float(np.mean([r["value"] for r in long
-                               if r.get(f1)==lv1 and r.get(f2)==lv2
-                               and not math.isnan(r.get("value",float("nan")))]
-                              or [float("nan")])) for lv1 in lvls1]
-                ax.plot(list(x_pos), means_,
-                        marker="o", label=str(lv2),
-                        color=colors_list[gi%len(colors_list)],
-                        linewidth=gs.get("line_width",1.8), markersize=7)
-            ax.set_xticks(list(x_pos))
-            ax.set_xticklabels([str(l) for l in lvls1],
-                               rotation=20, ha="right", **fp)
-            ax.set_xlabel(self.ftitle(f1), **fp)
-            ax.set_ylabel(units, **fp)
-            ax.legend(title=self.ftitle(f2), fontsize=fp["fontsize"]-1,
-                      title_fontsize=fp["fontsize"]-1)
-        elif len(fkeys) == 1:
-            f1 = fkeys[0]
-            lvls1 = list(lf.get(f1,{}).keys()) or first_seen([r.get(f1) for r in long if r.get(f1)])
-            means_ = [float(np.mean([r["value"] for r in long if r.get(f1)==lv
-                                     and not math.isnan(r.get("value",float("nan")))] or [float("nan")]))
-                      for lv in lvls1]
-            ax.plot(range(len(lvls1)), means_, marker="o",
-                    color=colors_list[0], linewidth=2, markersize=8)
-            ax.set_xticks(range(len(lvls1)))
-            ax.set_xticklabels([str(l) for l in lvls1], **fp)
-            ax.set_ylabel(units, **fp)
-        else:
-            ax.text(0.5,0.5,"Потрібно ≥ 2 фактори для графіку взаємодії",
-                    ha="center",va="center",transform=ax.transAxes)
-            ax.axis("off")
-        ax.set_title(title, **fp)
-        ax.yaxis.grid(True, linestyle="--", alpha=0.35)
-        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-        fig.tight_layout()
-        self._graph_figs["int"]=fig
-        cv=FigureCanvasTkAgg(fig,master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
-
-    # ── TAB 4: Динаміка по рівнях (відрізняється від взаємодії!) ─
-    def _build_line_tab(self, frame, long, lf, indicator, units, gs):
-        """Динаміка: середні по рівнях кожного фактора окремо."""
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
-        self._tab_toolbar(frame, "line",
-            on_settings=lambda: self._tab_settings(
-                frame, "line", indicator, units,
-                rebuild=lambda: self._build_line_tab(
-                    frame, long, lf, indicator, units, self.graph_settings)))
-        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
-        colors_list = gs.get("colors", ["#4c72b0","#dd8452","#55a868","#c44e52"])
-        fkeys = self.factor_keys
-        n = len(fkeys)
-        title = getattr(self, '_gs_titles', {}).get("line",
-            "Середні по рівнях факторів (окремо)")
-        if n == 0:
-            fig = Figure(dpi=100); ax = fig.add_subplot(111)
-            ax.text(0.5,0.5,"Немає факторів",ha="center",va="center")
-            ax.axis("off")
-        else:
-            fig = Figure(dpi=100)
-            # Для кожного фактора — окремий subplot
-            for fi, f in enumerate(fkeys):
-                ax = fig.add_subplot(1, n, fi+1)
-                lvls = list(lf.get(f,{}).keys()) or first_seen(
-                    [r.get(f) for r in long if r.get(f)])
-                means_=[float(np.mean([r["value"] for r in long if r.get(f)==lv
-                                       and not math.isnan(r.get("value",float("nan")))] or [float("nan")]))
-                        for lv in lvls]
-                ses_=[]
-                for lv in lvls:
-                    arr=[r["value"] for r in long if r.get(f)==lv
-                         and not math.isnan(r.get("value",float("nan")))]
-                    ses_.append(float(np.std(arr,ddof=1)/math.sqrt(len(arr))) if len(arr)>1 else 0.)
-                ax.errorbar(range(len(lvls)),means_,yerr=ses_,
-                           marker="o",color=colors_list[fi%len(colors_list)],
-                           linewidth=2,markersize=7,capsize=4,
-                           ecolor="#555")
-                ax.set_xticks(range(len(lvls)))
-                ax.set_xticklabels([str(l) for l in lvls],rotation=20,ha="right",**fp)
-                ax.set_title(self.ftitle(f),**fp)
-                ax.set_ylabel(units if fi==0 else "",**fp)
-                ax.yaxis.grid(True,linestyle="--",alpha=0.35)
-                ax.spines["top"].set_visible(False)
-                ax.spines["right"].set_visible(False)
-                # Літери
-                allv=[m+s for m,s in zip(means_,ses_)]
-                off=max(0.01*(max(allv)-min(means_)) if allv else 0.3, 0.3)
-                for i,lv in enumerate(lvls):
-                    lt=(lf.get(f,{})).get(lv,"")
-                    if lt:
-                        ax.text(i,means_[i]+ses_[i]+off,lt,
-                                ha="center",va="bottom",**fp)
-            fig.suptitle(title,**fp)
-            fig.tight_layout()
-        self._graph_figs["line"]=fig
-        cv=FigureCanvasTkAgg(fig,master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
-
-    # ── TAB 5: Залишки (Q-Q + гістограма) ─────────────────────
-    def _build_hist_tab(self, frame, long, gs, indicator, units):
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
-        self._tab_toolbar(frame, "hist")
-        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
-        fig = Figure(dpi=100)
-        residuals = getattr(self, '_last_residuals', None)
-        title = getattr(self, '_gs_titles', {}).get("hist", "Аналіз залишків")
-        if residuals is not None and len(residuals) > 2:
-            res = np.array(residuals)
-            ax1 = fig.add_subplot(121)
-            ax1.hist(res, bins="auto", color=gs.get("bar_color","#4c72b0"),
-                     edgecolor="white", alpha=0.85)
-            ax1.set_title("Гістограма залишків",**fp)
-            ax1.set_xlabel("Залишок",**fp); ax1.set_ylabel("Частота",**fp)
-            ax1.yaxis.grid(True,linestyle="--",alpha=0.3)
-            ax1.spines["top"].set_visible(False); ax1.spines["right"].set_visible(False)
-            from scipy.stats import probplot
-            ax2 = fig.add_subplot(122)
-            (osm,osr),(slope,intercept,r)=probplot(res,plot=None)
-            ax2.plot(osm,osr,"o",color=gs.get("box_color","#aed6f1"),
-                     markersize=5,alpha=0.8)
-            ax2.plot([min(osm),max(osm)],
-                     [slope*min(osm)+intercept,slope*max(osm)+intercept],
-                     color=gs.get("median_color","#c62828"),lw=1.5)
-            ax2.set_title(f"Q-Q графік (R²={r**2:.3f})",**fp)
-            ax2.set_xlabel("Теоретичні квантилі",**fp)
-            ax2.set_ylabel("Вибіркові квантилі",**fp)
-            ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
-        else:
-            ax = fig.add_subplot(111)
-            ax.text(0.5,0.5,"Залишки недоступні.\nВиконайте аналіз і відкрийте знову.",
-                    ha="center",va="center",transform=ax.transAxes,**fp)
-            ax.axis("off")
-        fig.suptitle(title,**fp); fig.tight_layout()
-        self._graph_figs["hist"]=fig
-        cv=FigureCanvasTkAgg(fig,master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
-
-    # ── TAB 6: Сила впливу (горизонтальна діаграма % SS) ───────
-    def _build_vn_tab(self, frame, eff_rows, gs):
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
-        self._tab_toolbar(frame, "vn")
-        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
-        title = getattr(self, '_gs_titles', {}).get("vn",
-            "Сила впливу факторів (% від SS total)")
-        valid = [(str(nm), float(pct)) for nm,pct in eff_rows
-                 if pct and not math.isnan(float(pct)) and float(pct) > 0]
-        if valid:
-            valid.sort(key=lambda x: x[1])  # за зростанням для горизонт.
-            labels_ = [v[0] for v in valid]
-            values_ = [v[1] for v in valid]
-            colors_ = ["#c62828" if "×" in l else "#1a4b8c" for l in labels_]
-            bars = ax.barh(range(len(labels_)), values_,
-                           color=colors_, edgecolor="white", height=0.6)
-            for i,(bar,val) in enumerate(zip(bars,values_)):
-                ax.text(val+0.3, i, f"{val:.1f}%",
-                        va="center", **fp)
-            ax.set_yticks(range(len(labels_)))
-            ax.set_yticklabels(labels_, **fp)
-            ax.set_xlabel("% від SS total", **fp)
-            ax.xaxis.grid(True, linestyle="--", alpha=0.35)
-            # Легенда
-            from matplotlib.patches import Patch
-            ax.legend(handles=[
-                Patch(color="#1a4b8c", label="Головний ефект"),
-                Patch(color="#c62828", label="Взаємодія"),
-            ], fontsize=fp["fontsize"]-1, loc="lower right")
-        else:
-            ax.text(0.5,0.5,"Немає даних про силу впливу",
-                    ha="center",va="center",transform=ax.transAxes,**fp)
-            ax.axis("off")
-        ax.set_title(title, **fp)
-        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-        fig.tight_layout()
-        self._graph_figs["vn"]=fig
-        cv=FigureCanvasTkAgg(fig,master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
-
-    # ── TAB 7: Розмір ефекту (горизонтальна діаграма η²) ───────
-    def _build_pe_tab(self, frame, pe2_rows, gs):
-        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
-        self._tab_toolbar(frame, "pe")
-        fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
-        title = getattr(self, '_gs_titles', {}).get("pe",
-            "Розмір ефекту (partial η²)")
-        valid = [(str(nm), float(pct)) for nm,pct,_ in pe2_rows
-                 if pct and not math.isnan(float(pct)) and float(pct) > 0]
-        if valid:
-            valid.sort(key=lambda x: x[1])
-            labels_ = [v[0] for v in valid]
-            values_ = [v[1] for v in valid]
-            colors_ = ["#c62828" if "×" in l else "#1a6b1a" for l in labels_]
-            # Градієнт відповідно до величини ефекту
-            bars = ax.barh(range(len(labels_)), values_,
-                           color=colors_, edgecolor="white", height=0.6)
-            for i,(bar,val) in enumerate(zip(bars,values_)):
-                # Позначаємо силу ефекту
-                if val < 0.01: strength = "дуже слабкий"
-                elif val < 0.06: strength = "слабкий"
-                elif val < 0.14: strength = "середній"
-                else: strength = "сильний"
-                ax.text(val+0.002, i, f"η²={val:.3f} ({strength})",
-                        va="center", **fp)
-            ax.set_yticks(range(len(labels_)))
-            ax.set_yticklabels(labels_, **fp)
-            ax.set_xlabel("partial η²", **fp)
-            # Вертикальні лінії меж
-            for thresh, lbl, col in [
-                (0.01,"слабкий","#aaa"), (0.06,"середній","#888"), (0.14,"сильний","#555")
-            ]:
-                ax.axvline(thresh, color=col, lw=0.8, linestyle="--")
-                ax.text(thresh, len(labels_)-0.5, lbl,
-                        color=col, fontsize=max(7,fp["fontsize"]-2),
-                        ha="center", va="bottom")
-            ax.xaxis.grid(True, linestyle="--", alpha=0.25)
-        else:
-            ax.text(0.5,0.5,"Немає даних про розмір ефекту",
-                    ha="center",va="center",transform=ax.transAxes,**fp)
-            ax.axis("off")
-        ax.set_title(title, **fp)
-        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-        fig.tight_layout()
-        self._graph_figs["pe"]=fig
-        cv=FigureCanvasTkAgg(fig,master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
-
-    # ── Налаштування окремої вкладки ───────────────────────────
-    def _tab_settings(self, frame, key, indicator, units, rebuild=None):
-        gw = self.graph_win or self.root
-        dlg = GraphSettingsDlg(gw, self.graph_settings)
-        gw.wait_window(dlg)
-        if dlg.result:
-            self.graph_settings = dlg.result
-            # Налаштування заголовку
-            cur_title = getattr(self, '_gs_titles', {}).get(
-                key, f"{indicator}, {units}")
-            new_title_win = tk.Toplevel(gw)
-            new_title_win.title("Заголовок графіка")
-            new_title_win.resizable(False, False)
-            new_title_win.grab_set()
-            tk.Label(new_title_win, text="Заголовок графіка:",
-                     font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
-            tv = tk.StringVar(value=cur_title)
-            te = tk.Entry(new_title_win, textvariable=tv,
-                          font=("Times New Roman",12), width=40)
-            te.pack(padx=16, pady=4); te.select_range(0, tk.END); te.focus_set()
-            def _apply_title():
-                if not hasattr(self, '_gs_titles'): self._gs_titles = {}
-                self._gs_titles[key] = tv.get().strip() or cur_title
-                new_title_win.destroy()
-                if rebuild: rebuild()
-            tk.Button(new_title_win, text="OK", bg="#c62828", fg="white",
-                      font=("Times New Roman",12),
-                      command=_apply_title).pack(pady=(4,14))
-            new_title_win.bind("<Return>", lambda e: _apply_title())
-            center_win(new_title_win)
-        elif rebuild:
-            rebuild()
-
     def _open_gs(self, gw, long, lf, ind, units, eff, pe2):
         dlg = GraphSettingsDlg(gw, self.graph_settings)
         gw.wait_window(dlg)
