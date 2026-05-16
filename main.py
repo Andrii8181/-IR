@@ -13046,10 +13046,22 @@ def _SADTk_new_init(self, root):
     sb_canvas.configure(yscrollcommand=sb_vsb.set)
     sb_inner = tk.Frame(sb_canvas, bg=C["sidebar"])
     sb_canvas.create_window((0,0), window=sb_inner, anchor="nw")
-    sb_inner.bind("<Configure>",
-                  lambda e: sb_canvas.configure(scrollregion=sb_canvas.bbox("all")))
-    sidebar.bind("<MouseWheel>",
-                 lambda e: sb_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+    def _mw_sidebar(e):
+        sb_canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+    sb_canvas.bind("<MouseWheel>", _mw_sidebar)
+    sb_inner.bind("<MouseWheel>", _mw_sidebar)
+    sidebar.bind("<MouseWheel>", _mw_sidebar)
+    sf.bind("<MouseWheel>", _mw_sidebar)
+    # Bind all sidebar children after make_sidebar
+    def _bind_sb_children():
+        for w in sb_inner.winfo_children():
+            w.bind("<MouseWheel>", _mw_sidebar)
+            for ch in w.winfo_children():
+                ch.bind("<MouseWheel>", _mw_sidebar)
+    sb_inner.bind("<Configure>", lambda e: (
+        sb_canvas.configure(scrollregion=sb_canvas.bbox("all")),
+        _bind_sb_children()))
 
     CATEGORIES = [
         ("ANOVA",             ["anova1","anova2","anova3","anova4"]),
@@ -13136,21 +13148,56 @@ def _SADTk_new_init(self, root):
         try:
             with open(path,"r",encoding="utf-8") as _f:
                 d = json.load(_f)
-            ptype = d.get("type","")
-            if "stability" in ptype:
-                StabilityWindow(root, self.graph_settings)
-            elif "mixed_repeated" in ptype:
-                MixedRepeatedWindow(root, self.graph_settings)
-            elif "repeated" in ptype:
-                RepeatedMeasuresWindow(root, self.graph_settings)
-            elif "anova" in ptype or "factors" in ptype:
-                fc = d.get("factors_count", 1)
-                self.open_table(fc)
-            else:
-                messagebox.showinfo("Проект відкрито",
-                    f"Тип проекту: {ptype}\nВідкрийте відповідний аналіз вручну.")
         except Exception as ex:
-            messagebox.showerror("Помилка відкриття", str(ex))
+            messagebox.showerror("Помилка відкриття", str(ex)); return
+        ptype = d.get("type","")
+        # ANOVA / головний проект — factors_count є завжди
+        if not ptype or "factors_count" in d:
+            project_from_dict(self, d)
+            messagebox.showinfo("Проект відкрито", f"Проект завантажено:\n{path}")
+            return
+        # Спеціалізовані проекти
+        def _after_open(win_obj):
+            root.after(300, lambda w=win_obj: _fill_win(w, d, path))
+        def _fill_win(w, dd, pp):
+            try:
+                rows = dd.get("rows_data",[])
+                envs = (dd.get("env_vars") or dd.get("time_vars") or
+                        dd.get("col_vars") or [])
+                n_need = (1+len(envs)) if envs else len(rows[0]) if rows else 0
+                while getattr(w,"cols_n",0) < n_need:
+                    if hasattr(w,"_add_col"): w._add_col()
+                    else: break
+                for i,nm in enumerate(envs):
+                    for attr in ["time_vars","col_vars","env_vars"]:
+                        vl = getattr(w,attr,[])
+                        if i<len(vl): vl[i].set(nm); break
+                while len(getattr(w,"entries",[])) < len(rows):
+                    if hasattr(w,"_add_row"): w._add_row()
+                    else: break
+                for i,rv in enumerate(rows):
+                    for j,v in enumerate(rv):
+                        ents = getattr(w,"entries",[])
+                        if i<len(ents) and j<len(ents[i]):
+                            ents[i][j].delete(0,tk.END)
+                            ents[i][j].insert(0,v)
+                messagebox.showinfo("Завантажено", f"Проект завантажено:\n{pp}")
+            except Exception as ex:
+                messagebox.showerror("Помилка завантаження", str(ex))
+        win_map = {
+            "stability":              lambda: _after_open(StabilityWindow(root,self.graph_settings)),
+            "mixed_repeated_measures":lambda: _after_open(MixedRepeatedWindow(root,self.graph_settings)),
+            "repeated_measures":      lambda: _after_open(RepeatedMeasuresWindow(root,self.graph_settings)),
+            "correlation":            lambda: _after_open(CorrelationWindow(root,self.graph_settings)),
+        }
+        for key, fn in win_map.items():
+            if key in ptype:
+                fn(); return
+        messagebox.showinfo("Проект відкрито",
+            f"Тип проекту: «{ptype}»\n"
+            "Відкрийте відповідний аналіз вручну і\n"
+            "скористайтесь «📂 Відкрити проект» у тому вікні.")
+
     tk.Button(proj_f, text="📂 Відкрити проект", bg=C["card"], fg=C["text"],
               font=("Arial",10), relief=tk.FLAT, padx=12, pady=6,
               cursor="hand2", activebackground=C["card_hov"],
@@ -13169,7 +13216,19 @@ def _SADTk_new_init(self, root):
     content_canvas.bind("<Configure>",
                         lambda e: content_canvas.itemconfig(cf_win, width=e.width))
     def _mw_content(e):
-        content_canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+        # Обмежуємо прокрутку в межах scrollregion
+        delta = int(-1*(e.delta/120))
+        top, bot = content_canvas.yview()
+        if delta < 0 and top <= 0: return
+        if delta > 0 and bot >= 1: return
+        content_canvas.yview_scroll(delta, "units")
+
+    def _mw_sidebar_global(e):
+        delta = int(-1*(e.delta/120))
+        top, bot = sb_canvas.yview()
+        if delta < 0 and top <= 0: return
+        if delta > 0 and bot >= 1: return
+        sb_canvas.yview_scroll(delta, "units")
     right.bind("<MouseWheel>", _mw_content)
     content_canvas.bind("<MouseWheel>", _mw_content)
     cf.bind("<MouseWheel>", _mw_content)
@@ -13191,23 +13250,33 @@ def _SADTk_new_init(self, root):
         _dark  = _darken(color)
         _light = _lighten(color)
 
-        # Зовнішня рамка — імітує тінь/об'єм
-        outer = tk.Frame(parent, bg=_dark,
-                         width=w+2, height=h+2, cursor="hand2")
+        # Зовнішня рамка — глибока тінь для об'єму
+        _darker = _darken(color, 50)
+        outer = tk.Frame(parent, bg=_darker,
+                         width=w+4, height=h+4, cursor="hand2")
         outer.pack_propagate(False)
 
+        # Середня рамка — бічна тінь
+        mid = tk.Frame(outer, bg=_dark, cursor="hand2")
+        mid.pack_propagate(False)
+        mid.pack(fill=tk.BOTH, expand=True, padx=(1,3), pady=(1,3))
+
         # Основний фрейм
-        frm = tk.Frame(outer, bg=color, width=w, height=h, cursor="hand2")
+        frm = tk.Frame(mid, bg=color, cursor="hand2")
         frm.pack_propagate(False)
-        frm.pack(padx=(0,2), pady=(0,2))   # зміщення → ефект тіні знизу/праворуч
+        frm.pack(fill=tk.BOTH, expand=True)
 
         # Верхня світла смужка — ефект блиску
-        shine = tk.Frame(frm, bg=_light, height=2)
+        shine = tk.Frame(frm, bg=_light, height=3)
         shine.pack(fill=tk.X, side=tk.TOP)
+
+        # Ліва світла смужка — бічне підсвічування
+        left_shine = tk.Frame(frm, bg=_lighten(color, 20), width=2)
+        left_shine.pack(side=tk.LEFT, fill=tk.Y)
 
         # Вміст
         inner = tk.Frame(frm, bg=color, padx=pad, pady=pad-2)
-        inner.pack(fill=tk.BOTH, expand=True)
+        inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         tk.Label(inner, text=name, bg=color, fg="white",
                  font=("Arial", name_sz, "bold"),
@@ -13227,19 +13296,23 @@ def _SADTk_new_init(self, root):
 
         # Hover
         def _e(e):
-            outer.configure(bg=_dark)
+            outer.configure(bg=_darker)
+            mid.configure(bg=_dark)
             frm.configure(bg=_dark)
-            shine.configure(bg=_lighten(_dark))
+            shine.configure(bg=_lighten(_dark,20))
+            left_shine.configure(bg=_lighten(_dark,15))
             inner.configure(bg=_dark)
             for ch in inner.winfo_children(): ch.configure(bg=_dark)
         def _l(e):
-            outer.configure(bg=_dark)
+            outer.configure(bg=_darker)
+            mid.configure(bg=_dark)
             frm.configure(bg=color)
             shine.configure(bg=_light)
+            left_shine.configure(bg=_lighten(color,20))
             inner.configure(bg=color)
             for ch in inner.winfo_children(): ch.configure(bg=color)
         click_cmd = lambda e, k=key, cl=cls, ng=needs_gs, cf2=custom_fn:                     _open(k, cl, ng, cf2)
-        for w2 in ([outer, frm, shine, inner] +
+        for w2 in ([outer, mid, frm, shine, left_shine, inner] +
                    list(inner.winfo_children())):
             w2.bind("<Enter>", _e)
             w2.bind("<Leave>", _l)
