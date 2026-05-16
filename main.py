@@ -86,6 +86,33 @@ def set_icon(win):
         except Exception: pass
 
 # ── Clipboard PNG → Windows ────────────────────────────────────
+def embed_figure(fig, master, dpi=96):
+    """
+    Глобальний хелпер: вставляє matplotlib Figure у tkinter frame
+    з автоматичною адаптацією розміру при зміні вікна.
+    """
+    cv = FigureCanvasTkAgg(fig, master=master)
+    widget = cv.get_tk_widget()
+    widget.pack(fill=tk.BOTH, expand=True)
+    _deb = [None]
+    def _on_cfg(e):
+        w, h = e.width, e.height
+        if w < 100 or h < 100: return
+        if _deb[0]:
+            try: master.after_cancel(_deb[0])
+            except Exception: pass
+        _deb[0] = master.after(150, lambda: _resize(w, h))
+    def _resize(w, h):
+        try:
+            fig.set_size_inches(w/dpi, h/dpi)
+            fig.tight_layout()
+            cv.draw_idle()
+        except Exception: pass
+    widget.bind("<Configure>", _on_cfg)
+    cv.draw()
+    return cv
+
+
 def _copy_fig_to_clipboard(fig):
     if not (HAS_MPL and HAS_PIL): return False, "Потрібні matplotlib і Pillow"
     try:
@@ -2048,18 +2075,9 @@ class CorrelationWindow:
             self._draw_scatter(self._sc_frame, labels, arrays, method)
         win.after(100, _initial_draw)
 
-        # Адаптивний resize при зміні розміру вікна
-        _resize_timer = [None]
-        def _on_win_resize(e):
-            if e.widget is not win: return
-            if _resize_timer[0]: win.after_cancel(_resize_timer[0])
-            _resize_timer[0] = win.after(300, _do_resize)
-        def _do_resize():
-            tab = nb.index(nb.select())
-            if tab == 0: self._redraw_heatmap()
-            else:        self._redraw_scatter(labels, arrays, method)
-        win.bind("<Configure>", _on_win_resize)
-        nb.bind("<<NotebookTabChanged>>", lambda e: _do_resize())
+        # Resize handled by canvas <Configure> binding in each _draw_* method
+        # Перемикання вкладки — перебудовуємо lazy (дані вже є у canvas)
+        nb.bind("<<NotebookTabChanged>>", lambda e: None)
 
     def _save_fig_png(self, fig, name="графік"):
         if fig is None: messagebox.showwarning("","Спочатку виконайте аналіз."); return
@@ -2172,14 +2190,9 @@ class CorrelationWindow:
 
     def _draw_heatmap(self, frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, gs):
         n = len(labels)
-        # Адаптивний розмір під вікно
-        frame.update_idletasks()
-        fw = max(400, frame.winfo_width())
-        fh = max(400, frame.winfo_height())
-        dpi = 100
-        fig_w = max(5, min(fw/dpi, 16))
-        fig_h = max(5, min(fh/dpi, 14))
-        fig  = Figure(figsize=(fig_w, fig_h), dpi=dpi)
+        dpi = 96
+        # Стартовий розмір — буде масштабований через resize_event
+        fig  = Figure(figsize=(8, 7), dpi=dpi)
         ax   = fig.add_subplot(111)
 
         cmap_name = gs.get("heatmap_cmap","RdYlGn")
@@ -2224,8 +2237,7 @@ class CorrelationWindow:
         fig.tight_layout()
         self._hm_fig = fig
 
-        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, frame, dpi=dpi)
 
     # ── Матриця діаграм розсіювання ───────────────────────────
     def _draw_scatter(self, frame, labels, arrays, method):
@@ -2258,14 +2270,8 @@ class CorrelationWindow:
         ff       = sc.get("font_family",     "Times New Roman")
         fz       = sc.get("sc_font_size",    6)
 
-        # Адаптивний розмір
-        frame.update_idletasks()
-        fw = max(400, frame.winfo_width())
-        fh = max(400, frame.winfo_height())
-        dpi = 100
-        fig_w = max(5, min(fw/dpi, 14))
-        fig_h = max(5, min(fh/dpi, 12))
-        fig = Figure(figsize=(fig_w, fig_h), dpi=dpi)
+        dpi = 96
+        fig = Figure(figsize=(8, 7), dpi=dpi)
 
         for i in range(n):
             for j in range(n):
@@ -2302,10 +2308,11 @@ class CorrelationWindow:
         fig.suptitle(
             custom_sc if custom_sc else f"Матриця діаграм розсіювання ({meth_full})",
             fontsize=9, fontfamily=ff, y=1.0)
-        fig.tight_layout()
+        try: fig.tight_layout()
+        except Exception: pass
         self._sc_fig = fig
-        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        embed_figure(fig, frame, dpi=dpi)
 
     def _copy_scatter(self, win=None):
         if self._sc_fig is None:
@@ -4382,8 +4389,7 @@ class SADTk:
             ax.yaxis.grid(True, linestyle="--", alpha=0.35)
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         self._graph_figs["bp"]=fig
-        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, plot_f)
 
     # ── TAB 2: Середні ± SE ────────────────────────────────────
     def _build_bar_tab(self, frame, long, lf, indicator, units, gs, gw=None):
@@ -4447,8 +4453,7 @@ class SADTk:
             ax.yaxis.grid(True, linestyle="--", alpha=0.35)
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         self._graph_figs["bar"]=fig
-        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, plot_f)
 
     # ── TAB 3: Взаємодія ───────────────────────────────────────
     def _build_int_tab(self, frame, long, lf, indicator, units, gs, gw=None):
@@ -4517,8 +4522,7 @@ class SADTk:
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         fig.tight_layout()
         self._graph_figs["int"]=fig
-        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, plot_f)
 
     # ── TAB 4: Динаміка по рівнях ──────────────────────────────
     def _build_line_tab(self, frame, long, lf, indicator, units, gs, gw=None):
@@ -4582,8 +4586,7 @@ class SADTk:
             fig.suptitle(title, **fp)
             fig.tight_layout()
         self._graph_figs["line"]=fig
-        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, plot_f)
 
     # ── TAB 5: Залишки ─────────────────────────────────────────
     def _build_hist_tab(self, frame, long, gs, indicator, units, gw=None):
@@ -4633,8 +4636,7 @@ class SADTk:
             ax.axis("off")
         fig.suptitle(title, **fp); fig.tight_layout()
         self._graph_figs["hist"]=fig
-        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, plot_f)
 
     # ── TAB 6: Сила впливу ─────────────────────────────────────
     def _build_vn_tab(self, frame, eff_rows, gs, gw=None):
@@ -4684,8 +4686,7 @@ class SADTk:
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         fig.tight_layout()
         self._graph_figs["vn"]=fig
-        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, plot_f)
 
     # ── TAB 7: Розмір ефекту ───────────────────────────────────
     def _build_pe_tab(self, frame, pe2_rows, gs, gw=None):
@@ -4741,8 +4742,7 @@ class SADTk:
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         fig.tight_layout()
         self._graph_figs["pe"]=fig
-        cv=FigureCanvasTkAgg(fig, master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, plot_f)
 
     def _tab_settings(self, *args, **kwargs): pass  # замінено _settings_dialog
 
@@ -4800,8 +4800,7 @@ class SADTk:
         ax.yaxis.grid(True,linestyle="--",alpha=0.35)
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         self._graph_figs["bp"]=fig
-        cv=FigureCanvasTkAgg(fig,master=plot_f); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
+        embed_figure(fig, plot_f)
         fig.set_size_inches(plot_f.winfo_width()/100 or 10,
                             plot_f.winfo_height()/100 or 5)
 
@@ -5346,8 +5345,7 @@ class DescriptiveWindow:
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         fig.tight_layout()
         self._bp_fig = fig
-        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, frame)
 
     def _restyle_bp(self, win, arrays, names):
         """Dedicated boxplot settings dialog — no KeyError on missing DEF_GS keys."""
@@ -5456,8 +5454,7 @@ class DescriptiveWindow:
             ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         fig.tight_layout()
         self._qq_fig = fig
-        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, frame)
 
     def _restyle_qq(self, win, arrays, names):
         """Простий діалог налаштувань QQ-графіків."""
@@ -6281,8 +6278,7 @@ class RegressionWindow:
         fig.tight_layout()
         self._fig = fig   # зберігаємо для кнопки «Копіювати»
 
-        cv = FigureCanvasTkAgg(fig, master=self.res_frame)
-        cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, self.res_frame)
 
         # ── Виявлення викидів у залишках ─────────────────────
         out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
@@ -6973,8 +6969,7 @@ class ClusterWindow:
         fig.tight_layout()
         self._cl_fig = fig
 
-        cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, frame)
 
     # ── Виконання аналізу ─────────────────────────────────────
     def _run(self):
@@ -7573,8 +7568,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         self._pca_fig = fig
         self._pca_canvas_frame = tk.Frame(graph_frame)
         self._pca_canvas_frame.pack(fill=tk.X)
-        cv = FigureCanvasTkAgg(fig, master=self._pca_canvas_frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.X)
+        embed_figure(fig, self._pca_canvas_frame)
 
         # ── Прокручувана текстова частина ────────────────────
         scroll_area = tk.Frame(win); scroll_area.pack(fill=tk.BOTH, expand=True)
@@ -7688,8 +7682,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         fig.colorbar(im,ax=ax3,fraction=0.046,pad=0.04)
         fig.tight_layout()
         self._pca_fig=fig
-        cv=FigureCanvasTkAgg(fig,master=self._pca_canvas_frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH,expand=True)
+        embed_figure(fig, self._pca_canvas_frame)
 
     def _copy_pca(self):
         if self._pca_fig is None:
@@ -8338,8 +8331,7 @@ class RepeatedMeasuresWindow:
                         fontsize=max(7,gs["font_size"]-1), color="#555", fontfamily=gs["font_family"])
         fig.tight_layout()
         self._rm_fig = fig
-        cv = FigureCanvasTkAgg(fig, master=self._rm_graph_frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, self._rm_graph_frame)
 
 
     def _copy_rm(self):
@@ -9098,8 +9090,7 @@ class MixedRepeatedWindow:
         fig.tight_layout()
         self._fig = fig
 
-        cv = FigureCanvasTkAgg(fig, master=self._graph_frame); cv.draw()
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, self._graph_frame)
 
     def _copy_fig(self):
         if self._fig is None:
@@ -9553,7 +9544,7 @@ class StabilityWindow:
         ax2.set_title("Стабільність Eberhart–Russell", pad=14)
 
         fig.tight_layout()
-        cv = FigureCanvasTkAgg(fig, master=win); cv.draw(); cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        embed_figure(fig, win)
         frm, _ = make_tv(win, ["Генотип","Середнє","bi","s²d","Клас стабільності"], er_rows)
         frm.pack(fill=tk.X, padx=8, pady=4)
 
@@ -10141,8 +10132,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             ax2.set_xlabel("Теоретичні квантилі"); ax2.set_ylabel("Вибіркові квантилі")
             ax2.set_title("QQ-графік залишків"); ax2.yaxis.grid(True, alpha=0.3)
             fig.tight_layout()
-            cv = FigureCanvasTkAgg(fig, master=body); cv.draw()
-            cv.get_tk_widget().pack(fill=tk.X, padx=10, pady=6)
+            embed_figure(fig, body)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -10915,8 +10905,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             self._manova_figs[1] = fig1
             self._manova_frame1 = tk.Frame(body)
             self._manova_frame1.pack(fill=tk.X, padx=10, pady=4)
-            cv1 = FigureCanvasTkAgg(fig1, master=self._manova_frame1); cv1.draw()
-            cv1.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            embed_figure(fig1, self._manova_frame1)
 
             # Графік 2: профільний (нормовані середні)
             fig2 = Figure(figsize=(max(6, n_dv*0.9+2), 4), dpi=100)
@@ -10945,8 +10934,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             self._manova_figs[2] = fig2
             self._manova_frame2 = tk.Frame(body)
             self._manova_frame2.pack(fill=tk.X, padx=10, pady=(0,10))
-            cv2 = FigureCanvasTkAgg(fig2, master=self._manova_frame2); cv2.draw()
-            cv2.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            embed_figure(fig2, self._manova_frame2)
 
     # ── Допоміжні методи для результатів MANOVA ───────────────
 
@@ -10989,8 +10977,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         fig1.suptitle("Групові середні (±СП) по залежних змінних",fontsize=fz_+1)
         fig1.tight_layout()
         self._manova_figs[1]=fig1
-        cv1=FigureCanvasTkAgg(fig1,master=self._manova_frame1); cv1.draw()
-        cv1.get_tk_widget().pack(fill=tk.BOTH,expand=True)
+        embed_figure(fig1, self._manova_frame1)
 
         # Перебудовуємо графік 2
         for w in self._manova_frame2.winfo_children(): w.destroy()
@@ -11014,8 +11001,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
         fig2.tight_layout()
         self._manova_figs[2]=fig2
-        cv2=FigureCanvasTkAgg(fig2,master=self._manova_frame2); cv2.draw()
-        cv2.get_tk_widget().pack(fill=tk.BOTH,expand=True)
+        embed_figure(fig2, self._manova_frame2)
 
 
     def _copy_manova_text(self, win):
