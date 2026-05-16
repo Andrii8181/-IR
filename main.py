@@ -1430,68 +1430,67 @@ class CorrelationWindow:
 
         self.win = tk.Toplevel(root)
         self.win.title("Кореляційний аналіз")
-        self.win.geometry("1060x660"); set_icon(self.win)
+        self.win.geometry("1100x700"); set_icon(self.win)
+        self.win.configure(bg="#0f1117")
 
-        self._build_menu()
         self._build_toolbar()
         self._build_table()
 
-    # ── Меню ──────────────────────────────────────────────────
-    def _build_menu(self):
-        mb = tk.Menu(self.win)
-        fm = tk.Menu(mb, tearoff=0)
-        fm.add_command(label="Зберегти проект", command=self._save_proj)
-        fm.add_command(label="Відкрити проект", command=self._load_proj)
-        fm.add_separator()
-        fm.add_command(label="Завантажити Excel", command=self._load_excel)
-        mb.add_cascade(label="Файл", menu=fm)
-        em = tk.Menu(mb, tearoff=0)
-        em.add_command(label="Додати рядок",     command=self.add_row)
-        em.add_command(label="Видалити рядок",   command=self.del_row)
-        em.add_command(label="Додати стовпчик",  command=self.add_col)
-        em.add_command(label="Видалити стовпчик",command=self.del_col)
-        mb.add_cascade(label="Правка", menu=em)
-        self.win.config(menu=mb)
-
     # ── Панель інструментів ───────────────────────────────────
     def _build_toolbar(self):
-        tb = tk.Frame(self.win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tb = tk.Frame(self.win, bg="#161b27", padx=8, pady=6)
+        tb.pack(fill=tk.X)
 
-        # Основна кнопка аналізу
-        tk.Button(tb, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
-                  command=self._run_analysis).pack(side=tk.LEFT, padx=4)
+        # Кнопка аналізу
+        tk.Button(tb, text="▶ Аналіз", bg="#c0392b", fg="white",
+                  font=("Arial", 12, "bold"), relief=tk.FLAT,
+                  padx=16, pady=4, cursor="hand2",
+                  activebackground="#e74c3c",
+                  command=self._run_analysis).pack(side=tk.LEFT, padx=(0,8))
 
-        # Налаштування — спадне меню з управлінням таблицею
-        self._settings_btn = tk.Menubutton(tb, text="⚙ Налаштування ▾",
-                                           font=("Times New Roman", 11),
-                                           relief=tk.RAISED, bd=2)
+        # Роздільник
+        tk.Frame(tb, bg="#2a3350", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+
+        # Налаштування
+        self._settings_btn = tk.Menubutton(tb, text="⚙ Налаштування",
+                                           font=("Arial", 10), bg="#1e2336",
+                                           fg="#e8eaf0", relief=tk.FLAT,
+                                           padx=10, pady=4, cursor="hand2",
+                                           activebackground="#252d45")
         self._settings_btn.pack(side=tk.LEFT, padx=4)
-        sm = tk.Menu(self._settings_btn, tearoff=0)
-        sm.add_command(label="Додати рядок",      command=self.add_row)
-        sm.add_command(label="Видалити рядок",    command=self.del_row)
+        sm = tk.Menu(self._settings_btn, tearoff=0, bg="#1e2336",
+                     fg="#e8eaf0", activebackground="#4a90d9")
+        sm.add_command(label="Додати рядок",       command=self.add_row)
+        sm.add_command(label="Видалити рядок",     command=self.del_row)
         sm.add_separator()
-        sm.add_command(label="Додати стовпець",   command=self.add_col)
-        sm.add_command(label="Видалити стовпець", command=self.del_col)
+        sm.add_command(label="Додати стовпець",    command=self.add_col)
+        sm.add_command(label="Видалити стовпець",  command=self.del_col)
         sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
+        sm.add_separator()
+        sm.add_command(label="📥 Завантажити Excel", command=self._load_excel)
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         self._settings_btn["menu"] = sm
 
-        tk.Button(tb, text="Вставити з буфера",
-                  font=("Times New Roman", 11),
+        tk.Button(tb, text="📋 Вставити з буфера",
+                  font=("Arial", 10), bg="#1e2336", fg="#e8eaf0",
+                  relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
+                  activebackground="#252d45",
                   command=self._paste).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman", 11),
+
+        tk.Button(tb, text="📚 Довідка",
+                  font=("Arial", 10), bg="#1a4b8c", fg="white",
+                  relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
+                  activebackground="#2563aa",
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
 
-        # Підказка
         tk.Label(tb,
-                 text="Двічі клікніть на синій заголовок щоб перейменувати показник",
-                 font=("Times New Roman", 9), fg="#666"
-                 ).pack(side=tk.LEFT, padx=10)
+                 text="Подвійний клік на заголовку → перейменувати показник",
+                 font=("Arial", 9), fg="#4a90d9", bg="#161b27"
+                 ).pack(side=tk.LEFT, padx=12)
 
     def _clear_table(self):
-        """Очистити всі числові дані в таблиці (заголовки залишаються)."""
         if not messagebox.askyesno("Очистити таблицю",
                 "Видалити всі числові дані?\n(Назви стовпців залишаться)"):
             return
@@ -1501,13 +1500,14 @@ class CorrelationWindow:
     # ── Таблиця даних ─────────────────────────────────────────
     def _build_table(self):
         self.rows = 14; self.cols = 6
-        tbl_frm = tk.Frame(self.win); tbl_frm.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-        self.canvas = tk.Canvas(tbl_frm)
+        tbl_frm = tk.Frame(self.win, bg="#0f1117")
+        tbl_frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.canvas = tk.Canvas(tbl_frm, bg="#0f1117", highlightthickness=0)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb = ttk.Scrollbar(tbl_frm, orient="vertical", command=self.canvas.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(self.canvas)
+        self.inner = tk.Frame(self.canvas, bg="#0f1117")
         self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>",
                         lambda e: self.canvas.config(scrollregion=self.canvas.bbox("all")))
@@ -1515,7 +1515,7 @@ class CorrelationWindow:
                       lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         self.header_labels = []
-        self.header_vars   = []   # StringVar для кожного заголовку
+        self.header_vars   = []
         self._build_headers()
 
         self.entries = []
@@ -1524,43 +1524,52 @@ class CorrelationWindow:
         _bind_nav(self.entries, self.win)
 
     def _build_headers(self):
-        """Побудова заголовків з можливістю перейменування (подвійний клік)."""
         for j in range(self.cols):
             var = tk.StringVar(value=f"Показник {j+1}")
             self.header_vars.append(var)
             lbl = tk.Label(self.inner, textvariable=var,
-                           relief=tk.RIDGE, width=14, cursor="hand2",
+                           relief=tk.FLAT, width=14, cursor="hand2",
                            bg="#1a4b8c", fg="white",
-                           font=("Times New Roman", 11, "bold"))
+                           font=("Arial", 10, "bold"),
+                           padx=6, pady=6)
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
             self.header_labels.append(lbl)
 
     def _rename_col(self, idx):
-        """Вікно перейменування стовпця."""
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
+        dlg.configure(bg="#1e2336")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва показника {idx+1}:",
-                 font=("Times New Roman", 12)).pack(padx=16, pady=14)
+                 font=("Arial", 11), bg="#1e2336", fg="#e8eaf0"
+                 ).pack(padx=20, pady=(16,4))
         var = tk.StringVar(value=self.header_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman", 12), width=28)
-        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
-
+        e = tk.Entry(dlg, textvariable=var, font=("Arial", 11), width=28,
+                     bg="#0f1117", fg="#e8eaf0", insertbackground="#e8eaf0",
+                     relief=tk.FLAT, highlightthickness=1,
+                     highlightbackground="#4a90d9")
+        e.pack(padx=20, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.header_vars[idx].set(nm)
             dlg.destroy()
-        tk.Button(dlg, text="ОК", bg="#c62828", fg="white",
-                  font=("Times New Roman", 12), command=apply).pack(pady=(4,14))
+        tk.Button(dlg, text="Застосувати", bg="#c0392b", fg="white",
+                  font=("Arial", 11), relief=tk.FLAT, padx=16, pady=4,
+                  command=apply).pack(pady=(4,16))
         dlg.bind("<Return>", lambda ev: apply())
         center_win(dlg)
 
     def _add_row_widgets(self, i):
-        """Додати один рядок Entry-комірок."""
         row_ = []
         for j in range(self.cols):
-            e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=14, font=("Arial", 10),
+                         bg="#1e2336", fg="#e8eaf0",
+                         insertbackground="#e8eaf0",
+                         relief=tk.FLAT,
+                         highlightthickness=1,
+                         highlightbackground="#2a3350",
+                         highlightcolor="#4a90d9",
+                         disabledbackground="#161b27")
             e.grid(row=i+1, column=j, padx=2, pady=2)
             e.bind("<Return>", self._on_enter)
             e.bind("<Tab>",    self._on_tab)
@@ -1591,8 +1600,13 @@ class CorrelationWindow:
         lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
         self.header_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=14, font=("Arial", 10),
+                         bg="#1e2336", fg="#e8eaf0",
+                         insertbackground="#e8eaf0",
+                         relief=tk.FLAT,
+                         highlightthickness=1,
+                         highlightbackground="#2a3350",
+                         highlightcolor="#4a90d9")
             e.grid(row=i+1, column=ci, padx=2, pady=2)
             e.bind("<Return>", self._on_enter); e.bind("<Tab>", self._on_tab)
             row_.append(e)
@@ -13211,33 +13225,52 @@ def _SADTk_new_init(self, root):
     content_canvas.configure(yscrollcommand=c_vsb.set)
     cf = tk.Frame(content_canvas, bg=C["bg"])
     cf_win = content_canvas.create_window((0,0), window=cf, anchor="nw")
-    cf.bind("<Configure>",
-            lambda e: content_canvas.configure(scrollregion=content_canvas.bbox("all")))
+
+    def _on_cf_configure(e):
+        content_canvas.configure(scrollregion=content_canvas.bbox("all"))
+        # Прокрутка для всіх нових дочірніх елементів
+        def _bind_all(w):
+            try: w.bind("<MouseWheel>", _mw_content)
+            except Exception: pass
+            for ch in w.winfo_children(): _bind_all(ch)
+        _bind_all(cf)
+    cf.bind("<Configure>", _on_cf_configure)
+
     content_canvas.bind("<Configure>",
                         lambda e: content_canvas.itemconfig(cf_win, width=e.width))
+
     def _mw_content(e):
-        # Обмежуємо прокрутку в межах scrollregion
         delta = int(-1*(e.delta/120))
         top, bot = content_canvas.yview()
-        if delta < 0 and top <= 0: return
-        if delta > 0 and bot >= 1: return
+        if delta < 0 and top <= 0.001: return
+        if delta > 0 and bot >= 0.999: return
         content_canvas.yview_scroll(delta, "units")
 
     def _mw_sidebar_global(e):
         delta = int(-1*(e.delta/120))
         top, bot = sb_canvas.yview()
-        if delta < 0 and top <= 0: return
-        if delta > 0 and bot >= 1: return
+        if delta < 0 and top <= 0.001: return
+        if delta > 0 and bot >= 0.999: return
         sb_canvas.yview_scroll(delta, "units")
+
+    # Глобальне прив'язування через root — найнадійніший спосіб
+    def _global_mw(e):
+        wx = e.widget
+        # Визначаємо чи курсор над правою частиною чи лівою
+        try:
+            abs_x = e.widget.winfo_rootx()
+            sidebar_right = sidebar.winfo_rootx() + sidebar.winfo_width()
+            if abs_x >= sidebar_right:
+                _mw_content(e)
+            else:
+                _mw_sidebar_global(e)
+        except Exception:
+            _mw_content(e)
+
+    root.bind_all("<MouseWheel>", _global_mw)
     right.bind("<MouseWheel>", _mw_content)
     content_canvas.bind("<MouseWheel>", _mw_content)
     cf.bind("<MouseWheel>", _mw_content)
-    # Bind to all children recursively after build
-    def _bind_mw_all(widget):
-        widget.bind("<MouseWheel>", _mw_content)
-        for ch in widget.winfo_children():
-            _bind_mw_all(ch)
-    cf.bind("<Configure>", lambda e: _bind_mw_all(cf))
 
     def _card(parent, key, name, desc, color, cls, needs_gs, custom_fn,
               large=False):
