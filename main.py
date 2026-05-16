@@ -12821,8 +12821,20 @@ class TrialDesignWindow:
 
 
 def _SADTk_new_init(self, root):
-    _SADTk_orig_init(self, root)
-    for w in root.winfo_children(): w.destroy()
+    # Ініціалізуємо лише стан (без UI від orig_init)
+    self.root = root
+    self.table_win = None; self.report_win = None; self.graph_win = None
+    self._graph_figs = {}
+    self._active_cell = None; self._active_prev = None
+    self._sel_anchor = None; self._sel_cells = set(); self._sel_orig = {}
+    self._fill_drag = False; self._fill_rows = []; self._fill_cols = []
+    self.factor_title_map = {}
+    self.graph_settings = dict(DEF_GS)
+    self._current_project_path = None
+    self._lbf_cache = {}
+    if not hasattr(self, '_gs_titles'): self._gs_titles = {}
+    self._ordinal_mode = False
+
     root.geometry("1280x780")
     root.minsize(1100, 680)
     root.configure(bg="#0f1117")
@@ -13201,90 +13213,6 @@ def _SADTk_new_init(self, root):
 
     _refresh_recent()
 
-    # ── Стан ────────────────────────────────────────────────
-    self.table_win = None; self.report_win = None; self.graph_win = None
-    self._graph_figs = {}
-    self._active_cell = None; self._active_prev = None
-    self._sel_anchor = None; self._sel_cells = set(); self._sel_orig = {}
-    self._fill_drag = False; self._fill_rows = []; self._fill_cols = []
-    self.factor_title_map = {}
-    self.graph_settings = dict(DEF_GS)
-    self._current_project_path = None
-    self._lbf_cache = {}
-    if not hasattr(self, '_gs_titles'): self._gs_titles = {}
-
-
-
-    mf = tk.Frame(root, bg="white"); mf.pack(expand=True, fill=tk.BOTH)
-    tk.Label(mf, text="S.A.D. — Статистичний аналіз даних",
-             font=("Times New Roman", 20, "bold"), fg="#000000", bg="white").pack(pady=12)
-
-    # ── ANOVA block ──
-    sect1 = tk.LabelFrame(mf, text="  Analysis of Variance (ANOVA)  ",
-                          font=("Times New Roman",12,"bold"), bg="white", fg="#1a4b8c")
-    sect1.pack(fill=tk.X, padx=20, pady=4)
-    bf = tk.Frame(sect1, bg="white"); bf.pack(pady=6)
-    for i, (txt, fc) in enumerate([("One-factor ANOVA",1),("Two-factor ANOVA",2),
-                                    ("Three-factor ANOVA",3),("Four-factor ANOVA",4)]):
-        tk.Button(bf, text=txt, width=22, height=2, font=("Times New Roman",12),
-                  command=lambda f=fc: self.open_table(f)).grid(row=0, column=i, padx=8, pady=4)
-
-    # ── Other analyses ──
-    sect2 = tk.LabelFrame(mf, text="  Other Statistical Methods  ",
-                          font=("Times New Roman",12,"bold"), bg="white", fg="#1a4b8c")
-    sect2.pack(fill=tk.X, padx=20, pady=4)
-    bf2 = tk.Frame(sect2, bg="white"); bf2.pack(pady=6)
-
-    btn_cfg = [
-        ("Описова\nстатистика",        "#1a6b1a", DescriptiveWindow,        True),
-        ("t-тест /\nМанн-Уітні",       "#1a6b1a", TTestWindow,              False),
-        ("Кореляційний\nаналіз",       "#1a4b8c", CorrelationWindow,        True),
-        ("Регресійний\nаналіз",        "#4b1a8c", RegressionWindow,         True),
-        ("ANCOVA",                     "#4b1a8c", AncovaWindow,             True),
-        ("MANOVA",                     "#4b1a8c", ManovaWindow,             True),
-        ("Повторні\nвиміри",           "#4b1a8c", RepeatedMeasuresWindow,   True),
-        ("Змішаний\nRepeated Measures","#4b1a8c", MixedRepeatedWindow,      True),
-        ("Кластерний\nаналіз",         "#8c4b1a", ClusterWindow,            True),
-        ("PCA",                        "#8c4b1a", PCAWindow,                True),
-        ("Аналіз\nстабільності (GxE)", "#8c1a1a", StabilityWindow,          True),
-        ("Розмір\nвибірки",            "#555555", SampleSizeWindow,         False),
-        ("Генерація\nплану досліду",   "#1a5c6b", TrialDesignWindow,        False),
-    ]
-    def _make_cmd(cls, needs_gs):
-        if needs_gs:
-            return lambda c=cls: c(root, self.graph_settings)
-        return lambda c=cls: c(root)
-    for i, (txt, col, cls, needs_gs) in enumerate(btn_cfg):
-        tk.Button(bf2, text=txt, width=14, height=2, font=("Times New Roman",11),
-                  bg=col, fg="white",
-                  command=_make_cmd(cls, needs_gs)
-                  ).grid(row=i//6, column=i%6, padx=5, pady=4)
-
-    # ── Project buttons ──
-    pf = tk.Frame(mf, bg="white"); pf.pack(pady=6)
-    tk.Button(pf, text="📂 Open Project", width=18, font=("Times New Roman",11),
-              command=self.load_project).pack(side=tk.LEFT, padx=8)
-    tk.Button(pf, text="💾 Save Project", width=18, font=("Times New Roman",11),
-              command=self.save_project).pack(side=tk.LEFT, padx=8)
-
-    tk.Label(mf, text="Оберіть тип аналізу -> Введіть дані -> Натисніть «Аналіз даних»",
-             font=("Times New Roman",11), fg="#666666", bg="white").pack(pady=4)
-
-    # Help button
-    tk.Button(mf, text="📚  Довідка", font=("Times New Roman",12),
-              bg="#1a4b8c", fg="white", width=18,
-              command=lambda: show_help(root)).pack(pady=(2,8))
-
-    # re-init state (already done in orig_init but window was rebuilt)
-    self.table_win = None; self.report_win = None; self.graph_win = None
-    self._graph_figs = {}
-    self._active_cell = None; self._active_prev = None
-    self._sel_anchor = None; self._sel_cells = set(); self._sel_orig = {}
-    self._fill_drag = False; self._fill_rows = []; self._fill_cols = []
-    self.factor_title_map = {}
-    self.graph_settings = dict(DEF_GS)
-    self._current_project_path = None
-    self._lbf_cache = {}
 
 SADTk.__init__ = _SADTk_new_init
 
