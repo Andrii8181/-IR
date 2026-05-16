@@ -1430,65 +1430,58 @@ class CorrelationWindow:
 
         self.win = tk.Toplevel(root)
         self.win.title("Кореляційний аналіз")
-        self.win.geometry("1100x700"); set_icon(self.win)
-        self.win.configure(bg="#0f1117")
+        self.win.geometry("1060x660"); set_icon(self.win)
 
+        self._build_menu()
         self._build_toolbar()
         self._build_table()
 
+    # ── Меню ──────────────────────────────────────────────────
+    def _build_menu(self):
+        mb = tk.Menu(self.win)
+        fm = tk.Menu(mb, tearoff=0)
+        fm.add_command(label="Зберегти проект", command=self._save_proj)
+        fm.add_command(label="Відкрити проект", command=self._load_proj)
+        fm.add_separator()
+        fm.add_command(label="Завантажити Excel", command=self._load_excel)
+        mb.add_cascade(label="Файл", menu=fm)
+        em = tk.Menu(mb, tearoff=0)
+        em.add_command(label="Додати рядок",     command=self.add_row)
+        em.add_command(label="Видалити рядок",   command=self.del_row)
+        em.add_command(label="Додати стовпчик",  command=self.add_col)
+        em.add_command(label="Видалити стовпчик",command=self.del_col)
+        mb.add_cascade(label="Правка", menu=em)
+        self.win.config(menu=mb)
+
     # ── Панель інструментів ───────────────────────────────────
     def _build_toolbar(self):
-        tb = tk.Frame(self.win, bg="#161b27", padx=8, pady=6)
-        tb.pack(fill=tk.X)
-
-        # Кнопка аналізу
-        tk.Button(tb, text="▶ Аналіз", bg="#c0392b", fg="white",
-                  font=("Arial", 12, "bold"), relief=tk.FLAT,
-                  padx=16, pady=4, cursor="hand2",
-                  activebackground="#e74c3c",
-                  command=self._run_analysis).pack(side=tk.LEFT, padx=(0,8))
-
-        # Роздільник
-        tk.Frame(tb, bg="#2a3350", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=4)
-
-        # Налаштування
-        self._settings_btn = tk.Menubutton(tb, text="⚙ Налаштування",
-                                           font=("Arial", 10), bg="#1e2336",
-                                           fg="#e8eaf0", relief=tk.FLAT,
-                                           padx=10, pady=4, cursor="hand2",
-                                           activebackground="#252d45")
+        tb = tk.Frame(self.win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="▶ Аналіз", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
+                  command=self._run_analysis).pack(side=tk.LEFT, padx=4)
+        self._settings_btn = tk.Menubutton(tb, text="⚙ Налаштування ▾",
+                                           font=("Times New Roman", 11),
+                                           relief=tk.RAISED, bd=2)
         self._settings_btn.pack(side=tk.LEFT, padx=4)
-        sm = tk.Menu(self._settings_btn, tearoff=0, bg="#1e2336",
-                     fg="#e8eaf0", activebackground="#4a90d9")
-        sm.add_command(label="Додати рядок",       command=self.add_row)
-        sm.add_command(label="Видалити рядок",     command=self.del_row)
+        sm = tk.Menu(self._settings_btn, tearoff=0)
+        sm.add_command(label="Додати рядок",      command=self.add_row)
+        sm.add_command(label="Видалити рядок",    command=self.del_row)
         sm.add_separator()
-        sm.add_command(label="Додати стовпець",    command=self.add_col)
-        sm.add_command(label="Видалити стовпець",  command=self.del_col)
+        sm.add_command(label="Додати стовпець",   command=self.add_col)
+        sm.add_command(label="Видалити стовпець", command=self.del_col)
         sm.add_separator()
-        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
-        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
-        sm.add_separator()
-        sm.add_command(label="📥 Завантажити Excel", command=self._load_excel)
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         self._settings_btn["menu"] = sm
-
-        tk.Button(tb, text="📋 Вставити з буфера",
-                  font=("Arial", 10), bg="#1e2336", fg="#e8eaf0",
-                  relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
-                  activebackground="#252d45",
+        tk.Button(tb, text="Вставити з буфера",
+                  font=("Times New Roman", 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
-
-        tk.Button(tb, text="📚 Довідка",
-                  font=("Arial", 10), bg="#1a4b8c", fg="white",
-                  relief=tk.FLAT, padx=10, pady=4, cursor="hand2",
-                  activebackground="#2563aa",
+        tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman", 11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
-
         tk.Label(tb,
-                 text="Подвійний клік на заголовку → перейменувати показник",
-                 font=("Arial", 9), fg="#4a90d9", bg="#161b27"
-                 ).pack(side=tk.LEFT, padx=12)
+                 text="Двічі клікніть на синій заголовок щоб перейменувати показник",
+                 font=("Times New Roman", 9), fg="#666"
+                 ).pack(side=tk.LEFT, padx=10)
 
     def _clear_table(self):
         if not messagebox.askyesno("Очистити таблицю",
@@ -1500,24 +1493,21 @@ class CorrelationWindow:
     # ── Таблиця даних ─────────────────────────────────────────
     def _build_table(self):
         self.rows = 14; self.cols = 6
-        tbl_frm = tk.Frame(self.win, bg="#0f1117")
-        tbl_frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        self.canvas = tk.Canvas(tbl_frm, bg="#0f1117", highlightthickness=0)
+        tbl_frm = tk.Frame(self.win); tbl_frm.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self.canvas = tk.Canvas(tbl_frm)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb = ttk.Scrollbar(tbl_frm, orient="vertical", command=self.canvas.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(self.canvas, bg="#0f1117")
+        self.inner = tk.Frame(self.canvas)
         self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>",
                         lambda e: self.canvas.config(scrollregion=self.canvas.bbox("all")))
         self.win.bind("<MouseWheel>",
                       lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-
         self.header_labels = []
         self.header_vars   = []
         self._build_headers()
-
         self.entries = []
         for i in range(self.rows):
             self._add_row_widgets(i)
@@ -1528,48 +1518,35 @@ class CorrelationWindow:
             var = tk.StringVar(value=f"Показник {j+1}")
             self.header_vars.append(var)
             lbl = tk.Label(self.inner, textvariable=var,
-                           relief=tk.FLAT, width=14, cursor="hand2",
+                           relief=tk.RIDGE, width=14, cursor="hand2",
                            bg="#1a4b8c", fg="white",
-                           font=("Arial", 10, "bold"),
-                           padx=6, pady=6)
+                           font=("Times New Roman", 11, "bold"))
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
             self.header_labels.append(lbl)
 
     def _rename_col(self, idx):
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
-        dlg.configure(bg="#1e2336")
-        dlg.resizable(False, False); dlg.grab_set()
+        dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
         tk.Label(dlg, text=f"Назва показника {idx+1}:",
-                 font=("Arial", 11), bg="#1e2336", fg="#e8eaf0"
-                 ).pack(padx=20, pady=(16,4))
+                 font=("Times New Roman", 12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Arial", 11), width=28,
-                     bg="#0f1117", fg="#e8eaf0", insertbackground="#e8eaf0",
-                     relief=tk.FLAT, highlightthickness=1,
-                     highlightbackground="#4a90d9")
-        e.pack(padx=20, pady=4); e.select_range(0, tk.END); e.focus_set()
+        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman", 12), width=28)
+        e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.header_vars[idx].set(nm)
             dlg.destroy()
-        tk.Button(dlg, text="Застосувати", bg="#c0392b", fg="white",
-                  font=("Arial", 11), relief=tk.FLAT, padx=16, pady=4,
-                  command=apply).pack(pady=(4,16))
+        tk.Button(dlg, text="ОК", bg="#c62828", fg="white",
+                  font=("Times New Roman", 12), command=apply).pack(pady=(4,14))
         dlg.bind("<Return>", lambda ev: apply())
         center_win(dlg)
 
     def _add_row_widgets(self, i):
         row_ = []
         for j in range(self.cols):
-            e = tk.Entry(self.inner, width=14, font=("Arial", 10),
-                         bg="#1e2336", fg="#e8eaf0",
-                         insertbackground="#e8eaf0",
-                         relief=tk.FLAT,
-                         highlightthickness=1,
-                         highlightbackground="#2a3350",
-                         highlightcolor="#4a90d9",
-                         disabledbackground="#161b27")
+            e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
             e.grid(row=i+1, column=j, padx=2, pady=2)
             e.bind("<Return>", self._on_enter)
             e.bind("<Tab>",    self._on_tab)
@@ -1600,13 +1577,8 @@ class CorrelationWindow:
         lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
         self.header_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=14, font=("Arial", 10),
-                         bg="#1e2336", fg="#e8eaf0",
-                         insertbackground="#e8eaf0",
-                         relief=tk.FLAT,
-                         highlightthickness=1,
-                         highlightbackground="#2a3350",
-                         highlightcolor="#4a90d9")
+            e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
+                         highlightthickness=1, highlightbackground="#c0c0c0")
             e.grid(row=i+1, column=ci, padx=2, pady=2)
             e.bind("<Return>", self._on_enter); e.bind("<Tab>", self._on_tab)
             row_.append(e)
@@ -1960,52 +1932,198 @@ class CorrelationWindow:
         corr_label = {"bonferroni":"Бонферроні","bh":"BH/FDR","none":"без поправки"
                       }.get(correction, correction)
 
-        # ── Показуємо результати ──────────────────────────────
-        self._show_heatmap(labels, r_mat, p_mat, n_mat, alpha, actual_method, corr_label)
-        self._show_scatter_matrix(labels, arrays, actual_method)
+        # ── Показуємо результати в одному вікні з вкладками ──
+        self._show_results(labels, r_mat, p_mat, n_mat, alpha,
+                           actual_method, corr_label, arrays)
 
-    # ── Теплова карта ─────────────────────────────────────────
-    def _show_heatmap(self, labels, r_mat, p_mat, n_mat, alpha, method, corr_label):
-        if not HAS_MPL: messagebox.showwarning("","matplotlib недоступний."); return
-        gs = self.gs
+    # ── Об'єднане вікно результатів ───────────────────────────
+    def _show_results(self, labels, r_mat, p_mat, n_mat, alpha,
+                      method, corr_label, arrays):
+        if not HAS_MPL:
+            messagebox.showwarning("","matplotlib недоступний."); return
+
         win = tk.Toplevel(self.win)
-        win.title("Теплова карта кореляцій")
-        win.geometry("880x760"); set_icon(win)
+        win.title("Кореляційний аналіз — результати")
+        win.geometry("1100x800"); set_icon(win)
+        win.resizable(True, True)
 
-        # ── Панель інструментів зверху ────────────────────────
-        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати PNG",
-                  font=("Times New Roman",11),
+        # Зберігаємо дані для перебудови
+        self._res_win    = win
+        self._res_labels = labels; self._res_r = r_mat
+        self._res_p      = p_mat;  self._res_n = n_mat
+        self._res_alpha  = alpha;  self._res_method = method
+        self._res_corr   = corr_label; self._res_arrays = arrays
+        self._hm_title   = getattr(self, '_hm_title', "")
+        self._sc_title   = getattr(self, '_sc_title', "")
+
+        # Notebook з двома вкладками
+        nb = ttk.Notebook(win); nb.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+        # ── Вкладка 1: Теплова карта ──────────────────────────
+        tab1 = tk.Frame(nb); nb.add(tab1, text="🌡 Теплова карта")
+        tb1 = tk.Frame(tab1, padx=6, pady=4); tb1.pack(fill=tk.X)
+        tk.Button(tb1, text="📋 Копіювати PNG", font=("Times New Roman",11),
                   command=self._copy_heatmap).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування теплової карти",
-                  font=("Times New Roman",11),
-                  command=lambda: self._restyle(
-                      win, labels, r_mat, p_mat, n_mat, alpha, method, corr_label)
+        tk.Button(tb1, text="💾 Зберегти PNG", font=("Times New Roman",11),
+                  command=lambda: self._save_fig_png(self._hm_fig, "теплова_карта")
                   ).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb,
+        tk.Button(tb1, text="⚙ Налаштування", font=("Times New Roman",11),
+                  bg="#1a4b8c", fg="white",
+                  command=lambda: self._settings_heatmap()).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb1,
                  text=f"Метод: {'Пірсон' if method=='pearson' else 'Спірмен'}  "
                       f"|  Поправка: {corr_label}  |  α = {alpha}",
                  font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
+        self._hm_frame = tk.Frame(tab1); self._hm_frame.pack(fill=tk.BOTH, expand=True)
+        self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat,
+                           alpha, method, corr_label, self.gs)
 
-        fig_frame = tk.Frame(win); fig_frame.pack(fill=tk.BOTH, expand=True)
-        self._draw_heatmap(fig_frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, gs)
-        self._hm_data  = (labels, r_mat, p_mat, n_mat, alpha, method, corr_label)
-        self._hm_frame = fig_frame
+        # ── Вкладка 2: Матриця розсіювання ────────────────────
+        tab2 = tk.Frame(nb); nb.add(tab2, text="⬡ Матриця розсіювання")
+        tb2 = tk.Frame(tab2, padx=6, pady=4); tb2.pack(fill=tk.X)
+        tk.Button(tb2, text="📋 Копіювати PNG", font=("Times New Roman",11),
+                  command=lambda: self._copy_scatter(win)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb2, text="💾 Зберегти PNG", font=("Times New Roman",11),
+                  command=lambda: self._save_fig_png(self._sc_fig, "матриця_розсіювання")
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb2, text="⚙ Налаштування", font=("Times New Roman",11),
+                  bg="#1a4b8c", fg="white",
+                  command=lambda: self._settings_scatter(labels, arrays, method)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb2, text=f"Метод: {'Пірсон' if method=='pearson' else 'Спірмен'}",
+                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
+        self._sc_frame = tk.Frame(tab2); self._sc_frame.pack(fill=tk.BOTH, expand=True)
+        self._draw_scatter(self._sc_frame, labels, arrays, method)
+
+        # Адаптація розміру при зміні вкладки або вікна
+        def _on_resize(e=None):
+            tab = nb.index(nb.select())
+            if tab == 0 and hasattr(self, '_hm_fig') and self._hm_fig:
+                self._redraw_heatmap()
+            elif tab == 1 and hasattr(self, '_sc_fig') and self._sc_fig:
+                self._redraw_scatter(labels, arrays, method)
+        nb.bind("<<NotebookTabChanged>>", _on_resize)
+        win.bind("<Configure>", lambda e: None)  # резерв для майбутнього
+
+    def _save_fig_png(self, fig, name="графік"):
+        if fig is None: messagebox.showwarning("","Спочатку виконайте аналіз."); return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG","*.png"),("SVG","*.svg")],
+            title=f"Зберегти {name}")
+        if not path: return
+        try:
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
+
+    def _settings_heatmap(self):
+        dlg = HeatmapSettingsDlg(self._res_win, self.gs)
+        self._res_win.wait_window(dlg)
+        if not dlg.result: return
+        self.gs = dlg.result
+        # Заголовок
+        self._ask_title_hm()
+
+    def _ask_title_hm(self):
+        dlg = tk.Toplevel(self._res_win); dlg.title("Заголовок теплової карти")
+        dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
+        tk.Label(dlg, text="Заголовок графіка:",
+                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+        tv = tk.StringVar(value=self._hm_title)
+        te = tk.Entry(dlg, textvariable=tv, font=("Times New Roman",12), width=40)
+        te.pack(padx=16, pady=4); te.focus_set()
+        def _ok():
+            self._hm_title = tv.get().strip()
+            dlg.destroy()
+            self._redraw_heatmap()
+        tk.Button(dlg, text="Застосувати", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), command=_ok).pack(pady=(4,14))
+        dlg.bind("<Return>", lambda e: _ok())
+        center_win(dlg)
+
+    def _redraw_heatmap(self):
+        for w in self._hm_frame.winfo_children(): w.destroy()
+        self._draw_heatmap(self._hm_frame,
+                           self._res_labels, self._res_r, self._res_p,
+                           self._res_n, self._res_alpha, self._res_method,
+                           self._res_corr, self.gs)
+
+    def _settings_scatter(self, labels, arrays, method):
+        dlg = tk.Toplevel(self._res_win); dlg.title("Налаштування матриці розсіювання")
+        dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
+        rf = ("Times New Roman",11)
+        frm = tk.Frame(dlg, padx=16, pady=12); frm.pack()
+
+        # Заголовок
+        tk.Label(frm, text="Заголовок графіка:", font=rf
+                 ).grid(row=0, column=0, sticky="w", pady=4)
+        tv = tk.StringVar(value=self._sc_title)
+        tk.Entry(frm, textvariable=tv, width=34, font=rf
+                 ).grid(row=0, column=1, sticky="w", padx=8)
+
+        sc = self._sc_gs
+        params = [
+            ("Колір точок:",  "sc_point_color", sc.get("sc_point_color","#4c72b0"), "color"),
+            ("Колір тренду:", "sc_trend_color", sc.get("sc_trend_color","#c62828"), "color"),
+            ("Колір гістограм:", "sc_hist_color", sc.get("sc_hist_color","#4c72b0"), "color"),
+            ("Розмір точок:", "sc_point_size",  sc.get("sc_point_size",14), "spin"),
+            ("Показати тренд:", "sc_show_trend", sc.get("sc_show_trend",True), "check"),
+        ]
+        vars_ = {}
+        for ri, (lbl, key, default, wtype) in enumerate(params, 1):
+            tk.Label(frm, text=lbl, font=rf).grid(row=ri, column=0, sticky="w", pady=3)
+            if wtype == "color":
+                v = tk.StringVar(value=default)
+                vars_[key] = v
+                def _pick(v2=v):
+                    c = colorchooser.askcolor(color=v2.get(), parent=dlg)
+                    if c and c[1]: v2.set(c[1])
+                tk.Button(frm, text="Обрати", command=_pick, font=rf
+                          ).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wtype == "spin":
+                v = tk.IntVar(value=int(default))
+                vars_[key] = v
+                tk.Spinbox(frm, from_=2, to=30, textvariable=v, width=6, font=rf
+                           ).grid(row=ri, column=1, sticky="w", padx=8)
+            elif wtype == "check":
+                v = tk.BooleanVar(value=bool(default))
+                vars_[key] = v
+                tk.Checkbutton(frm, variable=v
+                               ).grid(row=ri, column=1, sticky="w", padx=8)
+
+        def _apply():
+            self._sc_title = tv.get().strip()
+            for key, v in vars_.items():
+                self._sc_gs[key] = v.get()
+            dlg.destroy()
+            self._redraw_scatter(labels, arrays, method)
+        bf = tk.Frame(frm); bf.grid(row=len(params)+2, column=0, columnspan=2, pady=(12,0))
+        tk.Button(bf, text="Застосувати", bg="#c62828", fg="white",
+                  font=rf, command=_apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rf,
+                  command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    def _redraw_scatter(self, labels, arrays, method):
+        for w in self._sc_frame.winfo_children(): w.destroy()
+        self._draw_scatter(self._sc_frame, labels, arrays, method)
 
     def _restyle(self, win, labels, r_mat, p_mat, n_mat, alpha, method, corr_label):
-        dlg = HeatmapSettingsDlg(win, self.gs)
-        win.wait_window(dlg)
-        if dlg.result:
-            self.gs = dlg.result
-            for w in self._hm_frame.winfo_children(): w.destroy()
-            self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat,
-                               alpha, method, corr_label, self.gs)
+        """Залишаємо для сумісності."""
+        self._settings_heatmap()
 
     def _draw_heatmap(self, frame, labels, r_mat, p_mat, n_mat, alpha, method, corr_label, gs):
         n = len(labels)
-        cell = max(1.0, min(1.5, 10.0/n))
-        sz   = max(5, n*cell + 2.0)
-        fig  = Figure(figsize=(min(sz,13), min(sz,13)), dpi=100)
+        # Адаптивний розмір під вікно
+        frame.update_idletasks()
+        fw = max(400, frame.winfo_width())
+        fh = max(400, frame.winfo_height())
+        dpi = 100
+        fig_w = max(5, min(fw/dpi, 16))
+        fig_h = max(5, min(fh/dpi, 14))
+        fig  = Figure(figsize=(fig_w, fig_h), dpi=dpi)
         ax   = fig.add_subplot(111)
 
         cmap_name = gs.get("heatmap_cmap","RdYlGn")
@@ -2020,9 +2138,11 @@ class CorrelationWindow:
         im = ax.imshow(masked, cmap=cmap, vmin=-1, vmax=1, aspect="auto")
 
         meth_full = "Пірсон" if method=="pearson" else "Спірмен"
-        ax.set_title(f"Кореляційна матриця ({meth_full}, {corr_label}, α={alpha})\n"
-                     f"Клітинки: r / p-скор / n",
-                     fontsize=fsize+1, fontfamily=ff)
+        custom_title = getattr(self, '_hm_title', "")
+        ax.set_title(
+            custom_title if custom_title else
+            f"Кореляційна матриця ({meth_full}, {corr_label}, α={alpha})\nКлітинки: r / p-скор / n",
+            fontsize=fsize+1, fontfamily=ff)
         ax.set_xticks(range(n))
         ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=fsize, fontfamily=ff)
         ax.set_yticks(range(n))
@@ -2052,13 +2172,11 @@ class CorrelationWindow:
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     # ── Матриця діаграм розсіювання ───────────────────────────
-    def _show_scatter_matrix(self, labels, arrays, method):
+    def _draw_scatter(self, frame, labels, arrays, method):
         if not HAS_MPL: return
         n = len(labels)
         if n > 8: labels = labels[:6]; arrays = arrays[:6]; n = 6
         if n < 2: return
-
-        # Налаштування scatter за замовчуванням
         self._sc_gs = getattr(self, "_sc_gs", {
             "sc_point_color":  "#4c72b0",
             "sc_trend_color":  "#c62828",
@@ -2070,33 +2188,10 @@ class CorrelationWindow:
             "font_family":     "Times New Roman",
             "sc_font_size":    6,
         })
-
-        win = tk.Toplevel(self.win)
-        win.title("Матриця діаграм розсіювання"); win.geometry("980x820"); set_icon(win)
-
-        # ── Панель інструментів ЗВЕРХУ ────────────────────────
-        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати PNG",
-                  font=("Times New Roman",11),
-                  command=lambda: self._copy_scatter(win)).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування графіків",
-                  font=("Times New Roman",11),
-                  command=lambda: self._restyle_scatter(
-                      win, labels, arrays, method)).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb, text=f"Метод: {'Пірсон' if method=='pearson' else 'Спірмен'}",
-                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
-
-        # ── Зона графіків ─────────────────────────────────────
-        self._sc_frame = tk.Frame(win); self._sc_frame.pack(fill=tk.BOTH, expand=True)
         self._sc_labels = labels; self._sc_arrays = arrays; self._sc_method = method
-        self._draw_scatter(self._sc_frame, labels, arrays, method)
-
-    def _draw_scatter(self, frame, labels, arrays, method):
-        """Малює матрицю розсіювання в переданому frame."""
+        # Малюємо безпосередньо в переданий frame
         for w in frame.winfo_children(): w.destroy()
-        n  = len(labels)
         sc = self._sc_gs
-
         pt_col   = sc.get("sc_point_color",  "#4c72b0")
         tr_col   = sc.get("sc_trend_color",  "#c62828")
         hi_col   = sc.get("sc_hist_color",   "#4c72b0")
@@ -2107,9 +2202,14 @@ class CorrelationWindow:
         ff       = sc.get("font_family",     "Times New Roman")
         fz       = sc.get("sc_font_size",    6)
 
-        cell_px  = min(2.0, 10.0 / n)
-        fig_sz   = max(5, n * cell_px + 0.5)
-        fig = Figure(figsize=(min(fig_sz, 12), min(fig_sz, 12)), dpi=100)
+        # Адаптивний розмір
+        frame.update_idletasks()
+        fw = max(400, frame.winfo_width())
+        fh = max(400, frame.winfo_height())
+        dpi = 100
+        fig_w = max(5, min(fw/dpi, 14))
+        fig_h = max(5, min(fh/dpi, 12))
+        fig = Figure(figsize=(fig_w, fig_h), dpi=dpi)
 
         for i in range(n):
             for j in range(n):
@@ -2141,16 +2241,17 @@ class CorrelationWindow:
                 ax.spines["top"].set_visible(False)
                 ax.spines["right"].set_visible(False)
 
-        meth_full = "Пірсон" if method=="pearson" else "Спірмен"
-        fig.suptitle(f"Матриця діаграм розсіювання ({meth_full})",
-                     fontsize=9, fontfamily=ff, y=1.0)
+        meth_full = "Пірсон" if method == "pearson" else "Спірмен"
+        custom_sc = getattr(self, '_sc_title', '')
+        fig.suptitle(
+            custom_sc if custom_sc else f"Матриця діаграм розсіювання ({meth_full})",
+            fontsize=9, fontfamily=ff, y=1.0)
         fig.tight_layout()
         self._sc_fig = fig
-
         cv = FigureCanvasTkAgg(fig, master=frame); cv.draw()
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    def _copy_scatter(self, win):
+    def _copy_scatter(self, win=None):
         if self._sc_fig is None:
             messagebox.showwarning("","Графік ще не побудований."); return
         ok_, msg = _copy_fig_to_clipboard(self._sc_fig)
@@ -12949,12 +13050,13 @@ def _SADTk_new_init(self, root):
     def _open(key, cls, needs_gs, custom_fn=None):
         _record_usage(key)
         _refresh_recent()
+        root.iconify()  # Згортаємо головне вікно
         if custom_fn:
             custom_fn()
         elif needs_gs:
-            cls(root, self.graph_settings)
+            w = cls(root, self.graph_settings)
         else:
-            cls(root)
+            w = cls(root)
 
     # ── HEADER ──────────────────────────────────────────────
     header = tk.Frame(root, bg="#0d1020", height=52)
