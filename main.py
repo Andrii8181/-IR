@@ -88,28 +88,48 @@ def set_icon(win):
 # ── Clipboard PNG → Windows ────────────────────────────────────
 def embed_figure(fig, master, dpi=96):
     """
-    Глобальний хелпер: вставляє matplotlib Figure у tkinter frame
-    з автоматичною адаптацією розміру при зміні вікна.
+    Вставляє matplotlib Figure у tkinter frame з автоматичним масштабуванням.
+    Правильний підхід: canvas заповнює весь frame через pack(fill=BOTH),
+    а Figure масштабується лише після стабілізації розміру вікна.
     """
     cv = FigureCanvasTkAgg(fig, master=master)
     widget = cv.get_tk_widget()
     widget.pack(fill=tk.BOTH, expand=True)
-    _deb = [None]
+
+    _last = [0, 0]
+    _timer = [None]
+
     def _on_cfg(e):
         w, h = e.width, e.height
         if w < 100 or h < 100: return
-        if _deb[0]:
-            try: master.after_cancel(_deb[0])
+        if abs(w - _last[0]) < 5 and abs(h - _last[1]) < 5: return
+        _last[0] = w; _last[1] = h
+        if _timer[0]:
+            try: widget.after_cancel(_timer[0])
             except Exception: pass
-        _deb[0] = master.after(150, lambda: _resize(w, h))
-    def _resize(w, h):
+        _timer[0] = widget.after(200, lambda: _do(w, h))
+
+    def _do(w, h):
         try:
-            fig.set_size_inches(w/dpi, h/dpi)
-            fig.tight_layout()
+            fig.set_size_inches(w / dpi, h / dpi)
+            try: fig.tight_layout()
+            except Exception: pass
             cv.draw_idle()
-        except Exception: pass
+        except Exception:
+            pass
+
     widget.bind("<Configure>", _on_cfg)
-    cv.draw()
+
+    # Перше відмальовування після стабілізації layout
+    def _first_draw():
+        master.update_idletasks()
+        w = widget.winfo_width()
+        h = widget.winfo_height()
+        if w > 100 and h > 100:
+            _do(w, h)
+        else:
+            cv.draw()
+    master.after(300, _first_draw)
     return cv
 
 
@@ -13123,38 +13143,92 @@ def _SADTk_new_init(self, root):
     # Права частина header — версія, розробник, підтримка
     hr = tk.Frame(header, bg="#0d1020"); hr.pack(side=tk.RIGHT, padx=16)
     def _about():
-        dlg = tk.Toplevel(root); dlg.title("Про програму")
-        dlg.geometry("420x320"); dlg.resizable(False,False)
+        dlg = tk.Toplevel(root); dlg.title("Про програму S.A.D.")
+        dlg.geometry("480x520"); dlg.resizable(False, False)
         dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
         try:
             from PIL import Image, ImageTk
-            img2 = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                           "icon.ico")).resize((64,64), Image.LANCZOS)
+            img2 = Image.open(os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+            ).resize((72, 72), Image.LANCZOS)
             _li = ImageTk.PhotoImage(img2); dlg._li = _li
-            tk.Label(dlg, image=_li, bg=C["card"]).pack(pady=20)
+            tk.Label(dlg, image=_li, bg=C["card"]).pack(pady=(20, 4))
         except Exception: pass
+
         tk.Label(dlg, text="S.A.D.", bg=C["card"], fg=C["text"],
-                 font=("Arial",20,"bold")).pack()
-        tk.Label(dlg, text="Статистичний аналіз даних", bg=C["card"],
-                 fg=C["sub"], font=("Arial",11)).pack()
-        tk.Label(dlg, text=f"Версія {APP_VER}", bg=C["card"],
-                 fg=C["accent"], font=("Arial",10)).pack(pady=8)
-        tk.Label(dlg, text="© 2024 – 2025", bg=C["card"],
-                 fg=C["sub"], font=("Arial",9)).pack()
-        tk.Label(dlg, text="Для агрономічних та біологічних досліджень",
-                 bg=C["card"], fg=C["sub"], font=("Arial",9)).pack(pady=2)
-        tk.Button(dlg, text="OK", bg=C["accent"], fg="white",
-                  font=("Arial",11), relief=tk.FLAT, padx=24, pady=4,
-                  command=dlg.destroy).pack()
+                 font=("Arial", 22, "bold")).pack()
+        tk.Label(dlg, text="Статистичний аналіз даних",
+                 bg=C["card"], fg=C["sub"], font=("Arial", 12)).pack()
+
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=10)
+
+        info = [
+            (f"Версія {APP_VER}",                  C["accent"], 11, "bold"),
+            ("Розробник:",                          C["sub"],    9,  "normal"),
+            ("Чаплоуцький Андрій Миколайович",      C["text"],   11, "bold"),
+            ("Уманський національний університет",  C["sub"],    10, "normal"),
+            ("садівничо-технологічного факультету", C["sub"],    10, "normal"),
+            ("кафедра помології та розсадництва",   C["sub"],    9,  "normal"),
+        ]
+        for txt, col, sz, weight in info:
+            tk.Label(dlg, text=txt, bg=C["card"], fg=col,
+                     font=("Arial", sz, weight)).pack(pady=1)
+
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=10)
+
+        tk.Label(dlg, text="Призначення:",
+                 bg=C["card"], fg=C["sub"], font=("Arial", 9)).pack()
+        tk.Label(dlg,
+                 text="Програма для статистичного аналізу\n"
+                      "агрономічних та біологічних дослідів.\n"
+                      "ANOVA, кореляція, регресія, PCA,\n"
+                      "аналіз стабільності GxE та інше.",
+                 bg=C["card"], fg=C["text"], font=("Arial", 10),
+                 justify="center").pack(pady=4)
+
+        tk.Label(dlg, text="© 2024 – 2025  Всі права захищені",
+                 bg=C["card"], fg=C["border"], font=("Arial", 8)).pack(pady=(8, 2))
+
+        tk.Button(dlg, text="Закрити", bg=C["accent"], fg="white",
+                  font=("Arial", 11), relief=tk.FLAT, padx=24, pady=5,
+                  cursor="hand2", command=dlg.destroy).pack(pady=12)
         dlg.bind("<Return>", lambda e: dlg.destroy())
+        center_win(dlg)
+
     def _support():
-        import webbrowser
-        msg = ("Технічна підтримка S.A.D.\n\n"
-               "Email: support@sad-stat.com\n"
-               "Документація: docs.sad-stat.com\n\n"
-               "Або напишіть нам — ми відповімо\n"
-               "протягом 1 робочого дня.")
-        messagebox.showinfo("Технічна підтримка", msg)
+        dlg = tk.Toplevel(root); dlg.title("Технічна підтримка")
+        dlg.geometry("420x340"); dlg.resizable(False, False)
+        dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
+
+        tk.Label(dlg, text="📞 Технічна підтримка S.A.D.",
+                 bg=C["card"], fg=C["text"],
+                 font=("Arial", 13, "bold")).pack(pady=(20, 4))
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=8)
+
+        contacts = [
+            ("✉ Email:",         "sad.stat.support@gmail.com"),
+            ("🌐 Документація:", "docs.sad-stat.com"),
+            ("💬 Telegram:",     "@sad_stat_support"),
+        ]
+        for lbl, val in contacts:
+            row = tk.Frame(dlg, bg=C["card"]); row.pack(pady=3)
+            tk.Label(row, text=lbl, bg=C["card"], fg=C["sub"],
+                     font=("Arial", 10), width=16, anchor="e").pack(side=tk.LEFT)
+            tk.Label(row, text=val, bg=C["card"], fg=C["accent"],
+                     font=("Arial", 10, "bold"), anchor="w").pack(side=tk.LEFT, padx=8)
+
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=8)
+        tk.Label(dlg,
+                 text="Ми відповімо протягом 1 робочого дня.\n"
+                      "При зверненні вкажіть версію програми\n"
+                      f"та опис проблеми. (Версія {APP_VER})",
+                 bg=C["card"], fg=C["sub"], font=("Arial", 9),
+                 justify="center").pack()
+        tk.Button(dlg, text="Закрити", bg=C["accent"], fg="white",
+                  font=("Arial", 11), relief=tk.FLAT, padx=24, pady=5,
+                  cursor="hand2", command=dlg.destroy).pack(pady=12)
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+        center_win(dlg)
 
     for txt, cmd in [("Розробник", _about), ("Підтримка", _support)]:
         tk.Button(hr, text=txt, bg="#0d1020", fg=C["sub"],
