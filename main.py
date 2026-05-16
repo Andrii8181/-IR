@@ -12877,25 +12877,59 @@ def _SADTk_new_init(self, root):
         except Exception: pass
 
     # ── Визначення всіх аналізів ────────────────────────────
+    # key, назва, опис, колір, клас, needs_gs, fn, ключові слова пошуку
     ANALYSES = [
-        # key, назва, опис, категорія_колір, клас, needs_gs
-        ("anova1",  "Однофакторний ANOVA",   "CRD · RCBD · ЛК",         "#1a4b8c", None, False, lambda: self.open_table(1)),
-        ("anova2",  "Двофакторний ANOVA",    "CRD · RCBD · Split-plot",  "#1a4b8c", None, False, lambda: self.open_table(2)),
-        ("anova3",  "Трифакторний ANOVA",    "Латинський квадрат",       "#1a4b8c", None, False, lambda: self.open_table(3)),
-        ("anova4",  "Чотирифакторний ANOVA", "Складні дизайни",          "#1a4b8c", None, False, lambda: self.open_table(4)),
-        ("desc",    "Описова статистика",    "Mean · SD · Median · CV",  C["green"], DescriptiveWindow, True, None),
-        ("ttest",   "t-тест / Манн-Уітні",  "Порівняння двох груп",     C["green"], TTestWindow, False, None),
-        ("corr",    "Кореляційний аналіз",   "Пірсон · Спірмен · Heat",  C["accent"], CorrelationWindow, True, None),
-        ("reg",     "Регресійний аналіз",    "7 моделей · R² · p",       C["purple"], RegressionWindow, True, None),
-        ("ancova",  "ANCOVA",               "Коваріаційний аналіз",     C["purple"], AncovaWindow, True, None),
-        ("manova",  "MANOVA",               "Багатовимірний дисп. ан.", C["purple"], ManovaWindow, True, None),
-        ("rm",      "Повторні виміри",       "Within-subjects ANOVA",    C["orange"], RepeatedMeasuresWindow, True, None),
-        ("mix",     "Змішаний RM",          "Split-plot у часі",        C["orange"], MixedRepeatedWindow, True, None),
-        ("cluster", "Кластерний аналіз",    "K-means · Ієрархічний",    C["teal"], ClusterWindow, True, None),
-        ("pca",     "PCA",                  "Головні компоненти",       C["teal"], PCAWindow, True, None),
-        ("stab",    "Аналіз стабільності",  "Eberhart-Russell · GGE",   "#8c1a1a", StabilityWindow, True, None),
-        ("sample",  "Розмір вибірки",       "Потужність · n · α",       C["sub"], SampleSizeWindow, False, None),
-        ("trial",   "Генерація плану",      "CRD · RCBD · Split-plot",  C["teal"], TrialDesignWindow, False, None),
+        ("anova1","Однофакторний ANOVA","CRD · RCBD · ЛК",
+         "#1a4b8c",None,False,lambda: self.open_table(1),
+         "сила впливу нір тьюкі дункан дисперс порівняння варіантів"),
+        ("anova2","Двофакторний ANOVA","CRD · RCBD · Split-plot",
+         "#1a4b8c",None,False,lambda: self.open_table(2),
+         "сила впливу взаємодія факторів нір тьюкі дисперс"),
+        ("anova3","Трифакторний ANOVA","Латинський квадрат",
+         "#1a4b8c",None,False,lambda: self.open_table(3),
+         "латинський квадрат три фактори сила впливу взаємодія"),
+        ("anova4","Чотирифакторний ANOVA","Складні дизайни",
+         "#1a4b8c",None,False,lambda: self.open_table(4),
+         "чотири фактори складний дизайн сила впливу"),
+        ("desc","Описова статистика","Mean · SD · Median · CV",
+         C["green"],DescriptiveWindow,True,None,
+         "середнє медіана дисперсія варіація коефіцієнт cv асиметрія ексцес"),
+        ("ttest","t-тест / Манн-Уітні","Порівняння двох груп",
+         C["green"],TTestWindow,False,None,
+         "дві групи порівняння t критерій непараметричний"),
+        ("corr","Кореляційний аналіз","Пірсон · Спірмен · Heat",
+         C["accent"],CorrelationWindow,True,None,
+         "зв'язок залежність матриця теплова карта пірсон спірмен"),
+        ("reg","Регресійний аналіз","7 моделей · R² · p",
+         C["purple"],RegressionWindow,True,None,
+         "регресія прогноз r квадрат лінійна нелінійна поліном"),
+        ("ancova","ANCOVA","Коваріаційний аналіз",
+         C["purple"],AncovaWindow,True,None,
+         "коваріата контроль змінної ancova"),
+        ("manova","MANOVA","Багатовимірний дисп. аналіз",
+         C["purple"],ManovaWindow,True,None,
+         "кілька залежних змінних wilks pillai bagатовимірний"),
+        ("rm","Повторні виміри","Within-subjects ANOVA",
+         C["orange"],RepeatedMeasuresWindow,True,None,
+         "повторні вимірювання часові точки динаміка within"),
+        ("mix","Змішаний RM","Split-plot у часі",
+         C["orange"],MixedRepeatedWindow,True,None,
+         "кілька варіантів динаміка дати між групами within"),
+        ("cluster","Кластерний аналіз","K-means · Ієрархічний",
+         C["teal"],ClusterWindow,True,None,
+         "групування схожість дендрограма kmeans кластери"),
+        ("pca","PCA","Головні компоненти",
+         C["teal"],PCAWindow,True,None,
+         "головні компоненти зменшення вимірності biplot"),
+        ("stab","Аналіз стабільності","Eberhart-Russell · GGE",
+         "#8c1a1a",StabilityWindow,True,None,
+         "gxe стабільність адаптація сортовипробування eberhart gge"),
+        ("sample","Розмір вибірки","Потужність · n · α",
+         C["sub"],SampleSizeWindow,False,None,
+         "потужність розмір вибірки повторності скільки n alpha"),
+        ("trial","Генерація плану","CRD · RCBD · Split-plot",
+         C["teal"],TrialDesignWindow,False,None,
+         "план рандомізація дослід польовий схема повторності"),
     ]
 
     def _open(key, cls, needs_gs, custom_fn=None):
@@ -12978,7 +13012,7 @@ def _SADTk_new_init(self, root):
     # ════════════════════════════════════════════════════════
     # БОКОВА ПАНЕЛЬ
     # ════════════════════════════════════════════════════════
-    sidebar = tk.Frame(body, bg=C["sidebar"], width=220)
+    sidebar = tk.Frame(body, bg=C["sidebar"], width=260)
     sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
 
     # Пошук
@@ -13033,8 +13067,12 @@ def _SADTk_new_init(self, root):
         q = search_var.get().lower().strip()
         if q.startswith("🔍"): q = ""
         for cat_name, keys in CATEGORIES:
-            filtered = [k for k in keys if not q or q in _ana_map[k][1].lower()
-                        or q in _ana_map[k][2].lower()]
+            def _matches(k):
+                if not q: return True
+                a = _ana_map[k]
+                return (q in a[1].lower() or q in a[2].lower()
+                        or (len(a) > 7 and q in a[7].lower()))
+            filtered = [k for k in keys if _matches(k)]
             if not filtered: continue
             tk.Label(sb_inner, text=cat_name.upper(), bg=C["sidebar"],
                      fg=C["sub"], font=("Arial",8,"bold"),
@@ -13089,12 +13127,34 @@ def _SADTk_new_init(self, root):
 
     # Кнопки проекту справа
     proj_f = tk.Frame(top_r, bg=C["bg"]); proj_f.pack(side=tk.RIGHT)
-    for ptxt, pcmd in [("📂 Відкрити проект", self.load_project),
-                        ("💾 Зберегти проект", self.save_project)]:
-        tk.Button(proj_f, text=ptxt, bg=C["card"], fg=C["text"],
-                  font=("Arial",10), relief=tk.FLAT, padx=12, pady=6,
-                  cursor="hand2", activebackground=C["card_hov"],
-                  command=pcmd).pack(side=tk.LEFT, padx=4)
+    def _load_proj_home():
+        path = filedialog.askopenfilename(
+            parent=root,
+            filetypes=[("SAD проект","*.sadp"),("JSON","*.json"),("All","*.*")],
+            title="Відкрити проект S.A.D.")
+        if not path: return
+        try:
+            with open(path,"r",encoding="utf-8") as _f:
+                d = json.load(_f)
+            ptype = d.get("type","")
+            if "stability" in ptype:
+                StabilityWindow(root, self.graph_settings)
+            elif "mixed_repeated" in ptype:
+                MixedRepeatedWindow(root, self.graph_settings)
+            elif "repeated" in ptype:
+                RepeatedMeasuresWindow(root, self.graph_settings)
+            elif "anova" in ptype or "factors" in ptype:
+                fc = d.get("factors_count", 1)
+                self.open_table(fc)
+            else:
+                messagebox.showinfo("Проект відкрито",
+                    f"Тип проекту: {ptype}\nВідкрийте відповідний аналіз вручну.")
+        except Exception as ex:
+            messagebox.showerror("Помилка відкриття", str(ex))
+    tk.Button(proj_f, text="📂 Відкрити проект", bg=C["card"], fg=C["text"],
+              font=("Arial",10), relief=tk.FLAT, padx=12, pady=6,
+              cursor="hand2", activebackground=C["card_hov"],
+              command=_load_proj_home).pack(side=tk.LEFT, padx=4)
 
     # Прокручуваний контент
     content_canvas = tk.Canvas(right, bg=C["bg"], highlightthickness=0)
@@ -13108,26 +13168,45 @@ def _SADTk_new_init(self, root):
             lambda e: content_canvas.configure(scrollregion=content_canvas.bbox("all")))
     content_canvas.bind("<Configure>",
                         lambda e: content_canvas.itemconfig(cf_win, width=e.width))
-    right.bind("<MouseWheel>",
-               lambda e: content_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
-    content_canvas.bind("<MouseWheel>",
-                        lambda e: content_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+    def _mw_content(e):
+        content_canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+    right.bind("<MouseWheel>", _mw_content)
+    content_canvas.bind("<MouseWheel>", _mw_content)
+    cf.bind("<MouseWheel>", _mw_content)
+    # Bind to all children recursively after build
+    def _bind_mw_all(widget):
+        widget.bind("<MouseWheel>", _mw_content)
+        for ch in widget.winfo_children():
+            _bind_mw_all(ch)
+    cf.bind("<Configure>", lambda e: _bind_mw_all(cf))
 
     def _card(parent, key, name, desc, color, cls, needs_gs, custom_fn,
               large=False):
-        """Створює картку аналізу."""
-        w = 260 if large else 200
-        h = 110 if large else 88
-        pad = 14 if large else 10
+        """Сучасна об'ємна картка аналізу."""
+        w = 280 if large else 210
+        h = 120 if large else 96
+        pad = 16 if large else 12
         name_sz = 13 if large else 11
         desc_sz = 9 if large else 8
+        _dark  = _darken(color)
+        _light = _lighten(color)
 
-        frm = tk.Frame(parent, bg=color, width=w, height=h,
-                       cursor="hand2", relief=tk.FLAT)
+        # Зовнішня рамка — імітує тінь/об'єм
+        outer = tk.Frame(parent, bg=_dark,
+                         width=w+2, height=h+2, cursor="hand2")
+        outer.pack_propagate(False)
+
+        # Основний фрейм
+        frm = tk.Frame(outer, bg=color, width=w, height=h, cursor="hand2")
         frm.pack_propagate(False)
+        frm.pack(padx=(0,2), pady=(0,2))   # зміщення → ефект тіні знизу/праворуч
 
-        # Внутрішній frame з відступом
-        inner = tk.Frame(frm, bg=color, padx=pad, pady=pad)
+        # Верхня світла смужка — ефект блиску
+        shine = tk.Frame(frm, bg=_light, height=2)
+        shine.pack(fill=tk.X, side=tk.TOP)
+
+        # Вміст
+        inner = tk.Frame(frm, bg=color, padx=pad, pady=pad-2)
         inner.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(inner, text=name, bg=color, fg="white",
@@ -13137,38 +13216,48 @@ def _SADTk_new_init(self, root):
         tk.Label(inner, text=desc, bg=color,
                  font=("Arial", desc_sz),
                  wraplength=w-pad*2, justify="left", anchor="w",
-                 fg="#aaaaaa"
-                 ).pack(anchor="w", pady=(2,0))
+                 fg="#cccccc"
+                 ).pack(anchor="w", pady=(3,0))
 
-        # Лічильник використань
         cnt = usage.get(key, 0)
         if cnt > 0 and large:
-            tk.Label(inner, text=f"↳ відкривали {cnt}×",
-                     bg=color, fg="#888888",
-                     font=("Arial",7)).pack(anchor="w", pady=4)
+            tk.Label(inner, text=f"↳ використовували {cnt}×",
+                     bg=color, fg="#aaaaaa",
+                     font=("Arial",7)).pack(anchor="w", pady=(4,0))
 
-        # Hover ефект
-        _dark = _darken(color)
-        def _e(e, f=frm, i2=inner, d=_dark):
-            f.configure(bg=d); i2.configure(bg=d)
-            for ch in i2.winfo_children(): ch.configure(bg=d)
-        def _l(e, f=frm, i2=inner, c=color):
-            f.configure(bg=c); i2.configure(bg=c)
-            for ch in i2.winfo_children(): ch.configure(bg=c)
-        for w2 in [frm, inner] + list(inner.winfo_children()):
-            w2.bind("<Enter>", _e); w2.bind("<Leave>", _l)
-            w2.bind("<Button-1>",
-                    lambda e, k=key, cl=cls, ng=needs_gs, cf2=custom_fn:
-                    _open(k, cl, ng, cf2))
-        return frm
+        # Hover
+        def _e(e):
+            outer.configure(bg=_dark)
+            frm.configure(bg=_dark)
+            shine.configure(bg=_lighten(_dark))
+            inner.configure(bg=_dark)
+            for ch in inner.winfo_children(): ch.configure(bg=_dark)
+        def _l(e):
+            outer.configure(bg=_dark)
+            frm.configure(bg=color)
+            shine.configure(bg=_light)
+            inner.configure(bg=color)
+            for ch in inner.winfo_children(): ch.configure(bg=color)
+        click_cmd = lambda e, k=key, cl=cls, ng=needs_gs, cf2=custom_fn:                     _open(k, cl, ng, cf2)
+        for w2 in ([outer, frm, shine, inner] +
+                   list(inner.winfo_children())):
+            w2.bind("<Enter>", _e)
+            w2.bind("<Leave>", _l)
+            w2.bind("<Button-1>", click_cmd)
+        return outer
 
-    def _darken(hex_color):
-        """Трохи темніший колір для hover."""
+    def _darken(hex_color, amt=30):
         try:
             h = hex_color.lstrip("#")
-            r,g,b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
-            r2,g2,b2 = max(0,r-25), max(0,g-25), max(0,b-25)
-            return f"#{r2:02x}{g2:02x}{b2:02x}"
+            r,g,b = int(h[0:2],16),int(h[2:4],16),int(h[4:6],16)
+            return f"#{max(0,r-amt):02x}{max(0,g-amt):02x}{max(0,b-amt):02x}"
+        except Exception: return hex_color
+
+    def _lighten(hex_color, amt=40):
+        try:
+            h = hex_color.lstrip("#")
+            r,g,b = int(h[0:2],16),int(h[2:4],16),int(h[4:6],16)
+            return f"#{min(255,r+amt):02x}{min(255,g+amt):02x}{min(255,b+amt):02x}"
         except Exception: return hex_color
 
     def _refresh_recent():
