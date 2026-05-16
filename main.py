@@ -1629,17 +1629,34 @@ class CorrelationWindow:
                     if e is w: pos = (i, j); break
                 if pos != (0, 0): break
         r0, c0 = pos
-        for ir, rt in enumerate(data.splitlines()):
-            if not rt.strip(): continue
+        rows_data = [rt for rt in data.splitlines() if rt.strip()]
+        if not rows_data: return
+
+        # Визначаємо потрібні розміри таблиці
+        max_cols_needed = c0 + max((len(rt.split("\t")) for rt in rows_data), default=1)
+        max_rows_needed = r0 + len(rows_data)
+
+        # Додаємо стовпці якщо потрібно
+        while self.cols < max_cols_needed:
+            self.add_col()
+
+        # Вставляємо дані
+        for ir, rt in enumerate(rows_data):
+            rr = r0 + ir
+            while rr >= len(self.entries): self.add_row()
             for jc, val in enumerate(rt.split("\t")):
-                rr = r0+ir; cc = c0+jc
-                while rr >= len(self.entries): self.add_row()
-                if cc >= self.cols: continue
+                cc = c0 + jc
+                if cc >= self.cols: break
                 self.entries[rr][cc].delete(0, tk.END)
                 self.entries[rr][cc].insert(0, val.strip())
+
+        # Інформуємо якщо таблицю розширено
+        added_cols = max_cols_needed - (c0 + 1) if max_cols_needed > self.cols else 0
+        added_rows = max_rows_needed - len(self.entries) if max_rows_needed > len(self.entries) else 0
+
         # Фокус на першу вставлену клітинку
-        if self.entries and pos[0] < len(self.entries):
-            self.entries[pos[0]][pos[1]].focus_set()
+        if self.entries and r0 < len(self.entries):
+            self.entries[r0][c0].focus_set()
 
     def _save_proj(self):
         path = filedialog.asksaveasfilename(
@@ -1956,54 +1973,93 @@ class CorrelationWindow:
         self._hm_title   = getattr(self, '_hm_title', "")
         self._sc_title   = getattr(self, '_sc_title', "")
 
-        # Notebook з двома вкладками
-        nb = ttk.Notebook(win); nb.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        # ── Стиль вкладок — виразний ──────────────────────────
+        style = ttk.Style()
+        style.configure("Corr.TNotebook", tabposition="n",
+                        background="#f0f0f0")
+        style.configure("Corr.TNotebook.Tab",
+                        font=("Times New Roman", 12, "bold"),
+                        padding=[20, 8],
+                        background="#d0d8e8",
+                        foreground="#1a4b8c")
+        style.map("Corr.TNotebook.Tab",
+                  background=[("selected","#1a4b8c"),("active","#2a5ba8")],
+                  foreground=[("selected","white"),  ("active","white")])
+
+        # Підказка над вкладками
+        hint_f = tk.Frame(win, bg="#eef2ff"); hint_f.pack(fill=tk.X)
+        tk.Label(hint_f,
+                 text="  ← Оберіть вкладку: Теплова карта  або  Матриця розсіювання →",
+                 font=("Times New Roman",10,"italic"), fg="#1a4b8c", bg="#eef2ff"
+                 ).pack(side=tk.LEFT, pady=3)
+
+        nb = ttk.Notebook(win, style="Corr.TNotebook")
+        nb.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+
+        meth_lbl = "Пірсон" if method == "pearson" else "Спірмен"
 
         # ── Вкладка 1: Теплова карта ──────────────────────────
-        tab1 = tk.Frame(nb); nb.add(tab1, text="🌡 Теплова карта")
-        tb1 = tk.Frame(tab1, padx=6, pady=4); tb1.pack(fill=tk.X)
-        tk.Button(tb1, text="📋 Копіювати PNG", font=("Times New Roman",11),
-                  command=self._copy_heatmap).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb1, text="💾 Зберегти PNG", font=("Times New Roman",11),
-                  command=lambda: self._save_fig_png(self._hm_fig, "теплова_карта")
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb1, text="⚙ Налаштування", font=("Times New Roman",11),
-                  bg="#1a4b8c", fg="white",
-                  command=lambda: self._settings_heatmap()).pack(side=tk.LEFT, padx=4)
+        tab1 = tk.Frame(nb, bg="#fafafa")
+        nb.add(tab1, text="  🌡  Теплова карта  ")
+
+        tb1 = tk.Frame(tab1, bg="#f5f5f5", padx=8, pady=6)
+        tb1.pack(fill=tk.X)
+        for btxt, bcmd, bcol in [
+            ("📋 Копіювати", self._copy_heatmap, None),
+            ("💾 Зберегти PNG", lambda: self._save_fig_png(self._hm_fig,"теплова_карта"), None),
+            ("⚙ Налаштування", lambda: self._settings_heatmap(), "#1a4b8c"),
+        ]:
+            kw = {"bg": bcol, "fg": "white"} if bcol else {}
+            tk.Button(tb1, text=btxt, font=("Times New Roman",11),
+                      relief=tk.FLAT, padx=10, pady=3, cursor="hand2",
+                      command=bcmd, **kw).pack(side=tk.LEFT, padx=4)
         tk.Label(tb1,
-                 text=f"Метод: {'Пірсон' if method=='pearson' else 'Спірмен'}  "
-                      f"|  Поправка: {corr_label}  |  α = {alpha}",
-                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
+                 text=f"Метод: {meth_lbl}  |  Поправка: {corr_label}  |  α = {alpha}",
+                 font=("Times New Roman",11), fg="#555", bg="#f5f5f5"
+                 ).pack(side=tk.LEFT, padx=12)
+
         self._hm_frame = tk.Frame(tab1); self._hm_frame.pack(fill=tk.BOTH, expand=True)
-        self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat,
-                           alpha, method, corr_label, self.gs)
 
         # ── Вкладка 2: Матриця розсіювання ────────────────────
-        tab2 = tk.Frame(nb); nb.add(tab2, text="⬡ Матриця розсіювання")
-        tb2 = tk.Frame(tab2, padx=6, pady=4); tb2.pack(fill=tk.X)
-        tk.Button(tb2, text="📋 Копіювати PNG", font=("Times New Roman",11),
-                  command=lambda: self._copy_scatter(win)).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb2, text="💾 Зберегти PNG", font=("Times New Roman",11),
-                  command=lambda: self._save_fig_png(self._sc_fig, "матриця_розсіювання")
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb2, text="⚙ Налаштування", font=("Times New Roman",11),
-                  bg="#1a4b8c", fg="white",
-                  command=lambda: self._settings_scatter(labels, arrays, method)
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb2, text=f"Метод: {'Пірсон' if method=='pearson' else 'Спірмен'}",
-                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
-        self._sc_frame = tk.Frame(tab2); self._sc_frame.pack(fill=tk.BOTH, expand=True)
-        self._draw_scatter(self._sc_frame, labels, arrays, method)
+        tab2 = tk.Frame(nb, bg="#fafafa")
+        nb.add(tab2, text="  ⬡  Матриця розсіювання  ")
 
-        # Адаптація розміру при зміні вкладки або вікна
-        def _on_resize(e=None):
+        tb2 = tk.Frame(tab2, bg="#f5f5f5", padx=8, pady=6)
+        tb2.pack(fill=tk.X)
+        for btxt, bcmd, bcol in [
+            ("📋 Копіювати", lambda: self._copy_scatter(), None),
+            ("💾 Зберегти PNG", lambda: self._save_fig_png(self._sc_fig,"матриця_розсіювання"), None),
+            ("⚙ Налаштування", lambda: self._settings_scatter(labels,arrays,method), "#1a4b8c"),
+        ]:
+            kw = {"bg": bcol, "fg": "white"} if bcol else {}
+            tk.Button(tb2, text=btxt, font=("Times New Roman",11),
+                      relief=tk.FLAT, padx=10, pady=3, cursor="hand2",
+                      command=bcmd, **kw).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb2, text=f"Метод: {meth_lbl}",
+                 font=("Times New Roman",11), fg="#555", bg="#f5f5f5"
+                 ).pack(side=tk.LEFT, padx=12)
+
+        self._sc_frame = tk.Frame(tab2); self._sc_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Будуємо графіки після відмальовки (щоб знати розмір вікна)
+        def _initial_draw():
+            self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat,
+                               alpha, method, corr_label, self.gs)
+            self._draw_scatter(self._sc_frame, labels, arrays, method)
+        win.after(100, _initial_draw)
+
+        # Адаптивний resize при зміні розміру вікна
+        _resize_timer = [None]
+        def _on_win_resize(e):
+            if e.widget is not win: return
+            if _resize_timer[0]: win.after_cancel(_resize_timer[0])
+            _resize_timer[0] = win.after(300, _do_resize)
+        def _do_resize():
             tab = nb.index(nb.select())
-            if tab == 0 and hasattr(self, '_hm_fig') and self._hm_fig:
-                self._redraw_heatmap()
-            elif tab == 1 and hasattr(self, '_sc_fig') and self._sc_fig:
-                self._redraw_scatter(labels, arrays, method)
-        nb.bind("<<NotebookTabChanged>>", _on_resize)
-        win.bind("<Configure>", lambda e: None)  # резерв для майбутнього
+            if tab == 0: self._redraw_heatmap()
+            else:        self._redraw_scatter(labels, arrays, method)
+        win.bind("<Configure>", _on_win_resize)
+        nb.bind("<<NotebookTabChanged>>", lambda e: _do_resize())
 
     def _save_fig_png(self, fig, name="графік"):
         if fig is None: messagebox.showwarning("","Спочатку виконайте аналіз."); return
