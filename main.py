@@ -87,60 +87,11 @@ def set_icon(win):
 
 # ── Clipboard PNG → Windows ────────────────────────────────────
 def embed_figure(fig, master, dpi=96):
-    """
-    Вставляє matplotlib Figure у tkinter frame.
-    Використовує вбудований механізм resize matplotlib backend —
-    найнадійніший спосіб адаптації в tkinter.
-    """
+    """Вставляє matplotlib Figure у tkinter frame."""
     cv = FigureCanvasTkAgg(fig, master=master)
     widget = cv.get_tk_widget()
     widget.pack(fill=tk.BOTH, expand=True)
-
-    # matplotlib TkAgg backend має вбудований resize через tk canvas
-    # Він спрацьовує автоматично при зміні розміру віджета
-    # Нам потрібно лише переконатись що canvas заповнює весь простір
-
-    _timer = [None]
-
-    def _on_cfg(e):
-        if e.width < 50 or e.height < 50:
-            return
-        if _timer[0]:
-            try:
-                master.after_cancel(_timer[0])
-            except Exception:
-                pass
-        w, h = e.width, e.height
-        _timer[0] = master.after(200, lambda: _redraw(w, h))
-
-    def _redraw(w, h):
-        try:
-            # Встановлюємо розмір Figure відповідно до пікселів
-            fig.set_size_inches(w / dpi, h / dpi, forward=True)
-            try:
-                fig.tight_layout()
-            except Exception:
-                pass
-            cv.draw()
-        except Exception:
-            pass
-
-    widget.bind("<Configure>", _on_cfg)
-
-    # Перше відмальовування — після повного відображення вікна
-    def _initial():
-        try:
-            master.update_idletasks()
-            w = widget.winfo_width()
-            h = widget.winfo_height()
-            if w > 50 and h > 50:
-                _redraw(w, h)
-            else:
-                cv.draw()
-        except Exception:
-            cv.draw()
-
-    master.after(500, _initial)
+    cv.draw()
     return cv
 
 
@@ -4374,7 +4325,7 @@ class SADTk:
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         ff = gs["font_family"]; fz = gs["font_size"]
         title = self._gs_titles.get("bp", f"{indicator}, {units}")
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        fig = Figure(figsize=(10, 6), dpi=100); ax = fig.add_subplot(111)
         positions=[]; data=[]; xlbls=[]; let_list=[]; fcentres=[]
         x=1.; gap=1.
         for f in self.factor_keys:
@@ -4442,7 +4393,7 @@ class SADTk:
         colors_list = ["#4c72b0","#dd8452","#55a868","#c44e52",
                        "#8172b2","#937860","#da8bc3","#8c8c8c"]
         title = self._gs_titles.get("bar", f"{indicator}, {units}")
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        fig = Figure(figsize=(10, 6), dpi=100); ax = fig.add_subplot(111)
         positions=[]; means=[]; ses=[]; xlbls=[]; let_list=[]; fcentres=[]
         bar_colors=[]; x=1.; gap=1.; ci=0
         for f in self.factor_keys:
@@ -4509,7 +4460,7 @@ class SADTk:
         title = self._gs_titles.get("int",
             "Графік взаємодії факторів (профіль середніх)")
         fkeys = self.factor_keys
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        fig = Figure(figsize=(10, 6), dpi=100); ax = fig.add_subplot(111)
         lw = float(gs.get("line_width", 1.8))
         mk = gs.get("marker_style", "o")
         if len(fkeys) >= 2:
@@ -4580,7 +4531,7 @@ class SADTk:
         fkeys = self.factor_keys; n = len(fkeys)
         lw = float(gs.get("line_width", 1.8))
         mk = gs.get("marker_style", "o")
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         if n == 0:
             ax = fig.add_subplot(111)
             ax.text(0.5,0.5,"Немає факторів",ha="center",va="center")
@@ -4635,7 +4586,7 @@ class SADTk:
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         title = self._gs_titles.get("hist", "Аналіз залишків")
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         residuals = getattr(self, '_last_residuals', None)
         if residuals and len(residuals) > 2:
             res = np.array(residuals)
@@ -4687,7 +4638,7 @@ class SADTk:
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         title = self._gs_titles.get("vn", "Сила впливу факторів (% від суми SS)")
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        fig = Figure(figsize=(10, 6), dpi=100); ax = fig.add_subplot(111)
         valid = [(str(nm), float(pct)) for nm,pct in eff_rows
                  if pct and not math.isnan(float(pct)) and float(pct)>0]
         if valid:
@@ -4737,7 +4688,7 @@ class SADTk:
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         title = self._gs_titles.get("pe", "Розмір ефекту (partial η²)")
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        fig = Figure(figsize=(10, 6), dpi=100); ax = fig.add_subplot(111)
         valid = [(str(nm), float(pct)) for nm,pct,_ in pe2_rows
                  if pct and not math.isnan(float(pct)) and float(pct)>0]
         if valid:
@@ -4792,7 +4743,7 @@ class SADTk:
                     self.graph_settings)))
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         ff = gs["font_family"]; fz = gs["font_size"]
-        fig = Figure(dpi=100); ax = fig.add_subplot(111)
+        fig = Figure(figsize=(10, 6), dpi=100); ax = fig.add_subplot(111)
         positions=[]; data=[]; xlbls=[]; let_list=[]; fcentres=[]
         x=1.; gap=1.
         for f in self.factor_keys:
@@ -5359,7 +5310,7 @@ class DescriptiveWindow:
         ff  = gs.get("font_family", "Times New Roman")
         fz  = gs.get("font_size", 11)
         n   = len(arrays)
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         ax  = fig.add_subplot(111)
         bp  = ax.boxplot([a[~np.isnan(a)] for a in arrays],
                          labels=names, patch_artist=True, widths=0.55)
@@ -6249,7 +6200,7 @@ class RegressionWindow:
             messagebox.showwarning("", "matplotlib недоступний — графіки не будуть показані.")
             return
 
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         ax1 = fig.add_subplot(121)
         ax2 = fig.add_subplot(122)
 
@@ -6999,7 +6950,7 @@ class ClusterWindow:
         from scipy.cluster.hierarchy import dendrogram as _dendro
         for w in frame.winfo_children(): w.destroy()
         gs = self._cl_gs
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         ax  = fig.add_subplot(111)
 
         # Кольори гілок через color_threshold
@@ -7555,7 +7506,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         self._pca_main_frame = graph_frame
 
         # Графіки
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
 
         ff  = gs["font_family"]; fz = gs["font_size"]
         pc  = gs["point_color"]; ac = gs["arrow_color"]
@@ -7689,7 +7640,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         pc=gs["point_color"]; ac=gs["arrow_color"]
         bc=gs["bar_color"];   cc_=gs["cum_color"]
         ps=gs["point_size"];  sc=gs["arrow_scale"]
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         # Scree
         ax1=fig.add_subplot(131)
         ax1.bar(range(1,n_comp+1),explained[:n_comp],color=bc,alpha=0.8)
@@ -8349,7 +8300,7 @@ class RepeatedMeasuresWindow:
         if not hasattr(self,"_rm_graph_frame"): return
         for w in self._rm_graph_frame.winfo_children(): w.destroy()
         gs = self._rm_gs; k = len(time_names)
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         ax  = fig.add_subplot(111)
         means_ = np.mean(data_arr, axis=0)
         ses_   = np.std(data_arr, axis=0, ddof=1) / math.sqrt(n)
@@ -9109,7 +9060,7 @@ class MixedRepeatedWindow:
         gs = self._plot_gs
         k = len(time_names)
         colors = gs["colors"]
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         ax  = fig.add_subplot(111)
 
         for ci, lv in enumerate(var_levels):
@@ -9574,7 +9525,7 @@ class StabilityWindow:
         if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
         win = tk.Toplevel(self.win); win.title("Аналіз стабільності — Результати"); win.geometry("1150x720")
 
-        fig = Figure(dpi=100)
+        fig = Figure(figsize=(10, 6), dpi=100)
         # GGE biplot
         ax1 = fig.add_subplot(121)
         ax1.axhline(0, color="k", lw=0.5); ax1.axvline(0, color="k", lw=0.5)
@@ -10172,7 +10123,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         # Plots
         if HAS_MPL:
-            fig = Figure(dpi=100)
+            fig = Figure(figsize=(10, 6), dpi=100)
             ax1 = fig.add_subplot(121)
             ax1.scatter(yhat, residuals, s=22, color="#4c72b0", alpha=0.8)
             ax1.axhline(0, color="k", lw=0.8)
@@ -10927,7 +10878,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             colors_ = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
 
             # Графік 1: стовпчикова ±SE для кожної ЗЗ
-            fig1 = Figure(dpi=100)
+            fig1 = Figure(figsize=(10, 6), dpi=100)
             for di, dv_nm in enumerate(dv_names):
                 ax = fig1.add_subplot(1, n_dv, di+1)
                 gm = [float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
@@ -10964,7 +10915,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             embed_figure(fig1, self._manova_frame1)
 
             # Графік 2: профільний (нормовані середні)
-            fig2 = Figure(dpi=100)
+            fig2 = Figure(figsize=(10, 6), dpi=100)
             ax2 = fig2.add_subplot(111)
             # Нормуємо кожну ЗЗ до [0,1] для порівняння профілів
             all_means = np.array([[float(np.mean(groups_data[lv][:,j]))
@@ -11009,7 +10960,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         # Перебудовуємо графік 1
         for w in self._manova_frame1.winfo_children(): w.destroy()
-        fig1 = Figure(dpi=100)
+        fig1 = Figure(figsize=(10, 6), dpi=100)
         for di,dv_nm in enumerate(dv_names):
             ax=fig1.add_subplot(1,n_dv,di+1)
             gm=[float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
@@ -13199,12 +13150,11 @@ def _SADTk_new_init(self, root):
         tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=10)
 
         info = [
-            (f"Версія {APP_VER}",                  C["accent"], 11, "bold"),
-            ("Розробник:",                          C["sub"],    9,  "normal"),
-            ("Чаплоуцький Андрій Миколайович",      C["text"],   11, "bold"),
-            ("Уманський національний університет",  C["sub"],    10, "normal"),
-            ("садівничо-технологічного факультету", C["sub"],    10, "normal"),
-            ("кафедра помології та розсадництва",   C["sub"],    9,  "normal"),
+            (f"Версія {APP_VER}",                        C["accent"], 11, "bold"),
+            ("Розробник:",                               C["sub"],    9,  "normal"),
+            ("Чаплоуцький Андрій Миколайович",           C["text"],   11, "bold"),
+            ("Уманський національний університет",       C["sub"],    10, "normal"),
+            ("садівництва, Україна",                     C["sub"],    10, "normal"),
         ]
         for txt, col, sz, weight in info:
             tk.Label(dlg, text=txt, bg=C["card"], fg=col,
@@ -13354,7 +13304,7 @@ def _SADTk_new_init(self, root):
         lic_text = f"""ЛІЦЕНЗІЙНА УГОДА КІНЦЕВОГО КОРИСТУВАЧА (EULA)
 
 © 2024–2025  Чаплоуцький Андрій Миколайович
-Уманський національний університет садівництва
+Уманський національний університет садівництва, Україна
 
 Прочитайте цю угоду уважно перед використанням програми.
 Використовуючи програму, ви погоджуєтесь з умовами цієї угоди.
@@ -13387,7 +13337,7 @@ def _SADTk_new_init(self, root):
 
 Рекомендоване посилання:
 Чаплоуцький А.М. S.A.D. — Статистичний аналіз даних.
-Версія {APP_VER}. Уманський НУС, 2024. [Комп'ютерна програма]
+Версія {APP_VER}. Уманський НУС, Україна, 2024. [Комп'ютерна програма]
 
 4. ІНТЕЛЕКТУАЛЬНА ВЛАСНІСТЬ
 ──────────────────────────────────────────────────────────
@@ -13445,10 +13395,9 @@ Email: sad.stat.support@gmail.com
                      activebackground="#161b27", activeforeground=C["text"],
                      padx=8, pady=4)
     for txt, cmd in [
-        ("ℹ  Про програму",  _about),
-        ("📋  Ліцензія",     _license),
-        ("🕐  Зміни версій", _changelog),
-        ("📞  Підтримка",    _support),
+        ("ℹ  Про програму", _about),
+        ("📋  Ліцензія",    _license),
+        ("📞  Підтримка",   _support),
     ]:
         tk.Button(hr, text=txt, command=cmd, **btn_style
                   ).pack(side=tk.LEFT, padx=2)
@@ -13843,7 +13792,7 @@ Email: sad.stat.support@gmail.com
         footer.pack(fill=tk.X)
         tk.Label(footer,
                  text="© 2024–2025  Чаплоуцький А.М.  |  "
-                      "Уманський національний університет садівництва  |  "
+                      "Уманський НУС, Україна  |  "
                       "Усі права захищені",
                  bg="#0d1020", fg=C["sub"],
                  font=("Arial", 8)).pack(side=tk.LEFT)
