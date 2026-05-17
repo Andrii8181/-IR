@@ -88,48 +88,59 @@ def set_icon(win):
 # ── Clipboard PNG → Windows ────────────────────────────────────
 def embed_figure(fig, master, dpi=96):
     """
-    Вставляє matplotlib Figure у tkinter frame з автоматичним масштабуванням.
-    Правильний підхід: canvas заповнює весь frame через pack(fill=BOTH),
-    а Figure масштабується лише після стабілізації розміру вікна.
+    Вставляє matplotlib Figure у tkinter frame.
+    Використовує вбудований механізм resize matplotlib backend —
+    найнадійніший спосіб адаптації в tkinter.
     """
     cv = FigureCanvasTkAgg(fig, master=master)
     widget = cv.get_tk_widget()
     widget.pack(fill=tk.BOTH, expand=True)
 
-    _last = [0, 0]
+    # matplotlib TkAgg backend має вбудований resize через tk canvas
+    # Він спрацьовує автоматично при зміні розміру віджета
+    # Нам потрібно лише переконатись що canvas заповнює весь простір
+
     _timer = [None]
 
     def _on_cfg(e):
-        w, h = e.width, e.height
-        if w < 100 or h < 100: return
-        if abs(w - _last[0]) < 5 and abs(h - _last[1]) < 5: return
-        _last[0] = w; _last[1] = h
+        if e.width < 50 or e.height < 50:
+            return
         if _timer[0]:
-            try: widget.after_cancel(_timer[0])
-            except Exception: pass
-        _timer[0] = widget.after(200, lambda: _do(w, h))
+            try:
+                master.after_cancel(_timer[0])
+            except Exception:
+                pass
+        w, h = e.width, e.height
+        _timer[0] = master.after(200, lambda: _redraw(w, h))
 
-    def _do(w, h):
+    def _redraw(w, h):
         try:
-            fig.set_size_inches(w / dpi, h / dpi)
-            try: fig.tight_layout()
-            except Exception: pass
-            cv.draw_idle()
+            # Встановлюємо розмір Figure відповідно до пікселів
+            fig.set_size_inches(w / dpi, h / dpi, forward=True)
+            try:
+                fig.tight_layout()
+            except Exception:
+                pass
+            cv.draw()
         except Exception:
             pass
 
     widget.bind("<Configure>", _on_cfg)
 
-    # Перше відмальовування після стабілізації layout
-    def _first_draw():
-        master.update_idletasks()
-        w = widget.winfo_width()
-        h = widget.winfo_height()
-        if w > 100 and h > 100:
-            _do(w, h)
-        else:
+    # Перше відмальовування — після повного відображення вікна
+    def _initial():
+        try:
+            master.update_idletasks()
+            w = widget.winfo_width()
+            h = widget.winfo_height()
+            if w > 50 and h > 50:
+                _redraw(w, h)
+            else:
+                cv.draw()
+        except Exception:
             cv.draw()
-    master.after(300, _first_draw)
+
+    master.after(500, _initial)
     return cv
 
 
@@ -2291,7 +2302,7 @@ class CorrelationWindow:
         fz       = sc.get("sc_font_size",    6)
 
         dpi = 96
-        fig = Figure(figsize=(8, 7), dpi=dpi)
+        fig = Figure(dpi=dpi)
 
         for i in range(n):
             for j in range(n):
@@ -5348,7 +5359,7 @@ class DescriptiveWindow:
         ff  = gs.get("font_family", "Times New Roman")
         fz  = gs.get("font_size", 11)
         n   = len(arrays)
-        fig = Figure(figsize=(max(6, n*1.1+1), 5), dpi=100)
+        fig = Figure(dpi=100)
         ax  = fig.add_subplot(111)
         bp  = ax.boxplot([a[~np.isnan(a)] for a in arrays],
                          labels=names, patch_artist=True, widths=0.55)
@@ -6238,7 +6249,7 @@ class RegressionWindow:
             messagebox.showwarning("", "matplotlib недоступний — графіки не будуть показані.")
             return
 
-        fig = Figure(figsize=(10, 4), dpi=100)
+        fig = Figure(dpi=100)
         ax1 = fig.add_subplot(121)
         ax2 = fig.add_subplot(122)
 
@@ -6274,6 +6285,31 @@ class RegressionWindow:
         ax1.set_ylabel("y", fontsize=10)
         ax1.set_title(f"{model_name}:  R² = {fmt(r['R2'],3)}", fontsize=10)
         ax1.legend(fontsize=8)
+
+        # ── Формула регресії на графіку ──────────────────────
+        eq_text = r.get("equation", "")
+        r2_adj  = r.get("R2_adj", float("nan"))
+        r2_str  = f"R² = {fmt(r['R2'],4)}"
+        if not math.isnan(r2_adj):
+            r2_str += f"\nR²adj = {fmt(r2_adj,4)}"
+        if not math.isnan(r.get("p_F", float("nan"))):
+            p_str = f"p < 0.001" if r["p_F"] < 0.001 else f"p = {fmt(r['p_F'],4)}"
+            r2_str += f"\n{p_str}"
+
+        # Рамка з формулою — у лівому верхньому куті
+        box_props = dict(boxstyle="round,pad=0.5",
+                         facecolor="#eef4ff", edgecolor="#1a4b8c",
+                         alpha=0.92, linewidth=1.2)
+        formula_text = f"{eq_text}\n{r2_str}"
+        ax1.text(0.03, 0.97, formula_text,
+                 transform=ax1.transAxes,
+                 fontsize=9,
+                 verticalalignment="top",
+                 horizontalalignment="left",
+                 fontfamily="Times New Roman",
+                 bbox=box_props,
+                 zorder=5)
+
         ax1.yaxis.grid(True, linestyle="--", alpha=0.35)
         ax1.spines["top"].set_visible(False)
         ax1.spines["right"].set_visible(False)
@@ -6963,7 +6999,7 @@ class ClusterWindow:
         from scipy.cluster.hierarchy import dendrogram as _dendro
         for w in frame.winfo_children(): w.destroy()
         gs = self._cl_gs
-        fig = Figure(figsize=(gs["figsize_w"], gs["figsize_h"]), dpi=100)
+        fig = Figure(dpi=100)
         ax  = fig.add_subplot(111)
 
         # Кольори гілок через color_threshold
@@ -7519,7 +7555,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         self._pca_main_frame = graph_frame
 
         # Графіки
-        fig = Figure(figsize=(12, 5.5), dpi=100)
+        fig = Figure(dpi=100)
 
         ff  = gs["font_family"]; fz = gs["font_size"]
         pc  = gs["point_color"]; ac = gs["arrow_color"]
@@ -7653,7 +7689,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         pc=gs["point_color"]; ac=gs["arrow_color"]
         bc=gs["bar_color"];   cc_=gs["cum_color"]
         ps=gs["point_size"];  sc=gs["arrow_scale"]
-        fig = Figure(figsize=(12, 5.5), dpi=100)
+        fig = Figure(dpi=100)
         # Scree
         ax1=fig.add_subplot(131)
         ax1.bar(range(1,n_comp+1),explained[:n_comp],color=bc,alpha=0.8)
@@ -8313,7 +8349,7 @@ class RepeatedMeasuresWindow:
         if not hasattr(self,"_rm_graph_frame"): return
         for w in self._rm_graph_frame.winfo_children(): w.destroy()
         gs = self._rm_gs; k = len(time_names)
-        fig = Figure(figsize=(max(7, k*0.9+2), 4.5), dpi=100)
+        fig = Figure(dpi=100)
         ax  = fig.add_subplot(111)
         means_ = np.mean(data_arr, axis=0)
         ses_   = np.std(data_arr, axis=0, ddof=1) / math.sqrt(n)
@@ -9073,7 +9109,7 @@ class MixedRepeatedWindow:
         gs = self._plot_gs
         k = len(time_names)
         colors = gs["colors"]
-        fig = Figure(figsize=(max(8, k*1.2+2), 5), dpi=100)
+        fig = Figure(dpi=100)
         ax  = fig.add_subplot(111)
 
         for ci, lv in enumerate(var_levels):
@@ -9538,7 +9574,7 @@ class StabilityWindow:
         if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
         win = tk.Toplevel(self.win); win.title("Аналіз стабільності — Результати"); win.geometry("1150x720")
 
-        fig = Figure(figsize=(11, 5.5), dpi=100)
+        fig = Figure(dpi=100)
         # GGE biplot
         ax1 = fig.add_subplot(121)
         ax1.axhline(0, color="k", lw=0.5); ax1.axvline(0, color="k", lw=0.5)
@@ -10136,7 +10172,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         # Plots
         if HAS_MPL:
-            fig = Figure(figsize=(11, 4), dpi=100)
+            fig = Figure(dpi=100)
             ax1 = fig.add_subplot(121)
             ax1.scatter(yhat, residuals, s=22, color="#4c72b0", alpha=0.8)
             ax1.axhline(0, color="k", lw=0.8)
@@ -10891,7 +10927,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             colors_ = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
 
             # Графік 1: стовпчикова ±SE для кожної ЗЗ
-            fig1 = Figure(figsize=(min(12, n_dv*1.9+0.8), 4.2), dpi=100)
+            fig1 = Figure(dpi=100)
             for di, dv_nm in enumerate(dv_names):
                 ax = fig1.add_subplot(1, n_dv, di+1)
                 gm = [float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
@@ -10928,7 +10964,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             embed_figure(fig1, self._manova_frame1)
 
             # Графік 2: профільний (нормовані середні)
-            fig2 = Figure(figsize=(max(6, n_dv*0.9+2), 4), dpi=100)
+            fig2 = Figure(dpi=100)
             ax2 = fig2.add_subplot(111)
             # Нормуємо кожну ЗЗ до [0,1] для порівняння профілів
             all_means = np.array([[float(np.mean(groups_data[lv][:,j]))
@@ -10973,7 +11009,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         # Перебудовуємо графік 1
         for w in self._manova_frame1.winfo_children(): w.destroy()
-        fig1 = Figure(figsize=(min(12,n_dv*1.9+0.8),4.2),dpi=100)
+        fig1 = Figure(dpi=100)
         for di,dv_nm in enumerate(dv_names):
             ax=fig1.add_subplot(1,n_dv,di+1)
             gm=[float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
@@ -13230,13 +13266,197 @@ def _SADTk_new_init(self, root):
         dlg.bind("<Return>", lambda e: dlg.destroy())
         center_win(dlg)
 
-    for txt, cmd in [("Розробник", _about), ("Підтримка", _support)]:
-        tk.Button(hr, text=txt, bg="#0d1020", fg=C["sub"],
-                  font=("Arial",9), relief=tk.FLAT, cursor="hand2",
-                  activebackground="#0d1020", activeforeground=C["text"],
-                  command=cmd).pack(side=tk.LEFT, padx=6)
+    # ── Changelog ─────────────────────────────────────────────
+    CHANGELOG = [
+        (f"v{APP_VER}", "Поточна версія", [
+            "Новий темний головний екран з картками аналізів",
+            "Бокова панель з пошуком та категоріями",
+            "Статистика використання аналізів",
+            "Об'єднаний звіт ANOVA (текст + графіки в одному вікні)",
+            "Адаптивний розмір графіків під вікно",
+            "Генератор плану польового досліду (CRD/RCBD/Split-plot/ЛК)",
+            "Латинський квадрат у дисперсійному аналізі",
+            "Автовизначення бальних і відсоткових даних",
+            "Формула регресії безпосередньо на графіку",
+            "Кореляційний аналіз: два графіки в одному вікні",
+        ]),
+        ("v2.0", "Великий реліз", [
+            "ANOVA 1-4 фактори: CRD, RCBD, Split-plot",
+            "Кореляційний аналіз (Пірсон, Спірмен, теплова карта)",
+            "Регресійний аналіз (7 моделей)",
+            "MANOVA, ANCOVA, Повторні виміри",
+            "PCA та кластерний аналіз",
+            "Аналіз стабільності GxE (Eberhart-Russell, GGE biplot)",
+            "Збереження та відкриття проектів",
+            "Експорт звітів у Word та Excel",
+        ]),
+        ("v1.0", "Перший реліз", [
+            "Описова статистика",
+            "t-тест та критерій Манн-Уітні",
+            "Однофакторний дисперсійний аналіз",
+            "Базові графіки",
+        ]),
+    ]
+
+    def _changelog():
+        dlg = tk.Toplevel(root); dlg.title("Зміни версій — S.A.D.")
+        dlg.geometry("560x520"); dlg.resizable(True, True)
+        dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
+
+        tk.Label(dlg, text="📋  Зміни версій", bg=C["card"], fg=C["text"],
+                 font=("Arial", 14, "bold")).pack(pady=(16, 4))
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=20, pady=6)
+
+        # Прокручуваний список
+        outer = tk.Frame(dlg, bg=C["card"]); outer.pack(fill=tk.BOTH, expand=True, padx=16)
+        vsb = ttk.Scrollbar(outer, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        cv2 = tk.Canvas(outer, bg=C["card"], highlightthickness=0,
+                        yscrollcommand=vsb.set); cv2.pack(fill=tk.BOTH, expand=True)
+        vsb.config(command=cv2.yview)
+        inner = tk.Frame(cv2, bg=C["card"]); cv2.create_window((0,0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: cv2.configure(scrollregion=cv2.bbox("all")))
+        cv2.bind("<MouseWheel>", lambda e: cv2.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        for ver, tag, items in CHANGELOG:
+            # Версія — заголовок
+            vh = tk.Frame(inner, bg=C["card"]); vh.pack(fill=tk.X, pady=(10,2))
+            tk.Label(vh, text=ver, bg=C["accent"], fg="white",
+                     font=("Arial",11,"bold"), padx=10, pady=3
+                     ).pack(side=tk.LEFT)
+            tk.Label(vh, text=tag, bg=C["card"], fg=C["sub"],
+                     font=("Arial",9), padx=8
+                     ).pack(side=tk.LEFT, pady=3)
+            # Пункти
+            for item in items:
+                tk.Label(inner, text=f"  ✓  {item}", bg=C["card"], fg=C["text"],
+                         font=("Arial",9), anchor="w", justify="left"
+                         ).pack(fill=tk.X, padx=8, pady=1)
+            tk.Frame(inner, bg=C["border"], height=1).pack(fill=tk.X, padx=8, pady=4)
+
+        tk.Button(dlg, text="Закрити", bg=C["accent"], fg="white",
+                  font=("Arial",11), relief=tk.FLAT, padx=24, pady=5,
+                  cursor="hand2", command=dlg.destroy).pack(pady=10)
+        dlg.bind("<Return>", lambda e: dlg.destroy())
+        center_win(dlg)
+
+    def _license():
+        dlg = tk.Toplevel(root); dlg.title("Ліцензійна угода — S.A.D.")
+        dlg.geometry("600x560"); dlg.resizable(True, True)
+        dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
+
+        tk.Label(dlg, text="📄  Ліцензійна угода кінцевого користувача",
+                 bg=C["card"], fg=C["text"],
+                 font=("Arial", 12, "bold")).pack(pady=(16,4))
+        tk.Label(dlg, text=f"S.A.D. — Статистичний аналіз даних  |  Версія {APP_VER}",
+                 bg=C["card"], fg=C["sub"], font=("Arial",9)).pack()
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=20, pady=8)
+
+        lic_text = f"""ЛІЦЕНЗІЙНА УГОДА КІНЦЕВОГО КОРИСТУВАЧА (EULA)
+
+© 2024–2025  Чаплоуцький Андрій Миколайович
+Уманський національний університет садівництва
+
+Прочитайте цю угоду уважно перед використанням програми.
+Використовуючи програму, ви погоджуєтесь з умовами цієї угоди.
+
+──────────────────────────────────────────────────────────
+1. НАДАННЯ ЛІЦЕНЗІЇ
+──────────────────────────────────────────────────────────
+Розробник надає вам невиключне, непередаване право на
+використання програмного забезпечення S.A.D. на одному
+комп'ютері (або відповідно до придбаної ліцензії).
+
+2. ОБМЕЖЕННЯ
+──────────────────────────────────────────────────────────
+Вам ЗАБОРОНЕНО:
+  • Копіювати, розповсюджувати або передавати програму
+    третім особам без письмового дозволу розробника
+  • Декомпілювати, дисасемблювати або здійснювати
+    зворотну розробку програми
+  • Здавати програму в оренду або субліцензувати її
+  • Видаляти або змінювати повідомлення про авторські права
+  • Використовувати програму для надання комерційних послуг
+    без укладення окремої угоди з розробником
+
+3. АКАДЕМІЧНЕ ТА НАУКОВЕ ВИКОРИСТАННЯ
+──────────────────────────────────────────────────────────
+Програма розроблена для використання в наукових
+дослідженнях та навчальному процесі. Результати аналізів,
+отримані за допомогою S.A.D., можуть публікуватись
+у наукових роботах з посиланням на програму.
+
+Рекомендоване посилання:
+Чаплоуцький А.М. S.A.D. — Статистичний аналіз даних.
+Версія {APP_VER}. Уманський НУС, 2024. [Комп'ютерна програма]
+
+4. ІНТЕЛЕКТУАЛЬНА ВЛАСНІСТЬ
+──────────────────────────────────────────────────────────
+Програма та вся документація є інтелектуальною власністю
+розробника і захищені законодавством України про авторське
+право та міжнародними договорами.
+
+5. ВІДМОВА ВІД ГАРАНТІЙ
+──────────────────────────────────────────────────────────
+Програма надається «як є» (AS IS). Розробник не гарантує
+безперебійну роботу або відсутність помилок. Відповідальність
+за результати статистичних аналізів лежить на користувачі.
+
+6. КОРПОРАТИВНЕ ЛІЦЕНЗУВАННЯ
+──────────────────────────────────────────────────────────
+Для установ, організацій або мереж — зв'яжіться з
+розробником для укладення корпоративної ліцензії.
+Email: sad.stat.support@gmail.com
+
+7. ПРИПИНЕННЯ ДІЇ ЛІЦЕНЗІЇ
+──────────────────────────────────────────────────────────
+Ця ліцензія діє до її розірвання. Вона автоматично
+припиняється при порушенні будь-якого з умов.
+
+© 2024–2025  Чаплоуцький А.М.  Усі права захищені."""
+
+        outer2 = tk.Frame(dlg, bg=C["card"]); outer2.pack(fill=tk.BOTH, expand=True, padx=16)
+        vsb2 = ttk.Scrollbar(outer2, orient="vertical"); vsb2.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(outer2, wrap="word", font=("Courier New", 8),
+                      bg="#0f1117", fg="#c8cdd8",
+                      relief=tk.FLAT, padx=12, pady=8,
+                      yscrollcommand=vsb2.set, state="normal", cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True)
+        vsb2.config(command=txt.yview)
+        txt.insert("1.0", lic_text)
+        txt.configure(state="disabled")
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        btn_f = tk.Frame(dlg, bg=C["card"]); btn_f.pack(pady=10)
+        tk.Button(btn_f, text="✓ Погоджуюсь", bg=C["green"], fg="white",
+                  font=("Arial",11), relief=tk.FLAT, padx=20, pady=5,
+                  cursor="hand2", command=dlg.destroy).pack(side=tk.LEFT, padx=8)
+        tk.Button(btn_f, text="Закрити", bg=C["card"], fg=C["sub"],
+                  font=("Arial",11), relief=tk.FLAT, padx=20, pady=5,
+                  cursor="hand2", command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    # ── Кнопки header ─────────────────────────────────────────
+    # Роздільник
+    tk.Frame(hr, bg=C["border"], width=1).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=8)
+
+    btn_style = dict(bg="#0d1020", fg=C["sub"], font=("Arial",9),
+                     relief=tk.FLAT, cursor="hand2",
+                     activebackground="#161b27", activeforeground=C["text"],
+                     padx=8, pady=4)
+    for txt, cmd in [
+        ("ℹ  Про програму",  _about),
+        ("📋  Ліцензія",     _license),
+        ("🕐  Зміни версій", _changelog),
+        ("📞  Підтримка",    _support),
+    ]:
+        tk.Button(hr, text=txt, command=cmd, **btn_style
+                  ).pack(side=tk.LEFT, padx=2)
+
+    # Роздільник + версія
+    tk.Frame(hr, bg=C["border"], width=1).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=8)
     tk.Label(hr, text=f"v{APP_VER}", bg="#0d1020",
-             fg=C["border"], font=("Arial",9)).pack(side=tk.LEFT, padx=(4,0))
+             fg=C["accent"], font=("Arial",9,"bold")).pack(side=tk.LEFT, padx=4)
 
     # ── MAIN AREA ────────────────────────────────────────────
     body = tk.Frame(root, bg=C["bg"]); body.pack(fill=tk.BOTH, expand=True)
@@ -13617,12 +13837,20 @@ def _SADTk_new_init(self, root):
                 c.pack(side=tk.LEFT, padx=(0,8), pady=4)
 
         # ── Footer ──────────────────────────────────────────
-        footer = tk.Frame(cf, bg=C["bg"]); footer.pack(fill=tk.X, padx=padx, pady=(16,12))
+        footer_f = tk.Frame(cf, bg="#0d1020"); footer_f.pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Frame(footer_f, bg=C["border"], height=1).pack(fill=tk.X)
+        footer = tk.Frame(footer_f, bg="#0d1020", padx=24, pady=8)
+        footer.pack(fill=tk.X)
         tk.Label(footer,
-                 text="S.A.D. — Статистичний аналіз даних для агрономічних досліджень",
-                 bg=C["bg"], fg=C["sub"], font=("Arial",8)).pack(side=tk.LEFT)
-        tk.Label(footer, text=f"v{APP_VER}  ©2024",
-                 bg=C["bg"], fg=C["border"], font=("Arial",8)).pack(side=tk.RIGHT)
+                 text="© 2024–2025  Чаплоуцький А.М.  |  "
+                      "Уманський національний університет садівництва  |  "
+                      "Усі права захищені",
+                 bg="#0d1020", fg=C["sub"],
+                 font=("Arial", 8)).pack(side=tk.LEFT)
+        tk.Label(footer,
+                 text=f"S.A.D.  v{APP_VER}",
+                 bg="#0d1020", fg=C["border"],
+                 font=("Arial", 8)).pack(side=tk.RIGHT)
 
     _refresh_recent()
 
