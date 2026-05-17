@@ -1995,15 +1995,8 @@ class CorrelationWindow:
                   background=[("selected","#1a4b8c"),("active","#2a5ba8")],
                   foreground=[("selected","white"),  ("active","white")])
 
-        # Підказка над вкладками
-        hint_f = tk.Frame(win, bg="#eef2ff"); hint_f.pack(fill=tk.X)
-        tk.Label(hint_f,
-                 text="  ← Оберіть вкладку: Теплова карта  або  Матриця розсіювання →",
-                 font=("Times New Roman",10,"italic"), fg="#1a4b8c", bg="#eef2ff"
-                 ).pack(side=tk.LEFT, pady=3)
-
         nb = ttk.Notebook(win, style="Corr.TNotebook")
-        nb.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        nb.pack(fill=tk.BOTH, expand=True)
 
         meth_lbl = "Пірсон" if method == "pearson" else "Спірмен"
 
@@ -2011,21 +2004,21 @@ class CorrelationWindow:
         tab1 = tk.Frame(nb, bg="#fafafa")
         nb.add(tab1, text="  🌡  Теплова карта  ")
 
-        tb1 = tk.Frame(tab1, bg="#f5f5f5", padx=8, pady=6)
+        tb1 = tk.Frame(tab1, bg="#f0f0f0", padx=8, pady=5)
         tb1.pack(fill=tk.X)
+        tk.Label(tb1,
+                 text=f"Метод: {meth_lbl}  |  Поправка: {corr_label}  |  α = {alpha}",
+                 font=("Times New Roman",10), fg="#555", bg="#f0f0f0"
+                 ).pack(side=tk.LEFT, padx=4)
         for btxt, bcmd, bcol in [
-            ("📋 Копіювати", self._copy_heatmap, None),
             ("💾 Зберегти PNG", lambda: self._save_fig_png(self._hm_fig,"теплова_карта"), None),
+            ("📋 Копіювати",   self._copy_heatmap, None),
             ("⚙ Налаштування", lambda: self._settings_heatmap(), "#1a4b8c"),
         ]:
             kw = {"bg": bcol, "fg": "white"} if bcol else {}
-            tk.Button(tb1, text=btxt, font=("Times New Roman",11),
-                      relief=tk.FLAT, padx=10, pady=3, cursor="hand2",
-                      command=bcmd, **kw).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb1,
-                 text=f"Метод: {meth_lbl}  |  Поправка: {corr_label}  |  α = {alpha}",
-                 font=("Times New Roman",11), fg="#555", bg="#f5f5f5"
-                 ).pack(side=tk.LEFT, padx=12)
+            tk.Button(tb1, text=btxt, font=("Times New Roman",10),
+                      relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                      command=bcmd, **kw).pack(side=tk.RIGHT, padx=3)
 
         self._hm_frame = tk.Frame(tab1); self._hm_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -2033,20 +2026,20 @@ class CorrelationWindow:
         tab2 = tk.Frame(nb, bg="#fafafa")
         nb.add(tab2, text="  ⬡  Матриця розсіювання  ")
 
-        tb2 = tk.Frame(tab2, bg="#f5f5f5", padx=8, pady=6)
+        tb2 = tk.Frame(tab2, bg="#f0f0f0", padx=8, pady=5)
         tb2.pack(fill=tk.X)
+        tk.Label(tb2, text=f"Метод: {meth_lbl}",
+                 font=("Times New Roman",10), fg="#555", bg="#f0f0f0"
+                 ).pack(side=tk.LEFT, padx=4)
         for btxt, bcmd, bcol in [
-            ("📋 Копіювати", lambda: self._copy_scatter(), None),
             ("💾 Зберегти PNG", lambda: self._save_fig_png(self._sc_fig,"матриця_розсіювання"), None),
+            ("📋 Копіювати",   lambda: self._copy_scatter(), None),
             ("⚙ Налаштування", lambda: self._settings_scatter(labels,arrays,method), "#1a4b8c"),
         ]:
             kw = {"bg": bcol, "fg": "white"} if bcol else {}
-            tk.Button(tb2, text=btxt, font=("Times New Roman",11),
-                      relief=tk.FLAT, padx=10, pady=3, cursor="hand2",
-                      command=bcmd, **kw).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb2, text=f"Метод: {meth_lbl}",
-                 font=("Times New Roman",11), fg="#555", bg="#f5f5f5"
-                 ).pack(side=tk.LEFT, padx=12)
+            tk.Button(tb2, text=btxt, font=("Times New Roman",10),
+                      relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                      command=bcmd, **kw).pack(side=tk.RIGHT, padx=3)
 
         self._sc_frame = tk.Frame(tab2); self._sc_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -5943,51 +5936,161 @@ class RegressionWindow:
     def __init__(self, parent, gs):
         self.win = tk.Toplevel(parent)
         self.win.title("Регресійний аналіз")
-        self.win.geometry("940x700"); set_icon(self.win)
+        self.win.geometry("1280x760"); set_icon(self.win)
+        self.win.resizable(True, True)
         self.gs = gs
-        self._fig = None   # зберігаємо фігуру для копіювання
+        self._fig = None
+        self._graph_title = ""
         self._build()
 
     def _build(self):
-        # ── Панель інструментів ──────────────────────────────
-        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Label(top, text="Модель:", font=("Times New Roman",12)).pack(side=tk.LEFT)
+        rf = ("Times New Roman", 11)
+
+        # ── Toolbar ───────────────────────────────────────────
+        top = tk.Frame(self.win, padx=8, pady=6, bg="#f5f5f5")
+        top.pack(fill=tk.X)
+        tk.Frame(top, bg="#e0e0e0", height=1).pack(fill=tk.X, side=tk.BOTTOM)
+
+        tk.Label(top, text="Модель:", font=rf, bg="#f5f5f5").pack(side=tk.LEFT)
         self.model_var = tk.StringVar(value=self.MODELS[0])
         ttk.Combobox(top, textvariable=self.model_var, values=self.MODELS,
-                     state="readonly", width=44,
-                     font=("Times New Roman",11)).pack(side=tk.LEFT, padx=6)
-        tk.Label(top, text="α:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+                     state="readonly", width=42,
+                     font=rf).pack(side=tk.LEFT, padx=6)
+        tk.Label(top, text="α:", font=rf, bg="#f5f5f5").pack(side=tk.LEFT, padx=(8,2))
         self.alpha_var = tk.StringVar(value="0.05")
-        ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
+        ttk.Combobox(top, textvariable=self.alpha_var,
+                     values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
+
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
-                  font=("Times New Roman",13), command=self._run).pack(side=tk.LEFT, padx=10)
-        tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman",11), command=self._paste).pack(side=tk.LEFT, padx=4)
+                  font=("Times New Roman",13), relief=tk.FLAT, padx=14, pady=3,
+                  cursor="hand2", command=self._run).pack(side=tk.LEFT, padx=(12,4))
+        tk.Button(top, text="📋 Вставити",
+                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                  command=self._paste).pack(side=tk.LEFT, padx=2)
         tk.Button(top, text="📋 Копіювати графік",
-                  font=("Times New Roman",11), command=self._copy_graph).pack(side=tk.LEFT, padx=4)
+                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                  command=self._copy_graph).pack(side=tk.LEFT, padx=2)
+        tk.Button(top, text="⚙ Налаштування графіка",
+                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                  bg="#1a4b8c", fg="white",
+                  command=self._graph_settings).pack(side=tk.LEFT, padx=2)
+        tk.Button(top, text="💾 Зберегти PNG",
+                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                  command=self._save_png).pack(side=tk.LEFT, padx=2)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11), command=self._show_help).pack(side=tk.LEFT, padx=4)
+                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
 
-        # ── Поля введення даних ───────────────────────────────
-        mid = tk.Frame(self.win, padx=8); mid.pack(fill=tk.X)
-        tk.Label(mid, text="x  (незалежна змінна)",
-                 font=("Times New Roman",11,"bold")).grid(row=0, column=0, padx=4, pady=4)
-        tk.Label(mid, text="y  (залежна змінна)",
-                 font=("Times New Roman",11,"bold")).grid(row=0, column=1, padx=4, pady=4)
-        self.tx = tk.Text(mid, width=36, height=13, font=("Times New Roman",11))
-        self.tx.grid(row=1, column=0, padx=4, pady=2)
-        self.ty = tk.Text(mid, width=36, height=13, font=("Times New Roman",11))
-        self.ty.grid(row=1, column=1, padx=4, pady=2)
-        tk.Label(mid, text="Одне значення на рядок або через кому. "
-                 "«Вставити дані» — два стовпці з Excel (x ліворуч, y праворуч).",
-                 font=("Times New Roman",9), fg="#666",
-                 wraplength=700, justify="left"
-                 ).grid(row=2, column=0, columnspan=2, sticky="w", padx=4)
+        # ── Основна область: ліво=дані, право=результати ─────
+        main = tk.Frame(self.win); main.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
-        # ── Зона результатів ──────────────────────────────────
-        self.res_frame = tk.Frame(self.win, padx=8, pady=4)
-        self.res_frame.pack(fill=tk.BOTH, expand=True)
+        # ── ЛІВА ПАНЕЛЬ — введення даних (фіксована ширина) ──
+        left = tk.Frame(main, width=340); left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
+
+        hdr_f = tk.Frame(left, bg="#1a4b8c"); hdr_f.pack(fill=tk.X, pady=(0,4))
+        tk.Label(hdr_f, text="  Дані", bg="#1a4b8c", fg="white",
+                 font=("Times New Roman",11,"bold"), pady=5).pack(side=tk.LEFT)
+
+        cols_f = tk.Frame(left); cols_f.pack(fill=tk.X)
+        for col_idx, lbl in enumerate(["x  (незалежна)", "y  (залежна)"]):
+            tk.Label(cols_f, text=lbl,
+                     font=("Times New Roman",10,"bold"),
+                     fg="#1a4b8c").grid(row=0, column=col_idx, padx=4, pady=2)
+
+        self.tx = tk.Text(cols_f, width=16, font=("Times New Roman",11),
+                          relief=tk.FLAT, highlightthickness=1,
+                          highlightbackground="#c0c0c0", highlightcolor="#1a4b8c")
+        self.tx.grid(row=1, column=0, padx=4, pady=2, sticky="nsew")
+
+        self.ty = tk.Text(cols_f, width=16, font=("Times New Roman",11),
+                          relief=tk.FLAT, highlightthickness=1,
+                          highlightbackground="#c0c0c0", highlightcolor="#1a4b8c")
+        self.ty.grid(row=1, column=1, padx=4, pady=2, sticky="nsew")
+
+        cols_f.rowconfigure(1, weight=1)
+        cols_f.columnconfigure(0, weight=1)
+        cols_f.columnconfigure(1, weight=1)
+
+        tk.Label(left,
+                 text="↑ Одне значення на рядок або через кому.\n"
+                      "  Вставити — два стовпці з Excel (x, y).",
+                 font=("Times New Roman",9), fg="#888",
+                 justify="left").pack(anchor="w", padx=6, pady=4)
+
+        # Роздільник
+        tk.Frame(main, bg="#e0e0e0", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+
+        # ── ПРАВА ПАНЕЛЬ — результати + графіки ───────────────
+        self.res_frame = tk.Frame(main); self.res_frame.pack(
+            side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Підказка до запуску
+        tk.Label(self.res_frame,
+                 text="Введіть дані, оберіть модель і натисніть ▶ Виконати",
+                 font=("Times New Roman",12), fg="#aaa").pack(expand=True)
+
+    def _graph_settings(self):
+        if self._fig is None:
+            messagebox.showinfo("","Спочатку виконайте аналіз."); return
+        dlg = tk.Toplevel(self.win); dlg.title("Налаштування графіка регресії")
+        dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
+        rf = ("Times New Roman",11)
+        frm = tk.Frame(dlg, padx=16, pady=12); frm.pack()
+
+        tk.Label(frm, text="Заголовок графіка:", font=rf
+                 ).grid(row=0, column=0, sticky="w", pady=4)
+        tv = tk.StringVar(value=self._graph_title)
+        tk.Entry(frm, textvariable=tv, width=36, font=rf
+                 ).grid(row=0, column=1, sticky="w", padx=8)
+
+        # Кольори
+        color_vars = {}
+        color_defs = [
+            ("Колір точок:",       "scatter_color", "#4c72b0"),
+            ("Колір кривої:",      "line_color",    "#c62828"),
+            ("Колір ДІ (смуга):",  "ci_color",      "#c62828"),
+        ]
+        for ri, (lbl, key, default) in enumerate(color_defs, 1):
+            tk.Label(frm, text=lbl, font=rf
+                     ).grid(row=ri, column=0, sticky="w", pady=3)
+            v = tk.StringVar(value=self.gs.get(key, default))
+            color_vars[key] = v
+            def _pick(var=v):
+                c = colorchooser.askcolor(color=var.get(), parent=dlg)
+                if c and c[1]: var.set(c[1])
+            tk.Button(frm, text="Обрати колір", command=_pick, font=rf
+                      ).grid(row=ri, column=1, sticky="w", padx=8)
+
+        def _apply():
+            self._graph_title = tv.get().strip()
+            for key, v in color_vars.items():
+                self.gs[key] = v.get()
+            dlg.destroy()
+            # Перебудовуємо графік з поточними даними
+            if hasattr(self, '_last_run_args'):
+                self._show_result(*self._last_run_args)
+        bf = tk.Frame(frm); bf.grid(row=len(color_defs)+2, column=0, columnspan=2, pady=(12,0))
+        tk.Button(bf, text="Застосувати", bg="#c62828", fg="white",
+                  font=rf, command=_apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rf,
+                  command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    def _save_png(self):
+        if self._fig is None:
+            messagebox.showinfo("","Спочатку виконайте аналіз."); return
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".png",
+            filetypes=[("PNG","*.png"),("SVG","*.svg")],
+            title="Зберегти графік регресії")
+        if not path: return
+        try:
+            self._fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
 
     # ── Утиліти ──────────────────────────────────────────────
     def _paste(self):
@@ -6174,6 +6277,7 @@ class RegressionWindow:
 
     # ── Відображення результатів ──────────────────────────────
     def _show_result(self, r, x, y, model_name, alpha):
+        self._last_run_args = (r, x, y, model_name, alpha)
         for w in self.res_frame.winfo_children(): w.destroy()
 
         # ── Текстовий підсумок ───────────────────────────────
@@ -6208,9 +6312,13 @@ class RegressionWindow:
         idx_sort  = np.argsort(x)
 
         # ── Графік 1: Точки + Крива регресії + 95% ДІ ───────
-        ax1.scatter(x, y, s=30, color="#4c72b0", zorder=3,
-                    label="Спостереження", edgecolors="white", linewidths=0.5)
-        ax1.plot(x_sort, r["yhat"][idx_sort], "r-", lw=2, label="Регресійна крива")
+        ax1.scatter(x, y, s=30,
+                    color=self.gs.get("scatter_color","#4c72b0"),
+                    zorder=3, label="Спостереження",
+                    edgecolors="white", linewidths=0.5)
+        ax1.plot(x_sort, r["yhat"][idx_sort],
+                 color=self.gs.get("line_color","#c62828"),
+                 lw=2, label="Регресійна крива")
 
         # 95% довірча смуга для лінійних моделей (аналітична)
         n_pts = r["n"]; k = r.get("k", 2); rmse_ = r.get("RMSE", np.nan)
@@ -6227,14 +6335,18 @@ class RegressionWindow:
                     ax1.fill_between(x_pred,
                                      yhat_p - t_crit_ * se_fit,
                                      yhat_p + t_crit_ * se_fit,
-                                     alpha=0.12, color="#c62828",
+                                     alpha=0.12,
+                                     color=self.gs.get("ci_color","#c62828"),
                                      label="95% довірчий інтервал")
             except Exception:
                 pass
 
         ax1.set_xlabel("x", fontsize=10)
         ax1.set_ylabel("y", fontsize=10)
-        ax1.set_title(f"{model_name}:  R² = {fmt(r['R2'],3)}", fontsize=10)
+        custom_title = getattr(self, '_graph_title', '')
+        ax1.set_title(
+            custom_title if custom_title else f"{model_name}:  R² = {fmt(r['R2'],3)}",
+            fontsize=10)
         ax1.legend(fontsize=8)
 
         # ── Формула регресії на графіку ──────────────────────
@@ -13154,7 +13266,7 @@ def _SADTk_new_init(self, root):
             ("Розробник:",                               C["sub"],    9,  "normal"),
             ("Чаплоуцький Андрій Миколайович",           C["text"],   11, "bold"),
             ("Уманський національний університет",       C["sub"],    10, "normal"),
-            ("садівництва, Україна",                     C["sub"],    10, "normal"),
+            ("Україна",                     C["sub"],    10, "normal"),
         ]
         for txt, col, sz, weight in info:
             tk.Label(dlg, text=txt, bg=C["card"], fg=col,
@@ -13304,7 +13416,7 @@ def _SADTk_new_init(self, root):
         lic_text = f"""ЛІЦЕНЗІЙНА УГОДА КІНЦЕВОГО КОРИСТУВАЧА (EULA)
 
 © 2024–2025  Чаплоуцький Андрій Миколайович
-Уманський національний університет садівництва, Україна
+Уманський національний університет, Україна
 
 Прочитайте цю угоду уважно перед використанням програми.
 Використовуючи програму, ви погоджуєтесь з умовами цієї угоди.
