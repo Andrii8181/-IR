@@ -1982,21 +1982,19 @@ class CorrelationWindow:
         self._hm_title   = getattr(self, '_hm_title', "")
         self._sc_title   = getattr(self, '_sc_title', "")
 
-        # ── Стиль вкладок — виразний ──────────────────────────
+        # ── Стиль вкладок ─────────────────────────────────────
+        sname = f"Corr{id(win)}.TNotebook"
         style = ttk.Style()
-        style.configure("Corr.TNotebook", tabposition="n",
-                        background="#f0f0f0")
-        style.configure("Corr.TNotebook.Tab",
+        style.configure(f"{sname}", tabposition="nw")
+        style.configure(f"{sname}.Tab",
                         font=("Times New Roman", 12, "bold"),
-                        padding=[20, 8],
-                        background="#d0d8e8",
-                        foreground="#1a4b8c")
-        style.map("Corr.TNotebook.Tab",
-                  background=[("selected","#1a4b8c"),("active","#2a5ba8")],
-                  foreground=[("selected","white"),  ("active","white")])
+                        padding=[24, 10])
+        style.map(f"{sname}.Tab",
+                  background=[("selected","#1a4b8c"), ("!selected","#d0d8e8")],
+                  foreground=[("selected","white"),    ("!selected","#1a4b8c")])
 
-        nb = ttk.Notebook(win, style="Corr.TNotebook")
-        nb.pack(fill=tk.BOTH, expand=True)
+        nb = ttk.Notebook(win, style=sname)
+        nb.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
 
         meth_lbl = "Пірсон" if method == "pearson" else "Спірмен"
 
@@ -6282,36 +6280,37 @@ class RegressionWindow:
 
         # ── Текстовий підсумок ───────────────────────────────
         p_F_ok = (r['p_F'] is not None and not math.isnan(r['p_F']) and r['p_F'] < alpha)
-        sw_ok  = (r['sw_p'] is not None and not math.isnan(r['sw_p']) and r['sw_p'] > 0.05)
-        info = (
-            f"Модель: {model_name}   |   n = {r['n']}\n"
-            f"Рівняння: {r['equation']}\n"
-            f"R² = {fmt(r['R2'],4)}   "
-            f"R²скор = {fmt(r['R2_adj'],4)}   "
-            f"RMSE = {fmt(r['RMSE'],4)}\n"
-            f"F = {fmt(r['F'],4)},  p = {fmt(r['p_F'],4)}  "
-            f"{'✓ модель значуща' if p_F_ok else '✗ модель незначуща'}\n"
-            f"Shapiro–Wilk залишків: p = {fmt(r['sw_p'],4)}  "
-            f"{'✓ залишки нормальні' if sw_ok else '⚠ залишки НЕ нормальні — перевірте викиди або модель'}"
-        )
+        sw_ok  = (r['sw_p'] is not None and not math.isnan(r['sw_p']) and r['sw_p'] > alpha)
+        ci_pct = int((1 - alpha) * 100)
+        info = "\n".join([
+            f"Модель: {model_name}  |  n = {r['n']}  |  \u03b1 = {alpha}",
+            f"\u0420\u0456\u0432\u043d\u044f\u043d\u043d\u044f: {r['equation']}",
+            f"R\u00b2 = {fmt(r['R2'],4)}   R\u00b2\u0441\u043a\u043e\u0440 = {fmt(r['R2_adj'],4)}   RMSE = {fmt(r['RMSE'],4)}",
+            f"F = {fmt(r['F'],4)},  p = {fmt(r['p_F'],4)}  " +
+                ("\u2713 \u043c\u043e\u0434\u0435\u043b\u044c \u0437\u043d\u0430\u0447\u0443\u0449\u0430" if p_F_ok else "\u2717 \u043c\u043e\u0434\u0435\u043b\u044c \u043d\u0435\u0437\u043d\u0430\u0447\u0443\u0449\u0430") + f" \u043f\u0440\u0438 \u03b1={alpha}",
+            f"Shapiro\u2013Wilk \u0437\u0430\u043b\u0438\u0448\u043a\u0456\u0432: p = {fmt(r['sw_p'],4)}  " +
+                ("\u2713 \u0437\u0430\u043b\u0438\u0448\u043a\u0438 \u043d\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u0456" if sw_ok else "\u26a0 \u0437\u0430\u043b\u0438\u0448\u043a\u0438 \u041d\u0415 \u043d\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u0456"),
+        ])
         tk.Label(self.res_frame, text=info, font=("Times New Roman",11),
-                 justify="left", anchor="w",
-                 bg="#f8f8f8", relief=tk.FLAT, padx=8, pady=6
-                 ).pack(fill=tk.X, pady=0)
+                 justify="left", anchor="w", bg="#f8f8f8",
+                 relief=tk.FLAT, padx=8, pady=6).pack(fill=tk.X)
 
-        # ── Графіки ──────────────────────────────────────────
         if not HAS_MPL:
-            messagebox.showwarning("", "matplotlib недоступний — графіки не будуть показані.")
-            return
+            messagebox.showwarning("", "matplotlib недоступний."); return
 
-        fig = Figure(figsize=(10, 6), dpi=100)
-        ax1 = fig.add_subplot(121)
-        ax2 = fig.add_subplot(122)
+        x_sort   = np.sort(x)
+        idx_sort = np.argsort(x)
+        n_pts = r["n"]; k = r.get("k", 2); rmse_ = r.get("RMSE", np.nan)
+        t_crit_alpha = float(t_dist.ppf(1 - alpha/2, max(1, n_pts - k - 1)))
 
-        x_sort    = np.sort(x)
-        idx_sort  = np.argsort(x)
+        def _copy_fig(fig):
+            ok, msg = _copy_fig_to_clipboard(fig)
+            if ok: messagebox.showinfo("","Скопійовано. Вставте у Word через Ctrl+V.")
+            else:  messagebox.showwarning("",f"Помилка: {msg}")
 
-        # ── Графік 1: Точки + Крива регресії + 95% ДІ ───────
+        # ── ГРАФІК 1: Регресійна крива ────────────────────────
+        fig1 = Figure(figsize=(10, 5), dpi=100)
+        ax1  = fig1.add_subplot(111)
         ax1.scatter(x, y, s=30,
                     color=self.gs.get("scatter_color","#4c72b0"),
                     zorder=3, label="Спостереження",
@@ -6319,85 +6318,115 @@ class RegressionWindow:
         ax1.plot(x_sort, r["yhat"][idx_sort],
                  color=self.gs.get("line_color","#c62828"),
                  lw=2, label="Регресійна крива")
-
-        # 95% довірча смуга для лінійних моделей (аналітична)
-        n_pts = r["n"]; k = r.get("k", 2); rmse_ = r.get("RMSE", np.nan)
         if n_pts > k + 2 and not math.isnan(rmse_):
             try:
-                x_pred   = np.linspace(x.min(), x.max(), 300)
-                dfe_     = n_pts - k - 1
-                t_crit_  = float(t_dist.ppf(0.975, dfe_))
-                x_mean_  = float(np.mean(x))
-                ss_xx    = float(np.sum((x - x_mean_)**2))
+                x_pred  = np.linspace(x.min(), x.max(), 300)
+                x_mean_ = float(np.mean(x))
+                ss_xx   = float(np.sum((x - x_mean_)**2))
                 if ss_xx > 0:
-                    se_fit   = rmse_ * np.sqrt(1/n_pts + (x_pred - x_mean_)**2 / ss_xx)
-                    yhat_p   = np.interp(x_pred, x_sort, r["yhat"][idx_sort])
+                    se_fit = rmse_ * np.sqrt(1/n_pts + (x_pred - x_mean_)**2 / ss_xx)
+                    yhat_p = np.interp(x_pred, x_sort, r["yhat"][idx_sort])
                     ax1.fill_between(x_pred,
-                                     yhat_p - t_crit_ * se_fit,
-                                     yhat_p + t_crit_ * se_fit,
+                                     yhat_p - t_crit_alpha * se_fit,
+                                     yhat_p + t_crit_alpha * se_fit,
                                      alpha=0.12,
                                      color=self.gs.get("ci_color","#c62828"),
-                                     label="95% довірчий інтервал")
-            except Exception:
-                pass
-
-        ax1.set_xlabel("x", fontsize=10)
-        ax1.set_ylabel("y", fontsize=10)
+                                     label=f"{ci_pct}% довірчий інтервал")
+            except Exception: pass
         custom_title = getattr(self, '_graph_title', '')
-        ax1.set_title(
-            custom_title if custom_title else f"{model_name}:  R² = {fmt(r['R2'],3)}",
-            fontsize=10)
+        ax1.set_title(custom_title if custom_title
+                      else f"{model_name}:  R² = {fmt(r['R2'],3)}", fontsize=10)
+        ax1.set_xlabel("x", fontsize=10); ax1.set_ylabel("y", fontsize=10)
         ax1.legend(fontsize=8)
-
-        # ── Формула регресії на графіку ──────────────────────
-        eq_text = r.get("equation", "")
-        r2_adj  = r.get("R2_adj", float("nan"))
+        # Формула
+        eq_text = r.get("equation","")
         r2_str  = f"R² = {fmt(r['R2'],4)}"
-        if not math.isnan(r2_adj):
-            r2_str += f"\nR²adj = {fmt(r2_adj,4)}"
-        if not math.isnan(r.get("p_F", float("nan"))):
-            p_str = f"p < 0.001" if r["p_F"] < 0.001 else f"p = {fmt(r['p_F'],4)}"
-            r2_str += f"\n{p_str}"
-
-        # Рамка з формулою — у лівому верхньому куті
-        box_props = dict(boxstyle="round,pad=0.5",
-                         facecolor="#eef4ff", edgecolor="#1a4b8c",
-                         alpha=0.92, linewidth=1.2)
-        formula_text = f"{eq_text}\n{r2_str}"
-        ax1.text(0.03, 0.97, formula_text,
-                 transform=ax1.transAxes,
-                 fontsize=9,
-                 verticalalignment="top",
-                 horizontalalignment="left",
-                 fontfamily="Times New Roman",
-                 bbox=box_props,
-                 zorder=5)
-
+        if not math.isnan(r.get("R2_adj",float("nan"))):
+            r2_str += f"\nR²adj = {fmt(r['R2_adj'],4)}"
+        if not math.isnan(r.get("p_F",float("nan"))):
+            r2_str += f"\n{'p < 0.001' if r['p_F']<0.001 else 'p = '+fmt(r['p_F'],4)}"
+        ax1.text(0.03, 0.97, f"{eq_text}\n{r2_str}",
+                 transform=ax1.transAxes, fontsize=9, va="top", fontfamily="Times New Roman",
+                 bbox=dict(boxstyle="round,pad=0.5", facecolor="#eef4ff",
+                           edgecolor="#1a4b8c", alpha=0.92, linewidth=1.2), zorder=5)
         ax1.yaxis.grid(True, linestyle="--", alpha=0.35)
-        ax1.spines["top"].set_visible(False)
-        ax1.spines["right"].set_visible(False)
+        ax1.spines["top"].set_visible(False); ax1.spines["right"].set_visible(False)
+        fig1.tight_layout()
+        self._fig = fig1
 
-        # ── Графік 2: Залишки vs Підібрані значення ──────────
-        ax2.scatter(r["yhat"], r["residuals"], s=28,
-                    color="#dd8452", edgecolors="white", linewidths=0.5, zorder=3)
+        g1_f = tk.Frame(self.res_frame); g1_f.pack(fill=tk.BOTH, expand=True)
+        tb1 = tk.Frame(g1_f, bg="#f0f0f0", padx=4, pady=2); tb1.pack(fill=tk.X)
+        tk.Label(tb1, text="Графік регресії з довірчою смугою",
+                 font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
+        tk.Button(tb1, text="📋 Копіювати", font=("Times New Roman",9),
+                  command=lambda: _copy_fig(fig1)).pack(side=tk.RIGHT, padx=4)
+        embed_figure(fig1, g1_f)
+
+        # ── ГРАФІК 2: Аналіз залишків (3 панелі) ─────────────
+        fig2 = Figure(figsize=(10, 5), dpi=100)
+        res_arr = np.array(r["residuals"])
+
+        # 2a: Залишки vs ŷ
+        ax2 = fig2.add_subplot(131)
+        ax2.scatter(r["yhat"], res_arr, s=28, color="#dd8452",
+                    edgecolors="white", linewidths=0.5, zorder=3)
         ax2.axhline(0, color="#333", lw=0.9, linestyle="--")
-        # Горизонтальний коридор ±RMSE
         if not math.isnan(rmse_):
-            ax2.axhline( rmse_, color="#aaa", lw=0.6, linestyle=":")
-            ax2.axhline(-rmse_, color="#aaa", lw=0.6, linestyle=":",
-                        label=f"±RMSE = {fmt(rmse_,3)}")
-            ax2.legend(fontsize=8)
-        ax2.set_xlabel("Підібрані значення (ŷ)", fontsize=10)
-        ax2.set_ylabel("Залишки (y − ŷ)", fontsize=10)
-        ax2.set_title("Аналіз залишків", fontsize=10)
+            ax2.axhline( rmse_, color="#aaa", lw=0.6, linestyle=":", label=f"±RMSE")
+            ax2.axhline(-rmse_, color="#aaa", lw=0.6, linestyle=":")
+            ax2.legend(fontsize=7)
+        ax2.set_xlabel("Підібрані ŷ", fontsize=9)
+        ax2.set_ylabel("Залишки e = y−ŷ", fontsize=9)
+        ax2.set_title("Залишки vs ŷ", fontsize=9)
         ax2.yaxis.grid(True, linestyle="--", alpha=0.35)
-        ax2.spines["top"].set_visible(False)
-        ax2.spines["right"].set_visible(False)
+        ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
 
-        fig.tight_layout()
-        self._fig = fig   # зберігаємо для кнопки «Копіювати»
+        # 2b: Гістограма залишків
+        ax3 = fig2.add_subplot(132)
+        ax3.hist(res_arr, bins="auto", color="#4c72b0", edgecolor="white", alpha=0.85)
+        try:
+            from scipy.stats import norm as _nd
+            mu_, sig_ = float(np.mean(res_arr)), float(np.std(res_arr))
+            xn = np.linspace(res_arr.min(), res_arr.max(), 100)
+            n_bins = max(1, int(np.sqrt(len(res_arr))))
+            ax3.plot(xn, _nd.pdf(xn, mu_, sig_) * len(res_arr) *
+                     (res_arr.max()-res_arr.min()) / n_bins,
+                     color="#c62828", lw=1.5, label="Норм.")
+            ax3.legend(fontsize=7)
+        except Exception: pass
+        ax3.set_xlabel("Залишок", fontsize=9)
+        ax3.set_ylabel("Частота", fontsize=9)
+        ax3.set_title(f"Гістограма залишків\nSW p={fmt(r['sw_p'],4)}", fontsize=9)
+        ax3.spines["top"].set_visible(False); ax3.spines["right"].set_visible(False)
 
-        embed_figure(fig, self.res_frame)
+        # 2c: Q-Q plot
+        ax4 = fig2.add_subplot(133)
+        try:
+            from scipy.stats import probplot
+            (osm, osr), (slope, intercept, rval) = probplot(res_arr, plot=None)
+            ax4.plot(osm, osr, "o", color="#4c72b0", markersize=4, alpha=0.8)
+            ax4.plot([min(osm),max(osm)],
+                     [slope*min(osm)+intercept, slope*max(osm)+intercept],
+                     color="#c62828", lw=1.5)
+            ax4.set_title(f"Q-Q графік  R²={rval**2:.3f}", fontsize=9)
+        except Exception:
+            ax4.set_title("Q-Q графік", fontsize=9)
+        ax4.set_xlabel("Теор. квантилі", fontsize=9)
+        ax4.set_ylabel("Вибірк. квантилі", fontsize=9)
+        ax4.spines["top"].set_visible(False); ax4.spines["right"].set_visible(False)
+
+        fig2.tight_layout()
+        self._fig2 = fig2
+
+        g2_f = tk.Frame(self.res_frame); g2_f.pack(fill=tk.BOTH, expand=True)
+        tb2 = tk.Frame(g2_f, bg="#f0f0f0", padx=4, pady=2); tb2.pack(fill=tk.X)
+        tk.Label(tb2, text="Аналіз залишків  (Залишки vs ŷ  |  Гістограма + крива  |  Q-Q)",
+                 font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
+        tk.Button(tb2, text="📋 Копіювати", font=("Times New Roman",9),
+                  command=lambda: _copy_fig(fig2)).pack(side=tk.RIGHT, padx=4)
+        embed_figure(fig2, g2_f)
+
+
 
         # ── Виявлення викидів у залишках ─────────────────────
         out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
