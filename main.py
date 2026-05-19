@@ -5966,9 +5966,7 @@ class RegressionWindow:
         tk.Button(top, text="📋 Вставити",
                   font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                   command=self._paste).pack(side=tk.LEFT, padx=2)
-        tk.Button(top, text="📋 Копіювати графік",
-                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
-                  command=self._copy_graph).pack(side=tk.LEFT, padx=2)
+
         tk.Button(top, text="⚙ Налаштування графіка",
                   font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                   bg="#1a4b8c", fg="white",
@@ -6020,14 +6018,30 @@ class RegressionWindow:
         # Роздільник
         tk.Frame(main, bg="#e0e0e0", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=4)
 
-        # ── ПРАВА ПАНЕЛЬ — результати + графіки ───────────────
-        self.res_frame = tk.Frame(main); self.res_frame.pack(
-            side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # ── ПРАВА ПАНЕЛЬ — результати + графіки з прокруткою ─
+        right_outer = tk.Frame(main)
+        right_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        _res_vsb = ttk.Scrollbar(right_outer, orient="vertical")
+        _res_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        _res_cv = tk.Canvas(right_outer, highlightthickness=0,
+                            yscrollcommand=_res_vsb.set)
+        _res_cv.pack(fill=tk.BOTH, expand=True)
+        _res_vsb.config(command=_res_cv.yview)
+        self.res_frame = tk.Frame(_res_cv)
+        _res_win_id = _res_cv.create_window((0,0), window=self.res_frame, anchor="nw")
+        self.res_frame.bind("<Configure>", lambda e: (
+            _res_cv.configure(scrollregion=_res_cv.bbox("all"))))
+        _res_cv.bind("<Configure>", lambda e:
+            _res_cv.itemconfig(_res_win_id, width=e.width))
+        _res_cv.bind("<MouseWheel>",
+            lambda e: _res_cv.yview_scroll(int(-1*(e.delta/120)),"units"))
+        self.res_frame.bind("<MouseWheel>",
+            lambda e: _res_cv.yview_scroll(int(-1*(e.delta/120)),"units"))
 
         # Підказка до запуску
         tk.Label(self.res_frame,
                  text="Введіть дані, оберіть модель і натисніть ▶ Виконати",
-                 font=("Times New Roman",12), fg="#aaa").pack(expand=True)
+                 font=("Times New Roman",12), fg="#aaa").pack(expand=True, pady=40)
 
     def _graph_settings(self):
         if self._fig is None:
@@ -6309,7 +6323,7 @@ class RegressionWindow:
             else:  messagebox.showwarning("",f"Помилка: {msg}")
 
         # ── ГРАФІК 1: Регресійна крива ────────────────────────
-        fig1 = Figure(figsize=(10, 5), dpi=100)
+        fig1 = Figure(figsize=(8, 4), dpi=100)
         ax1  = fig1.add_subplot(111)
         ax1.scatter(x, y, s=30,
                     color=self.gs.get("scatter_color","#4c72b0"),
@@ -6354,7 +6368,8 @@ class RegressionWindow:
         fig1.tight_layout()
         self._fig = fig1
 
-        g1_f = tk.Frame(self.res_frame); g1_f.pack(fill=tk.BOTH, expand=True)
+        g1_f = tk.Frame(self.res_frame, height=310); g1_f.pack(fill=tk.X)
+        g1_f.pack_propagate(False)
         tb1 = tk.Frame(g1_f, bg="#f0f0f0", padx=4, pady=2); tb1.pack(fill=tk.X)
         tk.Label(tb1, text="Графік регресії з довірчою смугою",
                  font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
@@ -6363,7 +6378,7 @@ class RegressionWindow:
         embed_figure(fig1, g1_f)
 
         # ── ГРАФІК 2: Аналіз залишків (3 панелі) ─────────────
-        fig2 = Figure(figsize=(10, 5), dpi=100)
+        fig2 = Figure(figsize=(10, 4), dpi=100)
         res_arr = np.array(r["residuals"])
 
         # 2a: Залишки vs ŷ
@@ -6418,7 +6433,8 @@ class RegressionWindow:
         fig2.tight_layout()
         self._fig2 = fig2
 
-        g2_f = tk.Frame(self.res_frame); g2_f.pack(fill=tk.BOTH, expand=True)
+        g2_f = tk.Frame(self.res_frame, height=310); g2_f.pack(fill=tk.X)
+        g2_f.pack_propagate(False)
         tb2 = tk.Frame(g2_f, bg="#f0f0f0", padx=4, pady=2); tb2.pack(fill=tk.X)
         tk.Label(tb2, text="Аналіз залишків  (Залишки vs ŷ  |  Гістограма + крива  |  Q-Q)",
                  font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
