@@ -5945,102 +5945,77 @@ class RegressionWindow:
         rf = ("Times New Roman", 11)
 
         # ── Toolbar ───────────────────────────────────────────
-        top = tk.Frame(self.win, padx=8, pady=6, bg="#f5f5f5")
+        top = tk.Frame(self.win, padx=8, pady=5, bg="#f5f5f5")
         top.pack(fill=tk.X)
         tk.Frame(top, bg="#e0e0e0", height=1).pack(fill=tk.X, side=tk.BOTTOM)
 
         tk.Label(top, text="Модель:", font=rf, bg="#f5f5f5").pack(side=tk.LEFT)
         self.model_var = tk.StringVar(value=self.MODELS[0])
         ttk.Combobox(top, textvariable=self.model_var, values=self.MODELS,
-                     state="readonly", width=42,
-                     font=rf).pack(side=tk.LEFT, padx=6)
+                     state="readonly", width=42, font=rf).pack(side=tk.LEFT, padx=6)
         tk.Label(top, text="α:", font=rf, bg="#f5f5f5").pack(side=tk.LEFT, padx=(8,2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var,
                      values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
-
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
                   font=("Times New Roman",13), relief=tk.FLAT, padx=14, pady=3,
-                  cursor="hand2", command=self._run).pack(side=tk.LEFT, padx=(12,4))
+                  cursor="hand2", command=self._run).pack(side=tk.LEFT, padx=(10,4))
         tk.Button(top, text="📋 Вставити",
                   font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                   command=self._paste).pack(side=tk.LEFT, padx=2)
-
-        tk.Button(top, text="⚙ Налаштування графіка",
-                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
-                  bg="#1a4b8c", fg="white",
-                  command=self._graph_settings).pack(side=tk.LEFT, padx=2)
-        tk.Button(top, text="💾 Зберегти PNG",
-                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
-                  command=self._save_png).pack(side=tk.LEFT, padx=2)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
                   font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
 
-        # ── Основна область: ліво=дані, право=результати ─────
+        # ── ОСНОВНА ОБЛАСТЬ ───────────────────────────────────
         main = tk.Frame(self.win); main.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
-        # ── ЛІВА ПАНЕЛЬ — введення даних (фіксована ширина) ──
-        left = tk.Frame(main, width=340); left.pack(side=tk.LEFT, fill=tk.Y)
+        # ── ЛІВО: поля x і y ──────────────────────────────────
+        left = tk.Frame(main, width=230); left.pack(side=tk.LEFT, fill=tk.Y)
         left.pack_propagate(False)
-
         hdr_f = tk.Frame(left, bg="#1a4b8c"); hdr_f.pack(fill=tk.X, pady=(0,4))
         tk.Label(hdr_f, text="  Дані", bg="#1a4b8c", fg="white",
                  font=("Times New Roman",11,"bold"), pady=5).pack(side=tk.LEFT)
-
-        cols_f = tk.Frame(left); cols_f.pack(fill=tk.X)
-        for col_idx, lbl in enumerate(["x  (незалежна)", "y  (залежна)"]):
-            tk.Label(cols_f, text=lbl,
-                     font=("Times New Roman",10,"bold"),
-                     fg="#1a4b8c").grid(row=0, column=col_idx, padx=4, pady=2)
-
-        self.tx = tk.Text(cols_f, width=16, font=("Times New Roman",11),
+        cf = tk.Frame(left); cf.pack(fill=tk.BOTH, expand=True)
+        for ci, lbl in enumerate(["x  (незалежна)", "y  (залежна)"]):
+            tk.Label(cf, text=lbl, font=("Times New Roman",10,"bold"),
+                     fg="#1a4b8c").grid(row=0, column=ci, padx=3, pady=2)
+        self.tx = tk.Text(cf, width=10, font=("Times New Roman",11),
                           relief=tk.FLAT, highlightthickness=1,
                           highlightbackground="#c0c0c0", highlightcolor="#1a4b8c")
-        self.tx.grid(row=1, column=0, padx=4, pady=2, sticky="nsew")
-
-        self.ty = tk.Text(cols_f, width=16, font=("Times New Roman",11),
+        self.tx.grid(row=1, column=0, padx=3, pady=2, sticky="nsew")
+        self.ty = tk.Text(cf, width=10, font=("Times New Roman",11),
                           relief=tk.FLAT, highlightthickness=1,
                           highlightbackground="#c0c0c0", highlightcolor="#1a4b8c")
-        self.ty.grid(row=1, column=1, padx=4, pady=2, sticky="nsew")
-
-        cols_f.rowconfigure(1, weight=1)
-        cols_f.columnconfigure(0, weight=1)
-        cols_f.columnconfigure(1, weight=1)
-
-        tk.Label(left,
-                 text="↑ Одне значення на рядок або через кому.\n"
-                      "  Вставити — два стовпці з Excel (x, y).",
-                 font=("Times New Roman",9), fg="#888",
-                 justify="left").pack(anchor="w", padx=6, pady=4)
+        self.ty.grid(row=1, column=1, padx=3, pady=2, sticky="nsew")
+        cf.rowconfigure(1, weight=1); cf.columnconfigure(0, weight=1); cf.columnconfigure(1, weight=1)
+        tk.Label(left, text="Одне значення на рядок\nабо вставте два стовпці з Excel.",
+                 font=("Times New Roman",8), fg="#888", justify="left"
+                 ).pack(anchor="w", padx=4, pady=2)
 
         # Роздільник
         tk.Frame(main, bg="#e0e0e0", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=4)
 
-        # ── ПРАВА ПАНЕЛЬ — результати + графіки з прокруткою ─
-        right_outer = tk.Frame(main)
-        right_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        _res_vsb = ttk.Scrollbar(right_outer, orient="vertical")
-        _res_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        _res_cv = tk.Canvas(right_outer, highlightthickness=0,
-                            yscrollcommand=_res_vsb.set)
-        _res_cv.pack(fill=tk.BOTH, expand=True)
-        _res_vsb.config(command=_res_cv.yview)
-        self.res_frame = tk.Frame(_res_cv)
-        _res_win_id = _res_cv.create_window((0,0), window=self.res_frame, anchor="nw")
-        self.res_frame.bind("<Configure>", lambda e: (
-            _res_cv.configure(scrollregion=_res_cv.bbox("all"))))
-        _res_cv.bind("<Configure>", lambda e:
-            _res_cv.itemconfig(_res_win_id, width=e.width))
-        _res_cv.bind("<MouseWheel>",
-            lambda e: _res_cv.yview_scroll(int(-1*(e.delta/120)),"units"))
-        self.res_frame.bind("<MouseWheel>",
-            lambda e: _res_cv.yview_scroll(int(-1*(e.delta/120)),"units"))
+        # ── ПРАВО: результати (прокручувані) ──────────────────
+        right_outer = tk.Frame(main); right_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        _vsb = ttk.Scrollbar(right_outer, orient="vertical")
+        _vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._res_cv = tk.Canvas(right_outer, highlightthickness=0, yscrollcommand=_vsb.set)
+        self._res_cv.pack(fill=tk.BOTH, expand=True)
+        _vsb.config(command=self._res_cv.yview)
+        self.res_frame = tk.Frame(self._res_cv)
+        _wid = self._res_cv.create_window((0,0), window=self.res_frame, anchor="nw")
+        self.res_frame.bind("<Configure>",
+            lambda e: self._res_cv.configure(scrollregion=self._res_cv.bbox("all")))
+        self._res_cv.bind("<Configure>",
+            lambda e: self._res_cv.itemconfig(_wid, width=e.width))
+        def _mw(e): self._res_cv.yview_scroll(int(-1*(e.delta/120)),"units")
+        self._res_cv.bind("<MouseWheel>", _mw)
+        self.res_frame.bind("<MouseWheel>", _mw)
 
-        # Підказка до запуску
         tk.Label(self.res_frame,
-                 text="Введіть дані, оберіть модель і натисніть ▶ Виконати",
+                 text="Введіть дані, оберіть модель і натисніть  ▶ Виконати",
                  font=("Times New Roman",12), fg="#aaa").pack(expand=True, pady=40)
 
     def _graph_settings(self):
@@ -6108,26 +6083,28 @@ class RegressionWindow:
     def _paste(self):
         try: data = self.win.clipboard_get()
         except Exception:
-            messagebox.showwarning("Буфер порожній",
-                "Буфер обміну порожній.\n"
-                "Скопіюйте два стовпці (x і y) з Excel через Ctrl+C і спробуйте знову."); return
+            messagebox.showwarning("","Буфер порожній."); return
         lines_ = [l.strip() for l in data.splitlines() if l.strip()]
-        if not lines_:
-            messagebox.showwarning("Немає даних", "У буфері немає текстових даних."); return
+        if not lines_: return
         xs, ys = [], []
         for line in lines_:
-            parts = line.replace(",",".").split()
+            # Розбиваємо по Tab, потім по пробілу/комі
+            parts = line.replace(",", ".").split("\t")
+            if len(parts) == 1:
+                parts = line.replace(",", ".").split()
             if len(parts) >= 2:
-                xs.append(parts[0]); ys.append(parts[1])
+                xs.append(parts[0].strip())
+                ys.append(parts[1].strip())
             elif len(parts) == 1:
-                xs.append(parts[0])  # single column → goes to x
+                xs.append(parts[0].strip())
         if not xs:
-            messagebox.showwarning("Не вдалося розпізнати",
-                "Не вдалося розпізнати числові дані.\n"
-                "Переконайтесь що скопіювали два стовпці: x (ліворуч) і y (праворуч)."); return
-        self.tx.delete("1.0", tk.END); self.tx.insert("1.0", "\n".join(xs))
+            messagebox.showwarning("","Не вдалося розпізнати дані.\n"
+                "Скопіюйте два стовпці (x, y) з Excel."); return
+        self.tx.delete("1.0", tk.END)
+        self.tx.insert("1.0", "\n".join(xs))
         if ys:
-            self.ty.delete("1.0", tk.END); self.ty.insert("1.0", "\n".join(ys))
+            self.ty.delete("1.0", tk.END)
+            self.ty.insert("1.0", "\n".join(ys))
 
     def _parse_col(self, widget):
         import re
@@ -6291,40 +6268,95 @@ class RegressionWindow:
     def _show_result(self, r, x, y, model_name, alpha):
         self._last_run_args = (r, x, y, model_name, alpha)
         for w in self.res_frame.winfo_children(): w.destroy()
+        # Reset canvas scroll
+        self._res_cv.yview_moveto(0)
 
-        # ── Текстовий підсумок ───────────────────────────────
-        p_F_ok = (r['p_F'] is not None and not math.isnan(r['p_F']) and r['p_F'] < alpha)
-        sw_ok  = (r['sw_p'] is not None and not math.isnan(r['sw_p']) and r['sw_p'] > alpha)
-        ci_pct = int((1 - alpha) * 100)
-        info = "\n".join([
-            f"Модель: {model_name}  |  n = {r['n']}  |  \u03b1 = {alpha}",
-            f"\u0420\u0456\u0432\u043d\u044f\u043d\u043d\u044f: {r['equation']}",
-            f"R\u00b2 = {fmt(r['R2'],4)}   R\u00b2\u0441\u043a\u043e\u0440 = {fmt(r['R2_adj'],4)}   RMSE = {fmt(r['RMSE'],4)}",
-            f"F = {fmt(r['F'],4)},  p = {fmt(r['p_F'],4)}  " +
-                ("\u2713 \u043c\u043e\u0434\u0435\u043b\u044c \u0437\u043d\u0430\u0447\u0443\u0449\u0430" if p_F_ok else "\u2717 \u043c\u043e\u0434\u0435\u043b\u044c \u043d\u0435\u0437\u043d\u0430\u0447\u0443\u0449\u0430") + f" \u043f\u0440\u0438 \u03b1={alpha}",
-            f"Shapiro\u2013Wilk \u0437\u0430\u043b\u0438\u0448\u043a\u0456\u0432: p = {fmt(r['sw_p'],4)}  " +
-                ("\u2713 \u0437\u0430\u043b\u0438\u0448\u043a\u0438 \u043d\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u0456" if sw_ok else "\u26a0 \u0437\u0430\u043b\u0438\u0448\u043a\u0438 \u041d\u0415 \u043d\u043e\u0440\u043c\u0430\u043b\u044c\u043d\u0456"),
-        ])
-        tk.Label(self.res_frame, text=info, font=("Times New Roman",11),
-                 justify="left", anchor="w", bg="#f8f8f8",
-                 relief=tk.FLAT, padx=8, pady=6).pack(fill=tk.X)
-
-        if not HAS_MPL:
-            messagebox.showwarning("", "matplotlib недоступний."); return
-
-        x_sort   = np.sort(x)
-        idx_sort = np.argsort(x)
-        n_pts = r["n"]; k = r.get("k", 2); rmse_ = r.get("RMSE", np.nan)
-        t_crit_alpha = float(t_dist.ppf(1 - alpha/2, max(1, n_pts - k - 1)))
+        p_F_ok  = (not math.isnan(r['p_F'])  and r['p_F']  < alpha)
+        sw_ok   = (not math.isnan(r['sw_p']) and r['sw_p'] > alpha)
+        ci_pct  = int((1 - alpha) * 100)
+        n_pts   = r["n"]; k = r.get("k", 2); rmse_ = r.get("RMSE", np.nan)
+        t_crit_ = float(t_dist.ppf(1 - alpha/2, max(1, n_pts - k - 1)))
 
         def _copy_fig(fig):
             ok, msg = _copy_fig_to_clipboard(fig)
-            if ok: messagebox.showinfo("","Скопійовано. Вставте у Word через Ctrl+V.")
-            else:  messagebox.showwarning("",f"Помилка: {msg}")
+            if ok: messagebox.showinfo("", "Скопійовано. Вставте у Word через Ctrl+V.")
+            else:   messagebox.showwarning("", f"Помилка: {msg}")
 
-        # ── ГРАФІК 1: Регресійна крива ────────────────────────
+        def _save_fig(fig, name):
+            path = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                filetypes=[("PNG","*.png"),("SVG","*.svg")],
+                title=f"Зберегти {name}")
+            if not path: return
+            try:
+                fig.savefig(path, dpi=150, bbox_inches="tight")
+                messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+            except Exception as ex:
+                messagebox.showerror("Помилка", str(ex))
+
+        # ── РЯД 1: Текст ліво + Графік регресії право ─────────
+        row1 = tk.Frame(self.res_frame); row1.pack(fill=tk.BOTH, expand=False)
+
+        # Текстовий звіт (ліворуч у row1)
+        txt_f = tk.Frame(row1, bg="#f8f8f8", width=280)
+        txt_f.pack(side=tk.LEFT, fill=tk.Y, padx=(0,4))
+        txt_f.pack_propagate(False)
+
+        tk.Label(txt_f, text="РЕЗУЛЬТАТИ РЕГРЕСІЇ",
+                 font=("Times New Roman",11,"bold"), fg="#1a4b8c",
+                 bg="#f8f8f8", pady=6).pack(anchor="w", padx=8)
+
+        fields = [
+            ("Модель:",      model_name),
+            ("n:",           str(r['n'])),
+            ("α:",           str(alpha)),
+            ("Рівняння:",    r['equation']),
+            ("R²:",          fmt(r['R2'],4)),
+            ("R²adj:",       fmt(r['R2_adj'],4)),
+            ("RMSE:",        fmt(r['RMSE'],4)),
+            ("F:",           fmt(r['F'],4)),
+            ("p (F-тест):",  fmt(r['p_F'],4)),
+            ("Значущість:",  "✓ Значуща" if p_F_ok else "✗ Незначуща"),
+            (f"ДІ:",         f"{ci_pct}%"),
+            ("SW (залишки):", fmt(r['sw_p'],4)),
+            ("Нормальність:", "✓ Нормальні" if sw_ok else "⚠ Не норм."),
+        ]
+        for lbl, val in fields:
+            row = tk.Frame(txt_f, bg="#f8f8f8"); row.pack(fill=tk.X, padx=8, pady=1)
+            tk.Label(row, text=lbl, font=("Times New Roman",10,"bold"),
+                     bg="#f8f8f8", fg="#555", width=14, anchor="w").pack(side=tk.LEFT)
+            color = ("#27ae60" if "✓" in val else
+                     "#c62828" if ("✗" in val or "⚠" in val) else "#000")
+            tk.Label(row, text=val, font=("Times New Roman",10),
+                     bg="#f8f8f8", fg=color,
+                     wraplength=160, justify="left", anchor="w").pack(side=tk.LEFT)
+
+        # Графік регресії (праворуч у row1)
+        if not HAS_MPL:
+            messagebox.showwarning("","matplotlib недоступний."); return
+
+        g1_outer = tk.Frame(row1)
+        g1_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Toolbar графіка 1
+        tb1 = tk.Frame(g1_outer, bg="#f0f0f0", padx=4, pady=2); tb1.pack(fill=tk.X)
+        tk.Label(tb1, text="Графік регресії",
+                 font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
+        tk.Button(tb1, text="💾 Зберегти",
+                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  command=lambda: _save_fig(fig1,"графік_регресії")).pack(side=tk.RIGHT, padx=2)
+        tk.Button(tb1, text="📋 Копіювати",
+                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  command=lambda: _copy_fig(fig1)).pack(side=tk.RIGHT, padx=2)
+        tk.Button(tb1, text="⚙ Налаштування",
+                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  bg="#1a4b8c", fg="white",
+                  command=self._graph_settings).pack(side=tk.RIGHT, padx=2)
+
+        # Figure 1
         fig1 = Figure(figsize=(8, 4), dpi=100)
         ax1  = fig1.add_subplot(111)
+        x_sort   = np.sort(x); idx_sort = np.argsort(x)
         ax1.scatter(x, y, s=30,
                     color=self.gs.get("scatter_color","#4c72b0"),
                     zorder=3, label="Спостереження",
@@ -6338,94 +6370,126 @@ class RegressionWindow:
                 x_mean_ = float(np.mean(x))
                 ss_xx   = float(np.sum((x - x_mean_)**2))
                 if ss_xx > 0:
-                    se_fit = rmse_ * np.sqrt(1/n_pts + (x_pred - x_mean_)**2 / ss_xx)
+                    se_fit = rmse_ * np.sqrt(1/n_pts + (x_pred-x_mean_)**2/ss_xx)
                     yhat_p = np.interp(x_pred, x_sort, r["yhat"][idx_sort])
                     ax1.fill_between(x_pred,
-                                     yhat_p - t_crit_alpha * se_fit,
-                                     yhat_p + t_crit_alpha * se_fit,
+                                     yhat_p - t_crit_*se_fit,
+                                     yhat_p + t_crit_*se_fit,
                                      alpha=0.12,
                                      color=self.gs.get("ci_color","#c62828"),
-                                     label=f"{ci_pct}% довірчий інтервал")
+                                     label=f"{ci_pct}% ДІ")
             except Exception: pass
         custom_title = getattr(self, '_graph_title', '')
         ax1.set_title(custom_title if custom_title
-                      else f"{model_name}:  R² = {fmt(r['R2'],3)}", fontsize=10)
-        ax1.set_xlabel("x", fontsize=10); ax1.set_ylabel("y", fontsize=10)
+                      else f"{model_name}", fontsize=10)
+        ax1.set_xlabel("x", fontsize=9); ax1.set_ylabel("y", fontsize=9)
         ax1.legend(fontsize=8)
         # Формула
-        eq_text = r.get("equation","")
-        r2_str  = f"R² = {fmt(r['R2'],4)}"
+        r2_str = f"R²={fmt(r['R2'],4)}"
         if not math.isnan(r.get("R2_adj",float("nan"))):
-            r2_str += f"\nR²adj = {fmt(r['R2_adj'],4)}"
-        if not math.isnan(r.get("p_F",float("nan"))):
-            r2_str += f"\n{'p < 0.001' if r['p_F']<0.001 else 'p = '+fmt(r['p_F'],4)}"
-        ax1.text(0.03, 0.97, f"{eq_text}\n{r2_str}",
-                 transform=ax1.transAxes, fontsize=9, va="top", fontfamily="Times New Roman",
-                 bbox=dict(boxstyle="round,pad=0.5", facecolor="#eef4ff",
-                           edgecolor="#1a4b8c", alpha=0.92, linewidth=1.2), zorder=5)
+            r2_str += f"  R²adj={fmt(r['R2_adj'],4)}"
+        eq = r.get("equation","")
+        ax1.text(0.03, 0.97, f"{eq}\n{r2_str}",
+                 transform=ax1.transAxes, fontsize=8, va="top",
+                 fontfamily="Times New Roman",
+                 bbox=dict(boxstyle="round,pad=0.4", facecolor="#eef4ff",
+                           edgecolor="#1a4b8c", alpha=0.9, linewidth=1),
+                 zorder=5)
         ax1.yaxis.grid(True, linestyle="--", alpha=0.35)
         ax1.spines["top"].set_visible(False); ax1.spines["right"].set_visible(False)
         fig1.tight_layout()
         self._fig = fig1
 
-        g1_f = tk.Frame(self.res_frame, height=310); g1_f.pack(fill=tk.X)
-        g1_f.pack_propagate(False)
-        tb1 = tk.Frame(g1_f, bg="#f0f0f0", padx=4, pady=2); tb1.pack(fill=tk.X)
-        tk.Label(tb1, text="Графік регресії з довірчою смугою",
+        g1_plot = tk.Frame(g1_outer, height=340)
+        g1_plot.pack(fill=tk.X)
+        g1_plot.pack_propagate(False)
+        embed_figure(fig1, g1_plot)
+
+        # ── РЯД 2: Аналіз залишків ─────────────────────────────
+        tk.Frame(self.res_frame, bg="#e0e0e0", height=1).pack(fill=tk.X, pady=4)
+
+        row2 = tk.Frame(self.res_frame); row2.pack(fill=tk.BOTH, expand=False)
+        tb2 = tk.Frame(row2, bg="#f0f0f0", padx=4, pady=2); tb2.pack(fill=tk.X)
+        tk.Label(tb2, text="Аналіз залишків",
                  font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
-        tk.Button(tb1, text="📋 Копіювати", font=("Times New Roman",9),
-                  command=lambda: _copy_fig(fig1)).pack(side=tk.RIGHT, padx=4)
-        embed_figure(fig1, g1_f)
 
-        # ── ГРАФІК 2: Аналіз залишків (3 панелі) ─────────────
-        fig2 = Figure(figsize=(10, 4), dpi=100)
+        # Settings for residuals graph
+        def _res_settings():
+            dlg = tk.Toplevel(self.win); dlg.title("Налаштування залишків")
+            dlg.resizable(False,False); dlg.grab_set(); set_icon(dlg)
+            rf2 = ("Times New Roman",11)
+            frm = tk.Frame(dlg, padx=14, pady=12); frm.pack()
+            tk.Label(frm, text="Заголовок графіка:", font=rf2
+                     ).grid(row=0, column=0, sticky="w", pady=4)
+            tv = tk.StringVar(value=getattr(self,'_res_title',''))
+            tk.Entry(frm, textvariable=tv, width=30, font=rf2
+                     ).grid(row=0, column=1, sticky="w", padx=8)
+            def _ok():
+                self._res_title = tv.get().strip()
+                dlg.destroy()
+                self._show_result(*self._last_run_args)
+            bf = tk.Frame(frm); bf.grid(row=1, column=0, columnspan=2, pady=(10,0))
+            tk.Button(bf, text="Застосувати", bg="#c62828", fg="white",
+                      font=rf2, command=_ok).pack(side=tk.LEFT, padx=4)
+            tk.Button(bf, text="Скасувати", font=rf2,
+                      command=dlg.destroy).pack(side=tk.LEFT)
+            center_win(dlg)
+
+        tk.Button(tb2, text="💾 Зберегти",
+                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  command=lambda: _save_fig(fig2,"аналіз_залишків")).pack(side=tk.RIGHT, padx=2)
+        tk.Button(tb2, text="📋 Копіювати",
+                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  command=lambda: _copy_fig(fig2)).pack(side=tk.RIGHT, padx=2)
+        tk.Button(tb2, text="⚙ Налаштування",
+                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  bg="#1a4b8c", fg="white",
+                  command=_res_settings).pack(side=tk.RIGHT, padx=2)
+
         res_arr = np.array(r["residuals"])
+        res_title = getattr(self, '_res_title', '') or "Аналіз залишків"
+        fig2 = Figure(figsize=(11, 3.8), dpi=100)
+        fig2.suptitle(res_title, fontsize=10, y=1.0)
 
-        # 2a: Залишки vs ŷ
         ax2 = fig2.add_subplot(131)
-        ax2.scatter(r["yhat"], res_arr, s=28, color="#dd8452",
-                    edgecolors="white", linewidths=0.5, zorder=3)
+        ax2.scatter(r["yhat"], res_arr, s=22, color="#dd8452",
+                    edgecolors="white", linewidths=0.4, zorder=3)
         ax2.axhline(0, color="#333", lw=0.9, linestyle="--")
         if not math.isnan(rmse_):
-            ax2.axhline( rmse_, color="#aaa", lw=0.6, linestyle=":", label=f"±RMSE")
-            ax2.axhline(-rmse_, color="#aaa", lw=0.6, linestyle=":")
-            ax2.legend(fontsize=7)
-        ax2.set_xlabel("Підібрані ŷ", fontsize=9)
-        ax2.set_ylabel("Залишки e = y−ŷ", fontsize=9)
-        ax2.set_title("Залишки vs ŷ", fontsize=9)
-        ax2.yaxis.grid(True, linestyle="--", alpha=0.35)
+            for sgn in [1,-1]:
+                ax2.axhline(sgn*rmse_, color="#aaa", lw=0.6, linestyle=":")
+            ax2.text(0.98, 0.98, f"±RMSE={fmt(rmse_,3)}",
+                     transform=ax2.transAxes, fontsize=7, ha="right", va="top", color="#888")
+        ax2.set_xlabel("ŷ", fontsize=9); ax2.set_ylabel("e = y−ŷ", fontsize=9)
+        ax2.set_title("Залишки vs ŷ", fontsize=9, pad=4)
+        ax2.yaxis.grid(True, linestyle="--", alpha=0.3)
         ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
 
-        # 2b: Гістограма залишків
         ax3 = fig2.add_subplot(132)
         ax3.hist(res_arr, bins="auto", color="#4c72b0", edgecolor="white", alpha=0.85)
         try:
             from scipy.stats import norm as _nd
-            mu_, sig_ = float(np.mean(res_arr)), float(np.std(res_arr))
+            mu_, sig_ = float(np.mean(res_arr)), float(np.std(res_arr, ddof=1))
             xn = np.linspace(res_arr.min(), res_arr.max(), 100)
-            n_bins = max(1, int(np.sqrt(len(res_arr))))
-            ax3.plot(xn, _nd.pdf(xn, mu_, sig_) * len(res_arr) *
-                     (res_arr.max()-res_arr.min()) / n_bins,
-                     color="#c62828", lw=1.5, label="Норм.")
-            ax3.legend(fontsize=7)
+            bw = (res_arr.max()-res_arr.min()) / max(1, len(np.histogram_bin_edges(res_arr,"auto"))-1)
+            ax3.plot(xn, _nd.pdf(xn,mu_,sig_)*len(res_arr)*bw,
+                     color="#c62828", lw=1.5)
         except Exception: pass
-        ax3.set_xlabel("Залишок", fontsize=9)
-        ax3.set_ylabel("Частота", fontsize=9)
-        ax3.set_title(f"Гістограма залишків\nSW p={fmt(r['sw_p'],4)}", fontsize=9)
+        ax3.set_xlabel("Залишок", fontsize=9); ax3.set_ylabel("Частота", fontsize=9)
+        ax3.set_title(f"Гістограма  (SW p={fmt(r['sw_p'],4)})", fontsize=9, pad=4)
         ax3.spines["top"].set_visible(False); ax3.spines["right"].set_visible(False)
 
-        # 2c: Q-Q plot
         ax4 = fig2.add_subplot(133)
         try:
             from scipy.stats import probplot
-            (osm, osr), (slope, intercept, rval) = probplot(res_arr, plot=None)
+            (osm,osr),(slope,intercept,rval) = probplot(res_arr, plot=None)
             ax4.plot(osm, osr, "o", color="#4c72b0", markersize=4, alpha=0.8)
             ax4.plot([min(osm),max(osm)],
                      [slope*min(osm)+intercept, slope*max(osm)+intercept],
                      color="#c62828", lw=1.5)
-            ax4.set_title(f"Q-Q графік  R²={rval**2:.3f}", fontsize=9)
+            ax4.set_title(f"Q-Q  (R²={rval**2:.3f})", fontsize=9, pad=4)
         except Exception:
-            ax4.set_title("Q-Q графік", fontsize=9)
+            ax4.set_title("Q-Q", fontsize=9, pad=4)
         ax4.set_xlabel("Теор. квантилі", fontsize=9)
         ax4.set_ylabel("Вибірк. квантилі", fontsize=9)
         ax4.spines["top"].set_visible(False); ax4.spines["right"].set_visible(False)
@@ -6433,18 +6497,20 @@ class RegressionWindow:
         fig2.tight_layout()
         self._fig2 = fig2
 
-        g2_f = tk.Frame(self.res_frame, height=310); g2_f.pack(fill=tk.X)
-        g2_f.pack_propagate(False)
-        tb2 = tk.Frame(g2_f, bg="#f0f0f0", padx=4, pady=2); tb2.pack(fill=tk.X)
-        tk.Label(tb2, text="Аналіз залишків  (Залишки vs ŷ  |  Гістограма + крива  |  Q-Q)",
-                 font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
-        tk.Button(tb2, text="📋 Копіювати", font=("Times New Roman",9),
-                  command=lambda: _copy_fig(fig2)).pack(side=tk.RIGHT, padx=4)
-        embed_figure(fig2, g2_f)
+        g2_plot = tk.Frame(row2, height=340)
+        g2_plot.pack(fill=tk.X)
+        g2_plot.pack_propagate(False)
+        embed_figure(fig2, g2_plot)
 
+        # ── Виявлення викидів ─────────────────────────────────
+        out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
+        if out_idx is not None:
+            tk.Label(self.res_frame,
+                     text=(f"⚠ Тест Граббса: підозрілий викид — спостереження "
+                           f"№{out_idx+1}  (G = {fmt(G,3)}). Перевірте дані."),
+                     fg="#c62828", font=("Times New Roman",10),
+                     justify="left", padx=8).pack(anchor="w", pady=4)
 
-
-        # ── Виявлення викидів у залишках ─────────────────────
         out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
         if out_idx is not None:
             tk.Label(self.res_frame,
