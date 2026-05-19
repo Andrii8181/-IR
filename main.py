@@ -1982,75 +1982,88 @@ class CorrelationWindow:
         self._hm_title   = getattr(self, '_hm_title', "")
         self._sc_title   = getattr(self, '_sc_title', "")
 
-        # ── Стиль вкладок ─────────────────────────────────────
-        sname = f"Corr{id(win)}.TNotebook"
-        style = ttk.Style()
-        style.configure(f"{sname}", tabposition="nw")
-        style.configure(f"{sname}.Tab",
-                        font=("Times New Roman", 12, "bold"),
-                        padding=[24, 10])
-        style.map(f"{sname}.Tab",
-                  background=[("selected","#1a4b8c"), ("!selected","#d0d8e8")],
-                  foreground=[("selected","white"),    ("!selected","#1a4b8c")])
-
-        nb = ttk.Notebook(win, style=sname)
-        nb.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
-
         meth_lbl = "Пірсон" if method == "pearson" else "Спірмен"
 
-        # ── Вкладка 1: Теплова карта ──────────────────────────
-        tab1 = tk.Frame(nb, bg="#fafafa")
-        nb.add(tab1, text="  🌡  Теплова карта  ")
+        # ── Перемикач вкладок через кнопки (не ttk.Notebook) ─
+        # ttk.Notebook на Windows приховує текст активної вкладки
+        switch_f = tk.Frame(win, bg="#1a4b8c"); switch_f.pack(fill=tk.X)
 
-        tb1 = tk.Frame(tab1, bg="#f0f0f0", padx=8, pady=5)
-        tb1.pack(fill=tk.X)
-        tk.Label(tb1,
-                 text=f"Метод: {meth_lbl}  |  Поправка: {corr_label}  |  α = {alpha}",
-                 font=("Times New Roman",10), fg="#555", bg="#f0f0f0"
-                 ).pack(side=tk.LEFT, padx=4)
+        content_f = tk.Frame(win); content_f.pack(fill=tk.BOTH, expand=True)
+
+        self._hm_frame = None
+        self._sc_frame = None
+        _hm_outer = tk.Frame(content_f); _hm_outer.pack(fill=tk.BOTH, expand=True)
+        _sc_outer = tk.Frame(content_f); _sc_outer.pack(fill=tk.BOTH, expand=True)
+        _sc_outer.pack_forget()   # ховаємо другу
+
+        _active_tab = [0]
+        _btn_hm = _btn_sc = None
+
+        def _show_hm():
+            _sc_outer.pack_forget()
+            _hm_outer.pack(fill=tk.BOTH, expand=True)
+            _active_tab[0] = 0
+            _btn_hm.configure(bg="white", fg="#1a4b8c", relief=tk.FLAT,
+                               font=("Times New Roman",11,"bold"))
+            _btn_sc.configure(bg="#1a4b8c", fg="#d0d8e8", relief=tk.FLAT,
+                               font=("Times New Roman",11))
+        def _show_sc():
+            _hm_outer.pack_forget()
+            _sc_outer.pack(fill=tk.BOTH, expand=True)
+            _active_tab[0] = 1
+            _btn_sc.configure(bg="white", fg="#1a4b8c", relief=tk.FLAT,
+                               font=("Times New Roman",11,"bold"))
+            _btn_hm.configure(bg="#1a4b8c", fg="#d0d8e8", relief=tk.FLAT,
+                               font=("Times New Roman",11))
+
+        _btn_hm = tk.Button(switch_f, text="  🌡  Теплова карта  ",
+                            bg="white", fg="#1a4b8c",
+                            font=("Times New Roman",11,"bold"),
+                            relief=tk.FLAT, padx=16, pady=8,
+                            cursor="hand2", command=_show_hm)
+        _btn_hm.pack(side=tk.LEFT)
+        _btn_sc = tk.Button(switch_f, text="  ⬡  Матриця розсіювання  ",
+                            bg="#1a4b8c", fg="#d0d8e8",
+                            font=("Times New Roman",11),
+                            relief=tk.FLAT, padx=16, pady=8,
+                            cursor="hand2", command=_show_sc)
+        _btn_sc.pack(side=tk.LEFT)
+        tk.Label(switch_f, bg="#1a4b8c",
+                 text=f"  Метод: {meth_lbl}  |  α={alpha}  |  Поправка: {corr_label}",
+                 font=("Times New Roman",9), fg="#a0b8cc").pack(side=tk.LEFT, padx=8)
+
+        # ── Теплова карта ──────────────────────────────────────
+        tb1 = tk.Frame(_hm_outer, bg="#f0f0f0", padx=6, pady=4); tb1.pack(fill=tk.X)
         for btxt, bcmd, bcol in [
             ("💾 Зберегти PNG", lambda: self._save_fig_png(self._hm_fig,"теплова_карта"), None),
-            ("📋 Копіювати",   self._copy_heatmap, None),
+            ("📋 Копіювати",    self._copy_heatmap, None),
             ("⚙ Налаштування", lambda: self._settings_heatmap(), "#1a4b8c"),
         ]:
             kw = {"bg": bcol, "fg": "white"} if bcol else {}
             tk.Button(tb1, text=btxt, font=("Times New Roman",10),
                       relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                       command=bcmd, **kw).pack(side=tk.RIGHT, padx=3)
+        self._hm_frame = tk.Frame(_hm_outer)
+        self._hm_frame.pack(fill=tk.BOTH, expand=True)
 
-        self._hm_frame = tk.Frame(tab1); self._hm_frame.pack(fill=tk.BOTH, expand=True)
-
-        # ── Вкладка 2: Матриця розсіювання ────────────────────
-        tab2 = tk.Frame(nb, bg="#fafafa")
-        nb.add(tab2, text="  ⬡  Матриця розсіювання  ")
-
-        tb2 = tk.Frame(tab2, bg="#f0f0f0", padx=8, pady=5)
-        tb2.pack(fill=tk.X)
-        tk.Label(tb2, text=f"Метод: {meth_lbl}",
-                 font=("Times New Roman",10), fg="#555", bg="#f0f0f0"
-                 ).pack(side=tk.LEFT, padx=4)
+        # ── Матриця розсіювання ────────────────────────────────
+        tb2 = tk.Frame(_sc_outer, bg="#f0f0f0", padx=6, pady=4); tb2.pack(fill=tk.X)
         for btxt, bcmd, bcol in [
             ("💾 Зберегти PNG", lambda: self._save_fig_png(self._sc_fig,"матриця_розсіювання"), None),
-            ("📋 Копіювати",   lambda: self._copy_scatter(), None),
+            ("📋 Копіювати",    lambda: self._copy_scatter(), None),
             ("⚙ Налаштування", lambda: self._settings_scatter(labels,arrays,method), "#1a4b8c"),
         ]:
             kw = {"bg": bcol, "fg": "white"} if bcol else {}
             tk.Button(tb2, text=btxt, font=("Times New Roman",10),
                       relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                       command=bcmd, **kw).pack(side=tk.RIGHT, padx=3)
+        self._sc_frame = tk.Frame(_sc_outer)
+        self._sc_frame.pack(fill=tk.BOTH, expand=True)
 
-        self._sc_frame = tk.Frame(tab2); self._sc_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Будуємо графіки після відмальовки (щоб знати розмір вікна)
-        def _initial_draw():
-            self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat,
-                               alpha, method, corr_label, self.gs)
-            self._draw_scatter(self._sc_frame, labels, arrays, method)
-        win.after(100, _initial_draw)
-
-        # Resize handled by canvas <Configure> binding in each _draw_* method
-        # Перемикання вкладки — перебудовуємо lazy (дані вже є у canvas)
-        nb.bind("<<NotebookTabChanged>>", lambda e: None)
+        # Будуємо обидва графіки одразу
+        self._draw_heatmap(self._hm_frame, labels, r_mat, p_mat, n_mat,
+                           alpha, method, corr_label, self.gs)
+        self._draw_scatter(self._sc_frame, labels, arrays, method)
 
     def _save_fig_png(self, fig, name="графік"):
         if fig is None: messagebox.showwarning("","Спочатку виконайте аналіз."); return
@@ -6014,6 +6027,18 @@ class RegressionWindow:
         self._res_cv.bind("<MouseWheel>", _mw)
         self.res_frame.bind("<MouseWheel>", _mw)
 
+        def _bind_mw_all(w):
+            try: w.bind("<MouseWheel>", _mw)
+            except Exception: pass
+            for ch in w.winfo_children(): _bind_mw_all(ch)
+
+        def _on_res_configure(e):
+            self._res_cv.configure(scrollregion=self._res_cv.bbox("all"))
+            _bind_mw_all(self.res_frame)
+        self.res_frame.bind("<Configure>", _on_res_configure)
+        self._res_cv.bind("<Configure>",
+            lambda e: self._res_cv.itemconfig(_wid, width=e.width))
+
         tk.Label(self.res_frame,
                  text="Введіть дані, оберіть модель і натисніть  ▶ Виконати",
                  font=("Times New Roman",12), fg="#aaa").pack(expand=True, pady=40)
@@ -6335,8 +6360,9 @@ class RegressionWindow:
         if not HAS_MPL:
             messagebox.showwarning("","matplotlib недоступний."); return
 
-        g1_outer = tk.Frame(row1)
-        g1_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        g1_outer = tk.Frame(row1, width=560)
+        g1_outer.pack(side=tk.LEFT, fill=tk.Y)
+        g1_outer.pack_propagate(False)
 
         # Toolbar графіка 1
         tb1 = tk.Frame(g1_outer, bg="#f0f0f0", padx=4, pady=2); tb1.pack(fill=tk.X)
@@ -6354,7 +6380,7 @@ class RegressionWindow:
                   command=self._graph_settings).pack(side=tk.RIGHT, padx=2)
 
         # Figure 1
-        fig1 = Figure(figsize=(8, 4), dpi=100)
+        fig1 = Figure(figsize=(5.2, 4.2), dpi=100)
         ax1  = fig1.add_subplot(111)
         x_sort   = np.sort(x); idx_sort = np.argsort(x)
         ax1.scatter(x, y, s=30,
@@ -6448,7 +6474,7 @@ class RegressionWindow:
 
         res_arr = np.array(r["residuals"])
         res_title = getattr(self, '_res_title', '') or "Аналіз залишків"
-        fig2 = Figure(figsize=(11, 3.8), dpi=100)
+        fig2 = Figure(figsize=(10, 3.5), dpi=100)
         fig2.suptitle(res_title, fontsize=10, y=1.0)
 
         ax2 = fig2.add_subplot(131)
@@ -14015,7 +14041,7 @@ Email: sad.stat.support@gmail.com
         footer.pack(fill=tk.X)
         tk.Label(footer,
                  text="© 2024–2025  Чаплоуцький А.М.  |  "
-                      "Уманський НУС, Україна  |  "
+                      "Уманський НУ, Україна  |  "
                       "Усі права захищені",
                  bg="#0d1020", fg=C["sub"],
                  font=("Arial", 8)).pack(side=tk.LEFT)
