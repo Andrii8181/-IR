@@ -5947,8 +5947,10 @@ class RegressionWindow:
     def __init__(self, parent, gs):
         self.win = tk.Toplevel(parent)
         self.win.title("Регресійний аналіз")
-        self.win.geometry("1280x760"); set_icon(self.win)
+        set_icon(self.win)
         self.win.resizable(True, True)
+        try: self.win.state("zoomed")
+        except Exception: self.win.geometry("1400x860")
         self.gs = gs
         self._fig = None
         self._graph_title = ""
@@ -6320,12 +6322,12 @@ class RegressionWindow:
                 messagebox.showerror("Помилка", str(ex))
 
         # ── РЯД 1: Текст ліво + Графік регресії право ─────────
-        row1 = tk.Frame(self.res_frame, height=370)
+        row1 = tk.Frame(self.res_frame, height=420)
         row1.pack(fill=tk.X)
         row1.pack_propagate(False)
 
         # Текстовий звіт (ліворуч у row1)
-        txt_f = tk.Frame(row1, bg="#f8f8f8", width=270)
+        txt_f = tk.Frame(row1, bg="#f8f8f8", width=310)
         txt_f.pack(side=tk.LEFT, fill=tk.Y)
         txt_f.pack_propagate(False)
 
@@ -12520,12 +12522,6 @@ class TrialDesignWindow:
         tk.Button(top, text="▶ Згенерувати план", bg="#c62828", fg="white",
                   font=("Times New Roman", 13),
                   command=self._generate).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="💾 Зберегти схему PNG",
-                  font=rf, command=self._save_png).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="💾 Зберегти журнал Excel",
-                  font=rf, command=self._save_excel).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="💾 Зберегти рандомізацію TXT",
-                  font=rf, command=self._save_rand_txt).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
                   font=rf, command=self._show_help).pack(side=tk.LEFT, padx=4)
 
@@ -12632,9 +12628,9 @@ class TrialDesignWindow:
                             font=("Times New Roman", 11, "bold"), padx=8, pady=4)
         self._gv = {}
         garden_params = [
-            ("Схема садіння — між рядами, м:", "row_sp",     "4.0",
+            ("Між рядами (A), м:",              "row_sp",     "4.0",
              "Відстань між рядами"),
-            ("Схема садіння — в ряду, м:",     "plant_sp",   "5.0",
+            ("В ряду (B), м:",                  "plant_sp",   "5.0",
              "Відстань між рослинами в ряду"),
             ("Облікових рослин на ділянку:",   "plants_plot","5",
              "Без захисних — лише облікові"),
@@ -12674,8 +12670,12 @@ class TrialDesignWindow:
 
         # Вкладка 1: Схема
         t1 = tk.Frame(self.nb); self.nb.add(t1, text="🗺 Польова схема")
-        tk.Label(t1, text="Клітинка = одна ділянка. Кольори = варіанти. Двигайте схему прокруткою.",
-                 font=("Times New Roman", 9), fg="#666").pack(anchor="w", padx=4, pady=2)
+        t1_tb = tk.Frame(t1); t1_tb.pack(fill=tk.X, padx=4, pady=3)
+        tk.Label(t1_tb,
+                 text="Клітинки = ділянки/рослини. Кольори = варіанти.",
+                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
+        tk.Button(t1_tb, text="💾 Зберегти PNG", font=("Times New Roman",10),
+                  command=self._save_png).pack(side=tk.RIGHT, padx=4)
         self._scheme_cv = tk.Canvas(t1, bg="white")
         s_vsb = ttk.Scrollbar(t1, orient="vertical",
                                command=self._scheme_cv.yview)
@@ -12692,6 +12692,8 @@ class TrialDesignWindow:
         tb2 = tk.Frame(t2); tb2.pack(fill=tk.X, padx=4, pady=3)
         tk.Label(tb2, text="Порядок закладки ділянок:",
                  font=rf).pack(side=tk.LEFT)
+        tk.Button(tb2, text="💾 Зберегти TXT", font=("Times New Roman",10),
+                  command=self._save_rand_txt).pack(side=tk.RIGHT, padx=4)
         r_vsb = ttk.Scrollbar(t2, orient="vertical")
         r_vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.rand_txt = tk.Text(t2, font=("Courier New", 10),
@@ -12703,6 +12705,8 @@ class TrialDesignWindow:
         # Вкладка 3: Журнал
         t3 = tk.Frame(self.nb); self.nb.add(t3, text="📓 Польовий журнал")
         tb3 = tk.Frame(t3); tb3.pack(fill=tk.X, padx=4, pady=3)
+        tk.Button(tb3, text="💾 Зберегти Excel", font=("Times New Roman",10),
+                  command=self._save_excel).pack(side=tk.RIGHT, padx=4)
         tk.Label(tb3, text="Показники:", font=rf).pack(side=tk.LEFT, padx=(0,4))
         self.ind_var = tk.StringVar()
         tk.Entry(tb3, textvariable=self.ind_var, width=55,
@@ -13326,32 +13330,118 @@ class TrialDesignWindow:
     # ═══════════════════════════════════════════════════════
     def _fill_journal(self):
         if not self._plan_data: return
-        plan = self._plan_data["plan"]
-        ind_text = self.ind_var.get().strip()
+        d    = self._plan_data
+        plan = d["plan"]
+        is_garden = d.get("is_garden", False)
+        n_plot    = d.get("n_plot", 1) if is_garden else 1
+        unit      = d.get("unit", "ділянка")
+
+        ind_text   = self.ind_var.get().strip()
         indicators = [s.strip() for s in ind_text.split(";") if s.strip()]
         if not indicators:
             indicators = ["Показник 1","Показник 2","Показник 3","Показник 4"]
 
+        # Зберігаємо поточні назви заголовків для перейменування
+        if not hasattr(self, '_ind_vars'):
+            self._ind_vars = {}
+        self._cur_indicators = indicators[:]
+
         for item in self.journal_tv.get_children():
             self.journal_tv.delete(item)
 
-        cols = ("№ ділянки","Повторність","Варіант") + tuple(indicators) + ("Примітки",)
+        # Стиль Treeview — чіткі межі
+        style = ttk.Style()
+        style.configure("Journal.Treeview",
+                        rowheight=22,
+                        font=("Times New Roman",10),
+                        borderwidth=1)
+        style.configure("Journal.Treeview.Heading",
+                        font=("Times New Roman",10,"bold"),
+                        background="#1a4b8c",
+                        foreground="white",
+                        relief="flat")
+        style.map("Journal.Treeview.Heading",
+                  background=[("active","#2a5ba8")])
+        self.journal_tv.configure(style="Journal.Treeview")
+
+        if is_garden:
+            cols = ("№ діл.", "Повт.", f"{unit.capitalize()} №",
+                    "Варіант") + tuple(indicators) + ("Примітки",)
+        else:
+            cols = ("№ діл.", "Повторність",
+                    "Варіант") + tuple(indicators) + ("Примітки",)
+
         self.journal_tv["columns"] = cols
         self.journal_tv["show"]    = "headings"
-        w_map = {"№ ділянки":60,"Повторність":110,"Варіант":180,"Примітки":100}
+
+        w_map = {"№ діл.":55, "Повт.":70, "Повторність":110,
+                 f"{unit.capitalize()} №":70, "Варіант":160, "Примітки":100}
         for col in cols:
             self.journal_tv.heading(col, text=col)
-            w = w_map.get(col, 110)
-            self.journal_tv.column(col, width=w,
-                                   anchor="center" if w < 130 else "w")
+            w = w_map.get(col, 100)
+            self.journal_tv.column(col, width=w, minwidth=40,
+                                   anchor="center" if w<130 else "w",
+                                   stretch=True)
 
+        # Подвійний клік на заголовок — перейменування показника
+        def _on_heading_dbl(event):
+            region = self.journal_tv.identify_region(event.x, event.y)
+            if region != "heading": return
+            col_id = self.journal_tv.identify_column(event.x)
+            col_n  = int(col_id[1:]) - 1  # 0-based
+            cur_name = cols[col_n]
+            # Лише показники (не службові колонки)
+            fixed = (3 if is_garden else 2) + 1  # перші fixed колонок - службові
+            if col_n < fixed: return
+
+            ind_idx = col_n - fixed
+            if ind_idx >= len(indicators): return
+
+            dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
+            dlg.resizable(False,False); dlg.grab_set(); set_icon(dlg)
+            tk.Label(dlg, text="Нова назва показника:",
+                     font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+            tv2 = tk.StringVar(value=cur_name)
+            e = tk.Entry(dlg, textvariable=tv2,
+                         font=("Times New Roman",12), width=28)
+            e.pack(padx=16, pady=4)
+            e.select_range(0, tk.END); e.focus_set()
+            def _ok():
+                nm = tv2.get().strip()
+                if nm:
+                    indicators[ind_idx] = nm
+                    # Оновити поле indicators
+                    self.ind_var.set("; ".join(indicators))
+                    dlg.destroy()
+                    self._fill_journal()
+            tk.Button(dlg, text="ОК", bg="#c62828", fg="white",
+                      font=("Times New Roman",12), command=_ok
+                      ).pack(pady=(4,14))
+            dlg.bind("<Return>", lambda e2: _ok())
+            center_win(dlg)
+
+        self.journal_tv.bind("<Double-1>", _on_heading_dbl)
+
+        # Теги для чергування рядків
         self.journal_tv.tag_configure("even", background="#f0f4ff")
         self.journal_tv.tag_configure("odd",  background="#ffffff")
-        for i, p in enumerate(sorted(plan, key=lambda x: x["plot"])):
-            vals = ((p["plot"], p["rep"], p["variant"])
-                    + tuple("" for _ in indicators) + ("",))
-            self.journal_tv.insert("","end", values=vals,
-                                   tags=("even" if i%2==0 else "odd",))
+
+        row_i = 0
+        for p in sorted(plan, key=lambda x: x["plot"]):
+            if is_garden:
+                # Кожна облікова рослина — окремий рядок
+                for plant_n in range(1, n_plot + 1):
+                    tag = "even" if row_i % 2 == 0 else "odd"
+                    vals = (p["plot"], p["rep"], plant_n,
+                            p["variant"]) + tuple("" for _ in indicators) + ("",)
+                    self.journal_tv.insert("", "end", values=vals, tags=(tag,))
+                    row_i += 1
+            else:
+                tag = "even" if row_i % 2 == 0 else "odd"
+                vals = (p["plot"], p["rep"],
+                        p["variant"]) + tuple("" for _ in indicators) + ("",)
+                self.journal_tv.insert("", "end", values=vals, tags=(tag,))
+                row_i += 1
 
     def _refresh_journal(self):
         if not self._plan_data:
@@ -13408,27 +13498,45 @@ class TrialDesignWindow:
             thin  = Side(style="thin", color="AAAAAA")
             brd   = Border(left=thin, right=thin, top=thin, bottom=thin)
 
+            is_garden = d.get("is_garden", False)
+            n_plot    = d.get("n_plot", 1) if is_garden else 1
+            unit      = d.get("unit", "ділянка")
+
             # ── Лист 1: Польовий журнал ─────────────────────
             ws = wb.active; ws.title = "Польовий журнал"
 
             # Шапка
-            ws.merge_cells("A1:A3")
-            ws["A1"] = "ПОЛЬОВИЙ ЖУРНАЛ СПОСТЕРЕЖЕНЬ"
-            ws["A1"].font = Font(bold=True, name="Times New Roman", size=13)
-            info_rows = [
-                f"Дослід: {d.get('name') or '—'}",
-                f"Рік: {d.get('year','')}    Місце: {d.get('loc') or '—'}    "
-                f"Відповідальний: {d.get('resp') or '—'}",
-                f"Культура: {d.get('culture','')}    Дизайн: {d['design_name']}    "
-                f"Варіантів: {d['k']}    Повторностей: {d['reps']}    "
-                f"Ділянок: {len(plan)}    Площа ділянки: {d['pw']}×{d['pl']} м",
-            ]
+            if is_garden:
+                info_rows = [
+                    "ПОЛЬОВИЙ ЖУРНАЛ СПОСТЕРЕЖЕНЬ",
+                    f"Дослід: {d.get('name') or '—'}",
+                    f"Рік: {d.get('year','')}    Місце: {d.get('loc') or '—'}    Відповідальний: {d.get('resp') or '—'}",
+                    f"Культура: {d.get('culture','')}    Дизайн: {d['design_name']}",
+                    f"Варіантів: {d['k']}    Повторностей: {d['reps']}    "
+                    f"Облікових {unit}/ділянку: {n_plot}    "
+                    f"Схема: {d.get('row_sp','?')}×{d.get('plant_sp','?')} м    "
+                    f"Захисних: {d.get('g_ends',0)} з кожного боку",
+                ]
+            else:
+                info_rows = [
+                    "ПОЛЬОВИЙ ЖУРНАЛ СПОСТЕРЕЖЕНЬ",
+                    f"Дослід: {d.get('name') or '—'}",
+                    f"Рік: {d.get('year','')}    Місце: {d.get('loc') or '—'}    Відповідальний: {d.get('resp') or '—'}",
+                    f"Культура: {d.get('culture','')}    Дизайн: {d['design_name']}    "
+                    f"Варіантів: {d['k']}    Повторностей: {d['reps']}    "
+                    f"Ділянок: {len(plan)}    Площа: {d['pw']}×{d['pl']} м",
+                ]
             for ri, txt in enumerate(info_rows, 1):
-                ws.cell(ri, 1, txt).font = nfont if ri > 1 else bfont
+                c = ws.cell(ri, 1, txt)
+                c.font = bfont if ri == 1 else nfont
 
             # Таблиця журналу
             hr = len(info_rows) + 2
-            j_hdrs = ["№ ділянки","Повторність","Варіант"] + indicators + ["Примітки"]
+            if is_garden:
+                j_hdrs = ["№ діл.", "Повт.", f"{unit.capitalize()} №", "Варіант"] + indicators + ["Примітки"]
+            else:
+                j_hdrs = ["№ ділянки","Повторність","Варіант"] + indicators + ["Примітки"]
+
             for ci, h in enumerate(j_hdrs, 1):
                 c = ws.cell(hr, ci, h)
                 c.fill = hfill; c.font = hfont
@@ -13440,24 +13548,32 @@ class TrialDesignWindow:
             vcols = {v: PALETTES_HEX[i % len(PALETTES_HEX)]
                      for i, v in enumerate(all_v)}
 
-            for ri, p in enumerate(sorted(plan, key=lambda x: x["plot"])):
-                row = hr + 1 + ri
-                even = ri % 2 == 0
-                rfill = PatternFill("solid",
-                                    fgColor="EEF4FF" if even else "FFFFFF")
-                for ci, val in enumerate(
-                    [p["plot"], p["rep"], p["variant"]]
-                    + [""] * len(indicators) + [""], 1
-                ):
-                    c = ws.cell(row, ci, val)
-                    c.font = nfont; c.alignment = ca; c.border = brd
-                    if ci <= 3 and even:
-                        c.fill = rfill
+            row_excel = hr + 1
+            row_i = 0
+            for p in sorted(plan, key=lambda x: x["plot"]):
+                if is_garden:
+                    for plant_n in range(1, n_plot + 1):
+                        even = row_i % 2 == 0
+                        rfill = PatternFill("solid", fgColor="EEF4FF" if even else "FFFFFF")
+                        vals = [p["plot"], p["rep"], plant_n, p["variant"]] + [""] * len(indicators) + [""]
+                        for ci, val in enumerate(vals, 1):
+                            c = ws.cell(row_excel, ci, val)
+                            c.font = nfont; c.alignment = ca; c.border = brd
+                            if ci <= 4 and even: c.fill = rfill
+                        row_excel += 1; row_i += 1
+                else:
+                    even = row_i % 2 == 0
+                    rfill = PatternFill("solid", fgColor="EEF4FF" if even else "FFFFFF")
+                    vals = [p["plot"], p["rep"], p["variant"]] + [""] * len(indicators) + [""]
+                    for ci, val in enumerate(vals, 1):
+                        c = ws.cell(row_excel, ci, val)
+                        c.font = nfont; c.alignment = ca; c.border = brd
+                        if ci <= 3 and even: c.fill = rfill
+                    row_excel += 1; row_i += 1
 
             # Ширини стовпців
-            for ci, w in enumerate(
-                [9, 14, 32] + [14]*len(indicators) + [16], 1
-            ):
+            w_cols = ([8, 10, 10, 32] if is_garden else [9, 14, 32]) + [14]*len(indicators) + [16]
+            for ci, w in enumerate(w_cols, 1):
                 if ci <= 26:
                     ws.column_dimensions[chr(64+ci)].width = w
             ws.row_dimensions[hr].height = 30
@@ -14403,7 +14519,7 @@ Email: sad.stat.support@gmail.com
         footer.pack(fill=tk.X)
         tk.Label(footer,
                  text="© 2024–2025  Чаплоуцький А.М.  |  "
-                      "Уманський НУ, Україна  |  "
+                      "Уманський НУС, Україна  |  "
                       "Усі права захищені",
                  bg="#0d1020", fg=C["sub"],
                  font=("Arial", 8)).pack(side=tk.LEFT)
