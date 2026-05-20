@@ -152,7 +152,7 @@ def norm_txt(p):
 def fmt(x, nd=3):
     if x is None or (isinstance(x, float) and math.isnan(x)): return ""
     try: return f"{float(x):.{nd}f}"
-    except: return ""
+    except (TypeError, ValueError): return ""
 
 def first_seen(seq):
     seen, out = set(), []
@@ -339,6 +339,10 @@ def bind_nav(entries_2d, e, add_row_fn=None):
     e.bind("<Right>", on_arrow)
 
 
+def groups_by_keys(long, keys):
+    """Групує числові значення з long за комбінацією довільних ключів keys.
+    Повертає dict: {tuple_of_levels: [float_values]}
+    """
     g = defaultdict(list)
     for r in long:
         v = r.get("value", np.nan)
@@ -420,7 +424,6 @@ def groups_by(long, fkeys):
     Повертає dict: {tuple_of_levels: [values]}
     Для одного ключа fkeys=(f,) → {(level,): [values]}
     """
-    from collections import defaultdict
     result = defaultdict(list)
     for r in long:
         key = tuple(r.get(f, "") for f in fkeys)
@@ -878,6 +881,12 @@ def anova_latin_square(long, fkeys, lbf, ss_type="III"):
             "latin_k": k, "latin_rows": len(row_lvls), "latin_cols": len(col_lvls)}
 
 
+def anova_split(long, fkeys, main_f, bk="BLOCK", ss_type="III"):
+    """
+    Спліт-ділянки (Split-plot ANOVA).
+    main_f  — головний фактор (whole-plot), тестується відносно WP-error.
+    Інші фактори — subplot, тестуються відносно залишку.
+    """
     if main_f not in fkeys: main_f = fkeys[0]
     bc, bn, _ = _block_dum(long, bk)
     ml = first_seen([r.get(main_f) for r in long if r.get(main_f) is not None])
