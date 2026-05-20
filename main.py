@@ -6059,6 +6059,19 @@ class RegressionWindow:
         tk.Entry(frm, textvariable=tv, width=36, font=rf
                  ).grid(row=0, column=1, sticky="w", padx=8)
 
+        # Підписи осей
+        tk.Label(frm, text="Підпис осі X:", font=rf
+                 ).grid(row=1, column=0, sticky="w", pady=4)
+        xv = tk.StringVar(value=getattr(self, '_xlabel', 'x'))
+        tk.Entry(frm, textvariable=xv, width=24, font=rf
+                 ).grid(row=1, column=1, sticky="w", padx=8)
+
+        tk.Label(frm, text="Підпис осі Y:", font=rf
+                 ).grid(row=2, column=0, sticky="w", pady=4)
+        yv = tk.StringVar(value=getattr(self, '_ylabel', 'y'))
+        tk.Entry(frm, textvariable=yv, width=24, font=rf
+                 ).grid(row=2, column=1, sticky="w", padx=8)
+
         # Кольори
         color_vars = {}
         color_defs = [
@@ -6079,13 +6092,14 @@ class RegressionWindow:
 
         def _apply():
             self._graph_title = tv.get().strip()
+            self._xlabel = xv.get().strip() or "x"
+            self._ylabel = yv.get().strip() or "y"
             for key, v in color_vars.items():
                 self.gs[key] = v.get()
             dlg.destroy()
-            # Перебудовуємо графік з поточними даними
             if hasattr(self, '_last_run_args'):
                 self._show_result(*self._last_run_args)
-        bf = tk.Frame(frm); bf.grid(row=len(color_defs)+2, column=0, columnspan=2, pady=(12,0))
+        bf = tk.Frame(frm); bf.grid(row=len(color_defs)+4, column=0, columnspan=2, pady=(12,0))
         tk.Button(bf, text="Застосувати", bg="#c62828", fg="white",
                   font=rf, command=_apply).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", font=rf,
@@ -6410,7 +6424,8 @@ class RegressionWindow:
             except Exception: pass
         custom_title = getattr(self, '_graph_title', '')
         ax1.set_title(custom_title if custom_title else f"{model_name}", fontsize=10)
-        ax1.set_xlabel("x", fontsize=9); ax1.set_ylabel("y", fontsize=9)
+        ax1.set_xlabel(getattr(self,'_xlabel','x'), fontsize=9)
+        ax1.set_ylabel(getattr(self,'_ylabel','y'), fontsize=9)
         ax1.legend(fontsize=8)
         r2_str = f"R²={fmt(r['R2'],4)}"
         if not math.isnan(r.get("R2_adj",float("nan"))):
@@ -12750,11 +12765,17 @@ class TrialDesignWindow:
             self._culture_hint.configure(
                 text=f"Одиниця: {unit}  |  Схема: {row_sp}×{plant_sp} м")
             if hasattr(self, '_gv'):
-                self._gv["row_sp"].set(str(row_sp))
-                self._gv["plant_sp"].set(str(plant_sp))
-                self._gv["plants_plot"].set(str(n_plot))
-                self._gv["guard_ends"].set(str(g_ends))
-                self._gv["guard_rows"].set(str(g_rows))
+                # Підказки заповнюємо лише якщо поля порожні
+                if not self._gv["row_sp"].get() or self._gv["row_sp"].get() == "0":
+                    self._gv["row_sp"].set(str(row_sp))
+                if not self._gv["plant_sp"].get() or self._gv["plant_sp"].get() == "0":
+                    self._gv["plant_sp"].set(str(plant_sp))
+                if not self._gv["plants_plot"].get():
+                    self._gv["plants_plot"].set(str(n_plot))
+                if not self._gv["guard_ends"].get():
+                    self._gv["guard_ends"].set(str(g_ends))
+                if not self._gv["guard_rows"].get():
+                    self._gv["guard_rows"].set(str(g_rows))
             # Показати садівничий фрейм, сховати польовий
             if hasattr(self, '_garden_frame'):
                 self._field_frame.pack_forget()
@@ -12956,113 +12977,6 @@ class TrialDesignWindow:
             f"{area_msg}\n\n"
             f"Seed рандомізації: {seed}\n"
             f"⚠ Збережіть seed у документацію!")
-        import random
-
-        variants = [v.strip() for v in
-                    self.var_text.get("1.0", "end").splitlines() if v.strip()]
-        if len(variants) < 2:
-            messagebox.showwarning("", "Введіть щонайменше 2 варіанти."); return
-
-        try:
-            reps = int(self._pv["reps"].get())
-            seed = int(self._pv["seed"].get())
-            pw   = float(self._pv["pw"].get())
-            pl   = float(self._pv["pl"].get())
-        except ValueError:
-            messagebox.showwarning("", "Перевірте числові поля (повторності, seed, розміри)."); return
-
-        design = self.design_var.get()
-        rng = random.Random(seed)
-        k = len(variants)
-
-        if design == "latin" and k > 8:
-            messagebox.showwarning("Латинський квадрат",
-                f"Максимум 8 варіантів для ЛК. У вас {k}.\n"
-                "Оберіть RCBD для більшої кількості варіантів."); return
-
-        plan = []
-
-        if design == "crd":
-            all_p = variants * reps; rng.shuffle(all_p)
-            for i, v in enumerate(all_p):
-                plan.append({"plot": i+1, "rep": "–",
-                             "variant": v, "row": i//k+1, "col": i%k+1})
-
-        elif design == "rcbd":
-            pn = 0
-            for b in range(1, reps+1):
-                bv = variants[:]; rng.shuffle(bv)
-                for i, v in enumerate(bv):
-                    pn += 1
-                    plan.append({"plot": pn, "rep": f"Повт. {b}",
-                                "variant": v, "row": b, "col": i+1})
-
-        elif design == "latin":
-            reps = k
-            base = list(range(k))
-            rows_p = [base[:]]
-            for _ in range(k-1):
-                rows_p.append(rows_p[-1][1:] + [rows_p[-1][0]])
-            rng.shuffle(rows_p)
-            cp = list(range(k)); rng.shuffle(cp)
-            pn = 0
-            for r in range(k):
-                for c in range(k):
-                    pn += 1
-                    plan.append({
-                        "plot": pn, "rep": f"Рядок {r+1}",
-                        "variant": variants[rows_p[r][cp[c]]],
-                        "row": r+1, "col": c+1,
-                        "col_label": f"Стовп. {c+1}"
-                    })
-
-        elif design == "split":
-            sp_vars = [v.strip() for v in
-                       self.sp_text.get("1.0", "end").splitlines() if v.strip()]
-            if len(sp_vars) < 2:
-                messagebox.showwarning("", "Введіть щонайменше 2 sub-plot варіанти."); return
-            pn = 0
-            for b in range(1, reps+1):
-                wp_o = variants[:]; rng.shuffle(wp_o)
-                for wp in wp_o:
-                    sp_o = sp_vars[:]; rng.shuffle(sp_o)
-                    for sp in sp_o:
-                        pn += 1
-                        plan.append({
-                            "plot": pn, "rep": f"Повт. {b}",
-                            "variant": f"{wp} / {sp}",
-                            "wp": wp, "sp": sp,
-                            "row": b,
-                            "col": (wp_o.index(wp))*len(sp_vars) + sp_o.index(sp) + 1
-                        })
-
-        # Зберігаємо план
-        design_name = {v: l for v, l, _ in self.DESIGNS}.get(design, design)
-        self._plan_data = {
-            "plan": plan, "variants": variants, "reps": reps,
-            "design": design, "design_name": design_name,
-            "seed": seed, "k": k, "pw": pw, "pl": pl,
-            "culture": self.culture_var.get(),
-            "name":  self._nv["name"].get(),
-            "year":  self._nv["year"].get(),
-            "loc":   self._nv["loc"].get(),
-            "resp":  self._nv["resp"].get(),
-        }
-
-        self._draw_scheme()
-        self._fill_rand()
-        self._fill_journal()
-        self.nb.select(0)
-
-        messagebox.showinfo("Готово",
-            f"План згенеровано!\n\n"
-            f"Дизайн: {design_name}\n"
-            f"Варіантів: {k}   |   Повторностей: {reps}\n"
-            f"Ділянок: {len(plan)}\n"
-            f"Загальна площа: {pw*pl*len(plan):.0f} м²\n\n"
-            f"Seed рандомізації: {seed}\n"
-            f"⚠ Збережіть seed у документацію досліду!")
-
     # ═══════════════════════════════════════════════════════
     # Польова схема
     # ═══════════════════════════════════════════════════════
@@ -13992,7 +13906,11 @@ def _SADTk_new_init(self, root):
         vsb.config(command=cv2.yview)
         inner = tk.Frame(cv2, bg=C["card"]); cv2.create_window((0,0), window=inner, anchor="nw")
         inner.bind("<Configure>", lambda e: cv2.configure(scrollregion=cv2.bbox("all")))
-        cv2.bind("<MouseWheel>", lambda e: cv2.yview_scroll(int(-1*(e.delta/120)),"units"))
+        def _cl_mw(e):
+            cv2.yview_scroll(int(-1*(e.delta/120)), "units")
+            return "break"
+        cv2.bind("<MouseWheel>", _cl_mw)
+        inner.bind("<MouseWheel>", _cl_mw)
 
         for ver, tag, items in CHANGELOG:
             # Версія — заголовок
@@ -14101,8 +14019,11 @@ Email: sad.stat.support@gmail.com
         vsb2.config(command=txt.yview)
         txt.insert("1.0", lic_text)
         txt.configure(state="disabled")
-        txt.bind("<MouseWheel>",
-                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        def _lic_mw(e):
+            txt.yview_scroll(int(-1*(e.delta/120)), "units")
+            return "break"   # зупиняє поширення події на root
+        txt.bind("<MouseWheel>", _lic_mw)
+        dlg.bind("<MouseWheel>", _lic_mw)
 
         btn_f = tk.Frame(dlg, bg=C["card"]); btn_f.pack(pady=10)
         tk.Button(btn_f, text="✓ Погоджуюсь", bg=C["green"], fg="white",
