@@ -12528,10 +12528,19 @@ class TrialDesignWindow:
 
     def __init__(self, parent):
         self.win = tk.Toplevel(parent)
-        self.win.title("Генератор плану польового досліду")
-        self.win.geometry("1160x760")
+        self.win.title("Генератор плану польового досліду — Уманський НУ")
         self.win.resizable(True, True)
         set_icon(self.win)
+        # Розгортаємо на весь екран
+        try:
+            self.win.state("zoomed")          # Windows / macOS
+        except Exception:
+            try:
+                sw = self.win.winfo_screenwidth()
+                sh = self.win.winfo_screenheight()
+                self.win.geometry(f"{sw}x{sh}+0+0")
+            except Exception:
+                self.win.geometry("1400x900")
         self._plan_data = None
         self._build()
 
@@ -12651,27 +12660,54 @@ class TrialDesignWindow:
         self._garden_frame = tk.LabelFrame(lf, text="Параметри садіння",
                             font=("Times New Roman", 11, "bold"), padx=8, pady=4)
         self._gv = {}
-        garden_params = [
-            ("Між рядами (A), м:",              "row_sp",     "4.0",
-             "Відстань між рядами"),
-            ("В ряду (B), м:",                  "plant_sp",   "5.0",
-             "Відстань між рослинами в ряду"),
-            ("Облікових рослин на ділянку:",   "plants_plot","5",
-             "Без захисних — лише облікові"),
-            ("Захисних рослин (поч. і кін.):", "guard_ends", "1",
-             "Кількість з кожного боку ряду"),
-            ("Захисних рядів між варіантами:", "guard_rows", "1",
-             "Рядів-буферів між повторностями"),
-        ]
-        for ri, (lbl, key, default, hint) in enumerate(garden_params):
-            tk.Label(self._garden_frame, text=lbl, font=rf
-                     ).grid(row=ri, column=0, sticky="w", pady=2)
-            v = tk.StringVar(value=default); self._gv[key] = v
-            tk.Entry(self._garden_frame, textvariable=v, width=9, font=rf
-                     ).grid(row=ri, column=1, sticky="w", padx=6)
-            tk.Label(self._garden_frame, text=hint,
-                     font=("Times New Roman", 9), fg="#666"
-                     ).grid(row=ri, column=2, sticky="w")
+
+        # Схема садіння — два поля + автоматична мітка
+        scheme_row = tk.Frame(self._garden_frame); scheme_row.pack(fill=tk.X, pady=2)
+        tk.Label(scheme_row, text="Схема садіння:", font=rf).pack(side=tk.LEFT)
+        self._gv["row_sp"]   = tk.StringVar(value="4.0")
+        self._gv["plant_sp"] = tk.StringVar(value="5.0")
+        tk.Entry(scheme_row, textvariable=self._gv["row_sp"],
+                 width=6, font=rf).pack(side=tk.LEFT, padx=(6,1))
+        tk.Label(scheme_row, text="× м ×", font=rf).pack(side=tk.LEFT)
+        tk.Entry(scheme_row, textvariable=self._gv["plant_sp"],
+                 width=6, font=rf).pack(side=tk.LEFT, padx=(1,2))
+        tk.Label(scheme_row, text="м (між рядами × в ряду)",
+                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
+
+        # Облікових рослин на ділянку
+        pp_row = tk.Frame(self._garden_frame); pp_row.pack(fill=tk.X, pady=2)
+        tk.Label(pp_row, text="Облікових рослин на ділянку:", font=rf).pack(side=tk.LEFT)
+        self._gv["plants_plot"] = tk.StringVar(value="5")
+        tk.Entry(pp_row, textvariable=self._gv["plants_plot"],
+                 width=6, font=rf).pack(side=tk.LEFT, padx=6)
+        tk.Label(pp_row, text="(без захисних)", font=("Times New Roman", 9), fg="#666"
+                 ).pack(side=tk.LEFT)
+
+        # Захисні рослини (поч./кін.) — з чекбоксом
+        ge_outer = tk.Frame(self._garden_frame); ge_outer.pack(fill=tk.X, pady=2)
+        self._use_guard_ends = tk.BooleanVar(value=True)
+        tk.Checkbutton(ge_outer, text="Захисні рослини (поч. і кін.):",
+                       variable=self._use_guard_ends, font=rf,
+                       command=self._on_guard_toggle).pack(side=tk.LEFT)
+        self._gv["guard_ends"] = tk.StringVar(value="1")
+        self._guard_ends_entry = tk.Entry(ge_outer, textvariable=self._gv["guard_ends"],
+                                          width=4, font=rf)
+        self._guard_ends_entry.pack(side=tk.LEFT, padx=4)
+        tk.Label(ge_outer, text="з кожного боку ряду",
+                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
+
+        # Захисні ряди між повторностями — з чекбоксом
+        gr_outer = tk.Frame(self._garden_frame); gr_outer.pack(fill=tk.X, pady=2)
+        self._use_guard_rows = tk.BooleanVar(value=True)
+        tk.Checkbutton(gr_outer, text="Захисні ряди між варіантами:",
+                       variable=self._use_guard_rows, font=rf,
+                       command=self._on_guard_toggle).pack(side=tk.LEFT)
+        self._gv["guard_rows"] = tk.StringVar(value="1")
+        self._guard_rows_entry = tk.Entry(gr_outer, textvariable=self._gv["guard_rows"],
+                                          width=4, font=rf)
+        self._guard_rows_entry.pack(side=tk.LEFT, padx=4)
+        tk.Label(gr_outer, text="рядів-буферів між повторностями",
+                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
 
         # ─── Паспорт ───────────────────────────────────────
         nf = tk.LabelFrame(lf, text="5. Паспорт досліду",
@@ -12759,6 +12795,23 @@ class TrialDesignWindow:
     # ═══════════════════════════════════════════════════════
     # Обробники змін
     # ═══════════════════════════════════════════════════════
+    def _on_guard_toggle(self, *_):
+        """Вмикає/вимикає поля захисних рослин і рядів."""
+        e_state = "normal" if self._use_guard_ends.get() else "disabled"
+        r_state = "normal" if self._use_guard_rows.get() else "disabled"
+        self._guard_ends_entry.configure(state=e_state)
+        self._guard_rows_entry.configure(state=r_state)
+        if not self._use_guard_ends.get():
+            self._gv["guard_ends"].set("0")
+        else:
+            if self._gv["guard_ends"].get() in ("", "0"):
+                self._gv["guard_ends"].set("1")
+        if not self._use_guard_rows.get():
+            self._gv["guard_rows"].set("0")
+        else:
+            if self._gv["guard_rows"].get() in ("", "0"):
+                self._gv["guard_rows"].set("1")
+
     def _on_culture(self, *_):
         key = self.culture_var.get()
         cfg = self.CULTURES.get(key, {})
@@ -12774,17 +12827,15 @@ class TrialDesignWindow:
             self._culture_hint.configure(
                 text=f"Одиниця: {unit}  |  Схема: {row_sp}×{plant_sp} м")
             if hasattr(self, '_gv'):
-                # Підказки заповнюємо лише якщо поля порожні
-                if not self._gv["row_sp"].get() or self._gv["row_sp"].get() == "0":
-                    self._gv["row_sp"].set(str(row_sp))
-                if not self._gv["plant_sp"].get() or self._gv["plant_sp"].get() == "0":
-                    self._gv["plant_sp"].set(str(plant_sp))
-                if not self._gv["plants_plot"].get():
-                    self._gv["plants_plot"].set(str(n_plot))
-                if not self._gv["guard_ends"].get():
-                    self._gv["guard_ends"].set(str(g_ends))
-                if not self._gv["guard_rows"].get():
-                    self._gv["guard_rows"].set(str(g_rows))
+                self._gv["row_sp"].set(str(row_sp))
+                self._gv["plant_sp"].set(str(plant_sp))
+                self._gv["plants_plot"].set(str(n_plot))
+                self._gv["guard_ends"].set(str(g_ends))
+                self._gv["guard_rows"].set(str(g_rows))
+                # Синхронізуємо чекбокси
+                self._use_guard_ends.set(g_ends > 0)
+                self._use_guard_rows.set(g_rows > 0)
+                self._on_guard_toggle()
             # Показати садівничий фрейм, сховати польовий
             if hasattr(self, '_garden_frame'):
                 self._field_frame.pack_forget()
@@ -13222,6 +13273,7 @@ class TrialDesignWindow:
         lines = [
             "═"*62,
             "     СПИСОК РАНДОМІЗАЦІЇ ПОЛЬОВОГО ДОСЛІДУ",
+            "     Уманський національний університет садівництва",
             "═"*62,
             f"  Назва:          {d.get('name') or '—'}",
             f"  Рік:            {d.get('year','')}",
@@ -13281,10 +13333,12 @@ class TrialDesignWindow:
         style.configure("Journal.Treeview.Heading",
                         font=("Times New Roman",10,"bold"),
                         background="#1a4b8c",
-                        foreground="white",
-                        relief="flat")
+                        foreground="#ffffff",
+                        relief="raised",
+                        padding=(4, 4))
         style.map("Journal.Treeview.Heading",
-                  background=[("active","#2a5ba8")])
+                  background=[("active","#2a6bd0")],
+                  foreground=[("active","#ffffff")])
         self.journal_tv.configure(style="Journal.Treeview")
 
         if is_garden:
@@ -13404,6 +13458,7 @@ class TrialDesignWindow:
         try:
             import openpyxl
             from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
             d  = self._plan_data; plan = d["plan"]
             ind_text   = self.ind_var.get().strip()
             indicators = [s.strip() for s in ind_text.split(";") if s.strip()]
@@ -13417,6 +13472,8 @@ class TrialDesignWindow:
             nfont = Font(name="Times New Roman", size=11)
             bfont = Font(name="Times New Roman", size=11, bold=True)
             ca    = Alignment(horizontal="center", vertical="center",
+                              wrap_text=True)
+            la    = Alignment(horizontal="left", vertical="center",
                               wrap_text=True)
             thin  = Side(style="thin", color="AAAAAA")
             brd   = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -13432,6 +13489,7 @@ class TrialDesignWindow:
             if is_garden:
                 info_rows = [
                     "ПОЛЬОВИЙ ЖУРНАЛ СПОСТЕРЕЖЕНЬ",
+                    "Уманський національний університет садівництва",
                     f"Дослід: {d.get('name') or '—'}",
                     f"Рік: {d.get('year','')}    Місце: {d.get('loc') or '—'}    Відповідальний: {d.get('resp') or '—'}",
                     f"Культура: {d.get('culture','')}    Дизайн: {d['design_name']}",
@@ -13443,15 +13501,26 @@ class TrialDesignWindow:
             else:
                 info_rows = [
                     "ПОЛЬОВИЙ ЖУРНАЛ СПОСТЕРЕЖЕНЬ",
+                    "Уманський національний університет садівництва",
                     f"Дослід: {d.get('name') or '—'}",
                     f"Рік: {d.get('year','')}    Місце: {d.get('loc') or '—'}    Відповідальний: {d.get('resp') or '—'}",
                     f"Культура: {d.get('culture','')}    Дизайн: {d['design_name']}    "
                     f"Варіантів: {d['k']}    Повторностей: {d['reps']}    "
                     f"Ділянок: {len(plan)}    Площа: {d['pw']}×{d['pl']} м",
                 ]
+            # Визначаємо кількість стовпців для об'єднання шапки
+            if is_garden:
+                n_cols = 4 + len(indicators) + 1
+            else:
+                n_cols = 3 + len(indicators) + 1
             for ri, txt in enumerate(info_rows, 1):
                 c = ws.cell(ri, 1, txt)
                 c.font = bfont if ri == 1 else nfont
+                c.alignment = la
+                if n_cols > 1:
+                    ws.merge_cells(
+                        start_row=ri, start_column=1,
+                        end_row=ri, end_column=n_cols)
 
             # Таблиця журналу
             hr = len(info_rows) + 2
@@ -13481,7 +13550,9 @@ class TrialDesignWindow:
                         vals = [p["plot"], p["rep"], plant_n, p["variant"]] + [""] * len(indicators) + [""]
                         for ci, val in enumerate(vals, 1):
                             c = ws.cell(row_excel, ci, val)
-                            c.font = nfont; c.alignment = ca; c.border = brd
+                            c.font = nfont
+                            c.alignment = ca if ci != 4 else la
+                            c.border = brd
                             if ci <= 4 and even: c.fill = rfill
                         row_excel += 1; row_i += 1
                 else:
@@ -13490,36 +13561,57 @@ class TrialDesignWindow:
                     vals = [p["plot"], p["rep"], p["variant"]] + [""] * len(indicators) + [""]
                     for ci, val in enumerate(vals, 1):
                         c = ws.cell(row_excel, ci, val)
-                        c.font = nfont; c.alignment = ca; c.border = brd
+                        c.font = nfont
+                        c.alignment = ca if ci != 3 else la
+                        c.border = brd
                         if ci <= 3 and even: c.fill = rfill
                     row_excel += 1; row_i += 1
 
-            # Ширини стовпців
-            w_cols = ([8, 10, 10, 32] if is_garden else [9, 14, 32]) + [14]*len(indicators) + [16]
+            # Ширини стовпців — використовуємо get_column_letter щоб не обмежуватись 26
+            w_cols = ([8, 10, 10, 32] if is_garden else [9, 14, 32]) + [14]*len(indicators) + [18]
             for ci, w in enumerate(w_cols, 1):
-                if ci <= 26:
-                    ws.column_dimensions[chr(64+ci)].width = w
-            ws.row_dimensions[hr].height = 30
+                ws.column_dimensions[get_column_letter(ci)].width = w
+            ws.row_dimensions[hr].height = 32
+
+            # Заморозити рядок заголовків таблиці
+            ws.freeze_panes = ws.cell(hr + 1, 1)
 
             # ── Лист 2: Рандомізація ────────────────────────
             ws2 = wb.create_sheet("Рандомізація")
+            r2_info = [
+                "СПИСОК РАНДОМІЗАЦІЇ",
+                "Уманський національний університет садівництва",
+                f"Дослід: {d.get('name') or '—'}    Рік: {d.get('year','')}    Seed: {d['seed']}",
+                f"Дизайн: {d['design_name']}    Варіантів: {d['k']}    Повторностей: {d['reps']}",
+            ]
+            for ri, txt in enumerate(r2_info, 1):
+                c = ws2.cell(ri, 1, txt)
+                c.font = bfont if ri == 1 else nfont
+                c.alignment = la
+                ws2.merge_cells(start_row=ri, start_column=1,
+                                end_row=ri, end_column=3)
             r_hdrs = ["№ ділянки","Повторність","Варіант"]
+            hr2 = len(r2_info) + 2
             for ci, h in enumerate(r_hdrs, 1):
-                c = ws2.cell(1, ci, h)
+                c = ws2.cell(hr2, ci, h)
                 c.fill = hfill; c.font = hfont
                 c.alignment = ca; c.border = brd
             for ri, p in enumerate(sorted(plan, key=lambda x: x["plot"])):
-                row = 2 + ri
+                row = hr2 + 1 + ri
                 fc = PatternFill("solid",
                                  fgColor=vcols.get(p["variant"],"EEEEEE"))
                 for ci, val in enumerate(
                     [p["plot"], p["rep"], p["variant"]], 1
                 ):
                     c = ws2.cell(row, ci, val)
-                    c.font = nfont; c.alignment = ca; c.border = brd
+                    c.font = nfont
+                    c.alignment = ca if ci != 3 else la
+                    c.border = brd
                     if ci == 3: c.fill = fc
-            for ci, w in zip([1,2,3],[9,14,36]):
-                ws2.column_dimensions[chr(64+ci)].width = w
+            for ci, w in zip([1,2,3],[9,14,40]):
+                ws2.column_dimensions[get_column_letter(ci)].width = w
+            ws2.row_dimensions[hr2].height = 28
+            ws2.freeze_panes = ws2.cell(hr2 + 1, 1)
 
             wb.save(path)
             messagebox.showinfo("Збережено",
@@ -13527,7 +13619,9 @@ class TrialDesignWindow:
                 "Лист 1 — Польовий журнал\n"
                 "Лист 2 — Рандомізація")
         except Exception as ex:
-            messagebox.showerror("Помилка збереження", str(ex))
+            import traceback
+            messagebox.showerror("Помилка збереження",
+                str(ex) + "\n\n" + traceback.format_exc()[-600:])
 
     def _save_png(self):
         if not self._plan_data:
