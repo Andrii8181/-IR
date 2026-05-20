@@ -6320,11 +6320,13 @@ class RegressionWindow:
                 messagebox.showerror("Помилка", str(ex))
 
         # ── РЯД 1: Текст ліво + Графік регресії право ─────────
-        row1 = tk.Frame(self.res_frame); row1.pack(fill=tk.BOTH, expand=False)
+        row1 = tk.Frame(self.res_frame, height=370)
+        row1.pack(fill=tk.X)
+        row1.pack_propagate(False)
 
         # Текстовий звіт (ліворуч у row1)
-        txt_f = tk.Frame(row1, bg="#f8f8f8", width=280)
-        txt_f.pack(side=tk.LEFT, fill=tk.Y, padx=(0,4))
+        txt_f = tk.Frame(row1, bg="#f8f8f8", width=270)
+        txt_f.pack(side=tk.LEFT, fill=tk.Y)
         txt_f.pack_propagate(False)
 
         tk.Label(txt_f, text="РЕЗУЛЬТАТИ РЕГРЕСІЇ",
@@ -6360,9 +6362,8 @@ class RegressionWindow:
         if not HAS_MPL:
             messagebox.showwarning("","matplotlib недоступний."); return
 
-        g1_outer = tk.Frame(row1, width=560)
-        g1_outer.pack(side=tk.LEFT, fill=tk.Y)
-        g1_outer.pack_propagate(False)
+        g1_outer = tk.Frame(row1)
+        g1_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # Toolbar графіка 1
         tb1 = tk.Frame(g1_outer, bg="#f0f0f0", padx=4, pady=2); tb1.pack(fill=tk.X)
@@ -6406,11 +6407,9 @@ class RegressionWindow:
                                      label=f"{ci_pct}% ДІ")
             except Exception: pass
         custom_title = getattr(self, '_graph_title', '')
-        ax1.set_title(custom_title if custom_title
-                      else f"{model_name}", fontsize=10)
+        ax1.set_title(custom_title if custom_title else f"{model_name}", fontsize=10)
         ax1.set_xlabel("x", fontsize=9); ax1.set_ylabel("y", fontsize=9)
         ax1.legend(fontsize=8)
-        # Формула
         r2_str = f"R²={fmt(r['R2'],4)}"
         if not math.isnan(r.get("R2_adj",float("nan"))):
             r2_str += f"  R²adj={fmt(r['R2_adj'],4)}"
@@ -6425,11 +6424,7 @@ class RegressionWindow:
         ax1.spines["top"].set_visible(False); ax1.spines["right"].set_visible(False)
         fig1.tight_layout()
         self._fig = fig1
-
-        g1_plot = tk.Frame(g1_outer, height=340)
-        g1_plot.pack(fill=tk.X)
-        g1_plot.pack_propagate(False)
-        embed_figure(fig1, g1_plot)
+        embed_figure(fig1, g1_outer)
 
         # ── РЯД 2: Аналіз залишків ─────────────────────────────
         tk.Frame(self.res_frame, bg="#e0e0e0", height=1).pack(fill=tk.X, pady=4)
@@ -6522,11 +6517,7 @@ class RegressionWindow:
 
         fig2.tight_layout()
         self._fig2 = fig2
-
-        g2_plot = tk.Frame(row2, height=340)
-        g2_plot.pack(fill=tk.X)
-        g2_plot.pack_propagate(False)
-        embed_figure(fig2, g2_plot)
+        embed_figure(fig2, row2)
 
         # ── Виявлення викидів ─────────────────────────────────
         out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
@@ -12350,41 +12341,47 @@ class TrialDesignWindow:
     # ── Типи культур з налаштуваннями ────────────────────────
     CULTURES = {
         "Зернові / польові культури": {
-            "plot_w": 3.0, "plot_l": 10.0,
-            "unit": "ділянка",
+            "plot_w": 3.0, "plot_l": 10.0, "unit": "ділянка",
+            "garden": False,
             "indicators": ["Висота рослин, см", "Маса 1000 зерен, г",
                            "Врожайність, т/га", "Вміст білку, %"],
         },
         "Садівництво (дерева)": {
-            "plot_w": 4.0, "plot_l": 5.0,
-            "unit": "дерево",
+            "plot_w": 4.0, "plot_l": 5.0, "unit": "дерево",
+            "garden": True,
+            "row_sp": 4.0, "plant_sp": 5.0,
+            "plants_plot": 5, "guard_ends": 1, "guard_rows": 1,
             "indicators": ["Висота дерева, м", "Діаметр крони, м",
                            "Врожайність з дерева, кг", "Маса плоду, г",
                            "Вміст ЦРР, °Brix", "% зав'язування квіток"],
         },
         "Ягідники": {
-            "plot_w": 1.5, "plot_l": 5.0,
-            "unit": "кущ",
+            "plot_w": 2.0, "plot_l": 0.5, "unit": "кущ",
+            "garden": True,
+            "row_sp": 2.0, "plant_sp": 0.5,
+            "plants_plot": 8, "guard_ends": 2, "guard_rows": 1,
             "indicators": ["Висота куща, см", "Кількість пагонів",
                            "Врожайність з куща, кг", "Маса ягоди, г",
                            "Вміст ЦРР, °Brix"],
         },
         "Овочівництво (відкритий ґрунт)": {
-            "plot_w": 2.0, "plot_l": 5.0,
-            "unit": "ділянка",
+            "plot_w": 2.0, "plot_l": 5.0, "unit": "ділянка",
+            "garden": False,
             "indicators": ["Висота рослин, см", "Маса плоду, г",
                            "Врожайність, т/га", "Товарність, %",
                            "Вихід стандарту, %"],
         },
         "Захищений ґрунт (теплиця)": {
-            "plot_w": 1.0, "plot_l": 4.0,
-            "unit": "грядка",
+            "plot_w": 1.0, "plot_l": 4.0, "unit": "грядка",
+            "garden": False,
             "indicators": ["Висота рослин, см", "Кількість плодів/рослину",
                            "Врожайність, кг/м²", "Маса плоду, г"],
         },
         "Виноградарство": {
-            "plot_w": 3.0, "plot_l": 10.0,
-            "unit": "кущ",
+            "plot_w": 3.0, "plot_l": 1.5, "unit": "кущ",
+            "garden": True,
+            "row_sp": 3.0, "plant_sp": 1.5,
+            "plants_plot": 6, "guard_ends": 2, "guard_rows": 1,
             "indicators": ["Маса грона, г", "Кількість грон/кущ",
                            "Врожайність з куща, кг", "Вміст ЦРР, °Brix",
                            "Кислотність, г/л"],
@@ -12602,19 +12599,58 @@ class TrialDesignWindow:
         self._pv = {}
         for ri, (lbl, key, default, hint) in enumerate([
             ("Повторностей:", "reps", "3",
-             "Кількість повторностей (блоків)"),
+             "Кількість повторностей (рядів)"),
             ("Seed рандомізації:", "seed", "2024",
              "Число для відтворення жеребкування. ≠ рік!"),
-            ("Ширина ділянки, м:", "pw", "5",
-             "Реальна ширина однієї ділянки"),
-            ("Довжина ділянки, м:", "pl", "10",
-             "Реальна довжина однієї ділянки"),
         ]):
             tk.Label(pf, text=lbl, font=rf).grid(row=ri, column=0, sticky="w", pady=2)
             v = tk.StringVar(value=default); self._pv[key] = v
             tk.Entry(pf, textvariable=v, width=9, font=rf
                      ).grid(row=ri, column=1, sticky="w", padx=6)
             tk.Label(pf, text=hint, font=("Times New Roman", 9), fg="#666"
+                     ).grid(row=ri, column=2, sticky="w")
+
+        # ─── Польові параметри (для зернових/овочів) ────────
+        self._field_frame = tk.LabelFrame(lf, text="Розміри ділянки",
+                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+        self._field_frame.pack(fill=tk.X, pady=(0, 4))
+        for ri, (lbl, key, default, hint) in enumerate([
+            ("Ширина, м:", "pw", "5", "Ширина ділянки"),
+            ("Довжина, м:", "pl", "10", "Довжина ділянки"),
+        ]):
+            tk.Label(self._field_frame, text=lbl, font=rf
+                     ).grid(row=ri, column=0, sticky="w", pady=2)
+            v = tk.StringVar(value=default); self._pv[key] = v
+            tk.Entry(self._field_frame, textvariable=v, width=9, font=rf
+                     ).grid(row=ri, column=1, sticky="w", padx=6)
+            tk.Label(self._field_frame, text=hint,
+                     font=("Times New Roman", 9), fg="#666"
+                     ).grid(row=ri, column=2, sticky="w")
+
+        # ─── Садівничі параметри ─────────────────────────────
+        self._garden_frame = tk.LabelFrame(lf, text="Параметри садіння",
+                            font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+        self._gv = {}
+        garden_params = [
+            ("Схема садіння — між рядами, м:", "row_sp",     "4.0",
+             "Відстань між рядами"),
+            ("Схема садіння — в ряду, м:",     "plant_sp",   "5.0",
+             "Відстань між рослинами в ряду"),
+            ("Облікових рослин на ділянку:",   "plants_plot","5",
+             "Без захисних — лише облікові"),
+            ("Захисних рослин (поч. і кін.):", "guard_ends", "1",
+             "Кількість з кожного боку ряду"),
+            ("Захисних рядів між варіантами:", "guard_rows", "1",
+             "Рядів-буферів між повторностями"),
+        ]
+        for ri, (lbl, key, default, hint) in enumerate(garden_params):
+            tk.Label(self._garden_frame, text=lbl, font=rf
+                     ).grid(row=ri, column=0, sticky="w", pady=2)
+            v = tk.StringVar(value=default); self._gv[key] = v
+            tk.Entry(self._garden_frame, textvariable=v, width=9, font=rf
+                     ).grid(row=ri, column=1, sticky="w", padx=6)
+            tk.Label(self._garden_frame, text=hint,
+                     font=("Times New Roman", 9), fg="#666"
                      ).grid(row=ri, column=2, sticky="w")
 
         # ─── Паспорт ───────────────────────────────────────
@@ -12698,16 +12734,40 @@ class TrialDesignWindow:
     def _on_culture(self, *_):
         key = self.culture_var.get()
         cfg = self.CULTURES.get(key, {})
-        # Підказка розміру
         unit = cfg.get("unit", "ділянка")
-        pw = cfg.get("plot_w", 5); pl = cfg.get("plot_l", 10)
-        self._culture_hint.configure(
-            text=f"Одиниця: {unit}  |  Типові розміри: {pw}×{pl} м")
-        # Автозаповнення розмірів
-        if hasattr(self, '_pv'):
-            self._pv["pw"].set(str(pw))
-            self._pv["pl"].set(str(pl))
-        # Автозаповнення показників журналу
+        is_garden = cfg.get("garden", False)
+
+        if is_garden:
+            row_sp    = cfg.get("row_sp",    4.0)
+            plant_sp  = cfg.get("plant_sp",  5.0)
+            n_plot    = cfg.get("plants_plot",5)
+            g_ends    = cfg.get("guard_ends", 1)
+            g_rows    = cfg.get("guard_rows", 1)
+            self._culture_hint.configure(
+                text=f"Одиниця: {unit}  |  Схема: {row_sp}×{plant_sp} м")
+            if hasattr(self, '_gv'):
+                self._gv["row_sp"].set(str(row_sp))
+                self._gv["plant_sp"].set(str(plant_sp))
+                self._gv["plants_plot"].set(str(n_plot))
+                self._gv["guard_ends"].set(str(g_ends))
+                self._gv["guard_rows"].set(str(g_rows))
+            # Показати садівничий фрейм, сховати польовий
+            if hasattr(self, '_garden_frame'):
+                self._field_frame.pack_forget()
+                self._garden_frame.pack(fill=tk.X, pady=(0,4),
+                                        after=self._field_frame)
+        else:
+            pw = cfg.get("plot_w", 5); pl = cfg.get("plot_l", 10)
+            self._culture_hint.configure(
+                text=f"Одиниця: {unit}  |  Типові розміри: {pw}×{pl} м")
+            if hasattr(self, '_pv'):
+                self._pv["pw"].set(str(pw))
+                self._pv["pl"].set(str(pl))
+            # Показати польовий фрейм, сховати садівничий
+            if hasattr(self, '_garden_frame'):
+                self._garden_frame.pack_forget()
+                self._field_frame.pack(fill=tk.X, pady=(0,4))
+
         indicators = cfg.get("indicators", [])
         if hasattr(self, 'ind_var'):
             self.ind_var.set("; ".join(indicators))
@@ -12753,6 +12813,145 @@ class TrialDesignWindow:
     # Генерація плану
     # ═══════════════════════════════════════════════════════
     def _generate(self):
+        import random
+
+        variants = [v.strip() for v in
+                    self.var_text.get("1.0", "end").splitlines() if v.strip()]
+        if len(variants) < 2:
+            messagebox.showwarning("", "Введіть щонайменше 2 варіанти."); return
+
+        try:
+            reps = int(self._pv["reps"].get())
+            seed = int(self._pv["seed"].get())
+        except ValueError:
+            messagebox.showwarning("", "Перевірте числові поля."); return
+
+        cfg = self.CULTURES.get(self.culture_var.get(), {})
+        is_garden = cfg.get("garden", False)
+
+        # ── Параметри залежно від режиму ──────────────────────
+        if is_garden:
+            try:
+                row_sp    = float(self._gv["row_sp"].get())
+                plant_sp  = float(self._gv["plant_sp"].get())
+                n_plot    = int(self._gv["plants_plot"].get())
+                g_ends    = int(self._gv["guard_ends"].get())
+                g_rows    = int(self._gv["guard_rows"].get())
+            except ValueError:
+                messagebox.showwarning("", "Перевірте параметри садіння."); return
+            pw = row_sp; pl = plant_sp  # для сумісності
+        else:
+            try:
+                pw = float(self._pv["pw"].get())
+                pl = float(self._pv["pl"].get())
+            except ValueError:
+                messagebox.showwarning("", "Перевірте розміри ділянки."); return
+            row_sp = pw; plant_sp = pl
+            n_plot = 1; g_ends = 0; g_rows = 0
+
+        design = self.design_var.get()
+        rng = random.Random(seed)
+        k = len(variants)
+
+        if design == "latin" and k > 8:
+            messagebox.showwarning("Латинський квадрат",
+                f"Максимум 8 варіантів. У вас {k}."); return
+
+        plan = []
+
+        if design == "crd":
+            all_p = variants * reps; rng.shuffle(all_p)
+            for i, v in enumerate(all_p):
+                plan.append({"plot": i+1, "rep": "–",
+                             "variant": v, "row": i//k+1, "col": i%k+1})
+
+        elif design == "rcbd":
+            pn = 0
+            for b in range(1, reps+1):
+                bv = variants[:]; rng.shuffle(bv)
+                for i, v in enumerate(bv):
+                    pn += 1
+                    plan.append({"plot": pn, "rep": f"Повт. {b}",
+                                "variant": v, "row": b, "col": i+1})
+
+        elif design == "latin":
+            reps = k
+            base = list(range(k))
+            rows_p = [base[:]]
+            for _ in range(k-1):
+                rows_p.append(rows_p[-1][1:] + [rows_p[-1][0]])
+            rng.shuffle(rows_p)
+            cp = list(range(k)); rng.shuffle(cp)
+            pn = 0
+            for r in range(k):
+                for c in range(k):
+                    pn += 1
+                    plan.append({"plot": pn, "rep": f"Рядок {r+1}",
+                                "variant": variants[rows_p[r][cp[c]]],
+                                "row": r+1, "col": c+1,
+                                "col_label": f"Стовп. {c+1}"})
+
+        elif design == "split":
+            sp_vars = [v.strip() for v in
+                       self.sp_text.get("1.0", "end").splitlines() if v.strip()]
+            if len(sp_vars) < 2:
+                messagebox.showwarning("", "Введіть щонайменше 2 sub-plot варіанти."); return
+            pn = 0
+            for b in range(1, reps+1):
+                wp_o = variants[:]; rng.shuffle(wp_o)
+                for wp in wp_o:
+                    sp_o = sp_vars[:]; rng.shuffle(sp_o)
+                    for sp in sp_o:
+                        pn += 1
+                        plan.append({"plot": pn, "rep": f"Повт. {b}",
+                                    "variant": f"{wp} / {sp}",
+                                    "wp": wp, "sp": sp, "row": b,
+                                    "col": wp_o.index(wp)*len(sp_vars)+sp_o.index(sp)+1})
+
+        design_name = {v: l for v, l, _ in self.DESIGNS}.get(design, design)
+
+        # Розраховуємо площу
+        if is_garden:
+            plot_area = n_plot * row_sp * plant_sp
+            total_area = plot_area * len(plan)
+            area_msg = (f"Облікових рослин/ділянку: {n_plot}\n"
+                       f"Схема садіння: {row_sp}×{plant_sp} м\n"
+                       f"Площа ділянки: {plot_area:.1f} м²\n"
+                       f"Загальна площа (облікова): {total_area:.0f} м²")
+        else:
+            plot_area = pw * pl
+            total_area = plot_area * len(plan)
+            area_msg = f"Площа ділянки: {pw}×{pl} м = {plot_area:.0f} м²\nЗагальна площа: {total_area:.0f} м²"
+
+        self._plan_data = {
+            "plan": plan, "variants": variants, "reps": reps,
+            "design": design, "design_name": design_name,
+            "seed": seed, "k": k, "pw": pw, "pl": pl,
+            "is_garden": is_garden,
+            "row_sp": row_sp if is_garden else pw,
+            "plant_sp": plant_sp if is_garden else pl,
+            "n_plot": n_plot, "g_ends": g_ends, "g_rows": g_rows,
+            "culture": self.culture_var.get(),
+            "unit": cfg.get("unit", "ділянка"),
+            "name": self._nv["name"].get(),
+            "year": self._nv["year"].get(),
+            "loc":  self._nv["loc"].get(),
+            "resp": self._nv["resp"].get(),
+        }
+
+        self._draw_scheme()
+        self._fill_rand()
+        self._fill_journal()
+        self.nb.select(0)
+
+        messagebox.showinfo("Готово",
+            f"План згенеровано!\n\n"
+            f"Дизайн: {design_name}\n"
+            f"Варіантів: {k}   |   Повторностей: {reps}\n"
+            f"Ділянок: {len(plan)}\n"
+            f"{area_msg}\n\n"
+            f"Seed рандомізації: {seed}\n"
+            f"⚠ Збережіть seed у документацію!")
         import random
 
         variants = [v.strip() for v in
@@ -12867,13 +13066,20 @@ class TrialDesignWindow:
         if not self._plan_data: return
         cv = self._scheme_cv; cv.delete("all")
         d = self._plan_data; plan = d["plan"]
+        is_garden = d.get("is_garden", False)
 
+        if is_garden:
+            self._draw_scheme_garden(cv, d, plan)
+        else:
+            self._draw_scheme_field(cv, d, plan)
+
+    def _draw_scheme_field(self, cv, d, plan):
+        """Польова схема — кожна клітинка = ділянка."""
         PALETTES = ["#aed6f1","#a9dfbf","#f9e79f","#f1948a","#d2b4de",
                     "#a3e4d7","#fad7a0","#d5d8dc","#82e0aa","#f0b27a",
                     "#85c1e9","#f7dc6f","#c39bd3","#76d7c4","#f8c471"]
         all_v = list(dict.fromkeys(p["variant"] for p in plan))
         cmap  = {v: PALETTES[i % len(PALETTES)] for i, v in enumerate(all_v)}
-
         cols_set = sorted(set(p["col"] for p in plan))
         rows_set = sorted(set(p["row"] for p in plan))
         nc = len(cols_set); nr = len(rows_set)
@@ -12881,62 +13087,201 @@ class TrialDesignWindow:
         ch = max(44, min(72,  400 // nr))
         pad = 5; x0 = 110; y0 = 55
 
-        # Заголовок
-        title = (d.get("name") or "План досліду")
-        sub   = (f"{d.get('culture','')}  |  {d['design_name']}  |  "
-                 f"Seed={d['seed']}  |  {d.get('year','')}")
-        cv.create_text(x0 + nc*cw//2, 16,
-                       text=title, font=("Times New Roman",12,"bold"), fill="#000")
-        cv.create_text(x0 + nc*cw//2, 34,
-                       text=sub, font=("Times New Roman",9), fill="#555")
+        title = d.get("name") or "План досліду"
+        sub   = f"{d.get('culture','')}  |  {d['design_name']}  |  Seed={d['seed']}  |  {d.get('year','')}"
+        cv.create_text(x0+nc*cw//2, 16, text=title,
+                       font=("Times New Roman",12,"bold"), fill="#000")
+        cv.create_text(x0+nc*cw//2, 34, text=sub,
+                       font=("Times New Roman",9), fill="#555")
 
-        # Мітки рядків
         rep_map = {}
         for p in plan: rep_map[p["row"]] = p["rep"]
         for i, r in enumerate(rows_set):
             cv.create_text(x0-6, y0+i*ch+ch//2,
                            text=rep_map.get(r, f"Ряд {r}"),
                            anchor="e", font=("Times New Roman",9,"bold"), fill="#333")
-
-        # Мітки стовпців
         for j, c in enumerate(cols_set):
-            lbl = plan[[p for p in plan if p["col"]==c][0]
-                       ].get("col_label", f"#{c}")
+            lbl = next((p for p in plan if p["col"]==c), {}).get("col_label", f"#{c}")
             cv.create_text(x0+j*cw+cw//2, y0-14,
                            text=lbl, font=("Times New Roman",8), fill="#555")
-
-        # Ділянки
         for p in plan:
-            ci = cols_set.index(p["col"])
-            ri = rows_set.index(p["row"])
-            x1 = x0+ci*cw; y1 = y0+ri*ch
-            x2 = x1+cw-pad; y2 = y1+ch-pad
+            ci = cols_set.index(p["col"]); ri = rows_set.index(p["row"])
+            x1,y1 = x0+ci*cw, y0+ri*ch; x2,y2 = x1+cw-pad, y1+ch-pad
             cv.create_rectangle(x1,y1,x2,y2,
                                 fill=cmap.get(p["variant"],"#eee"),
                                 outline="#888", width=1)
-            cv.create_text(x1+5, y1+6,
-                           text=f"№{p['plot']}",
+            cv.create_text(x1+5,y1+6, text=f"№{p['plot']}",
                            anchor="nw", font=("Courier New",7), fill="#555")
-            short = (p["variant"][:14]+"…"
-                     if len(p["variant"]) > 14 else p["variant"])
-            cv.create_text((x1+x2)//2, (y1+y2)//2, text=short,
+            short = p["variant"][:14]+"…" if len(p["variant"])>14 else p["variant"]
+            cv.create_text((x1+x2)//2,(y1+y2)//2, text=short,
                            font=("Times New Roman",8), fill="#000", width=cw-10)
 
-        # Легенда
-        leg_y = y0 + nr*ch + 16
+        leg_y = y0+nr*ch+16
         cv.create_text(x0, leg_y, text="Легенда:",
                        anchor="w", font=("Times New Roman",10,"bold"))
-        cols_per_row = 3
+        cpr = 3
+        for i,v in enumerate(all_v):
+            lx = x0+(i%cpr)*240; ly = leg_y+18+(i//cpr)*20
+            cv.create_rectangle(lx,ly,lx+13,ly+13, fill=cmap[v], outline="#888")
+            cv.create_text(lx+17,ly+7, text=v, anchor="w", font=("Times New Roman",9))
+
+        tot_w = x0+nc*cw+20
+        tot_h = leg_y+22*(len(all_v)//cpr+2)+10
+        cv.configure(scrollregion=(0,0,tot_w,tot_h))
+
+    def _draw_scheme_garden(self, cv, d, plan):
+        """
+        Садівнича схема — кожна клітинка = одна рослина.
+        Захисні рослини на початку/кінці ряду — сірі.
+        Захисні ряди між повторностями — штриховані.
+        """
+        PALETTES = ["#aed6f1","#a9dfbf","#f9e79f","#f1948a","#d2b4de",
+                    "#a3e4d7","#fad7a0","#d5d8dc","#82e0aa","#f0b27a",
+                    "#85c1e9","#f7dc6f","#c39bd3","#76d7c4","#f8c471"]
+        GUARD_COLOR  = "#d0d0d0"   # захисні рослини
+        GUARD_STIPPLE = "gray50"   # захисний ряд (штрих)
+
+        all_v = list(dict.fromkeys(p["variant"] for p in plan))
+        cmap  = {v: PALETTES[i % len(PALETTES)] for i, v in enumerate(all_v)}
+
+        n_plot   = d.get("n_plot", 5)
+        g_ends   = d.get("g_ends", 1)
+        g_rows   = d.get("g_rows", 1)
+        reps     = d.get("reps",   3)
+        k        = d.get("k",      4)   # кількість варіантів
+        design   = d.get("design", "rcbd")
+        row_sp   = d.get("row_sp",  4.0)
+        plant_sp = d.get("plant_sp",5.0)
+        unit     = d.get("unit",   "дерево")
+
+        # Загальна кількість рослин у ряду:
+        # захисні_поч + [варіант_1 ... варіант_k] (повторяється n_plot) + захисні_кін
+        # Для RCBD: 1 ряд = 1 повторність = k варіантів × n_plot рослин
+        total_plants_row = g_ends + k * n_plot + g_ends
+        # Рядів на схемі: reps повторностей + (reps-1)*g_rows захисних рядів
+        total_rows = reps + (reps - 1) * g_rows
+
+        # Розмір клітинки
+        cw = max(28, min(60, 700 // total_plants_row))
+        ch = max(28, min(55, 500 // total_rows))
+        pad = 3; x0 = 120; y0 = 70
+
+        # Заголовок
+        title = d.get("name") or "Садівничий дослід"
+        sub   = (f"{d.get('culture','')}  |  {d['design_name']}  |  "
+                 f"Схема: {row_sp}×{plant_sp} м  |  "
+                 f"Рослин/ділянку: {n_plot}  |  Seed={d['seed']}")
+        cv.create_text(x0 + total_plants_row*cw//2, 18,
+                       text=title, font=("Times New Roman",12,"bold"), fill="#000")
+        cv.create_text(x0 + total_plants_row*cw//2, 36,
+                       text=sub, font=("Times New Roman",9), fill="#555")
+
+        # Мітки колонок (позиції рослин)
+        for ci in range(total_plants_row):
+            if ci < g_ends or ci >= total_plants_row - g_ends:
+                lbl = "З"   # Захисна
+            else:
+                pos = ci - g_ends
+                var_idx = pos // n_plot
+                plant_in_var = pos % n_plot + 1
+                lbl = f"#{plant_in_var}"
+            cv.create_text(x0+ci*cw+cw//2, y0-14,
+                           text=lbl, font=("Times New Roman",7), fill="#777")
+
+        # Рядки (повторності + захисні ряди)
+        row_screen = 0   # лічильник рядків на екрані
+        for rep_idx in range(reps):
+            # Мітка повторності
+            row_y = y0 + row_screen * ch
+            cv.create_text(x0-6, row_y+ch//2,
+                           text=f"Повт.{rep_idx+1}",
+                           anchor="e", font=("Times New Roman",8,"bold"), fill="#333")
+
+            # Беремо план для цієї повторності
+            rep_plan = [p for p in plan if p["row"] == rep_idx+1]
+            # Будуємо порядок варіантів у ряду
+            col_to_var = {p["col"]: p["variant"] for p in rep_plan}
+
+            # Малюємо рослини в ряду
+            for ci in range(total_plants_row):
+                x1 = x0 + ci * cw; y1 = row_y
+                x2 = x1 + cw - pad; y2 = y1 + ch - pad
+
+                if ci < g_ends or ci >= total_plants_row - g_ends:
+                    # Захисна рослина на початку/кінці
+                    cv.create_oval(x1+2, y1+2, x2-2, y2-2,
+                                   fill=GUARD_COLOR, outline="#999", width=1)
+                    cv.create_text((x1+x2)//2, (y1+y2)//2,
+                                   text="З", font=("Times New Roman",7), fill="#888")
+                else:
+                    pos = ci - g_ends
+                    var_col = pos // n_plot + 1  # номер варіанту (стовпець)
+                    variant = col_to_var.get(var_col, "")
+                    color = cmap.get(variant, "#eee")
+                    # Коло = дерево/кущ
+                    cv.create_oval(x1+2, y1+2, x2-2, y2-2,
+                                   fill=color, outline="#666", width=1)
+                    plant_in_var = pos % n_plot + 1
+                    cv.create_text((x1+x2)//2, (y1+y2)//2,
+                                   text=str(plant_in_var),
+                                   font=("Times New Roman",7), fill="#000")
+
+            row_screen += 1
+
+            # Захисні ряди між повторностями
+            if rep_idx < reps - 1:
+                for gr in range(g_rows):
+                    gy = y0 + row_screen * ch
+                    cv.create_text(x0-6, gy+ch//2,
+                                   text="Захисний", anchor="e",
+                                   font=("Times New Roman",7,"italic"), fill="#aaa")
+                    for ci in range(total_plants_row):
+                        x1 = x0+ci*cw; y1 = gy
+                        x2 = x1+cw-pad; y2 = y1+ch-pad
+                        cv.create_oval(x1+2, y1+2, x2-2, y2-2,
+                                       fill="#e8e8e8", outline="#bbb",
+                                       width=1, stipple=GUARD_STIPPLE
+                                       if GUARD_STIPPLE else "")
+                    row_screen += 1
+
+        # Роздільники між варіантами у рядку (вертикальні лінії)
+        for var_i in range(k+1):
+            lx = x0 + (g_ends + var_i * n_plot) * cw
+            cv.create_line(lx, y0-5, lx, y0+reps*ch + (reps-1)*g_rows*ch + 5,
+                           fill="#1a4b8c", width=1, dash=(4,3))
+
+        # Легенда варіантів
+        leg_y = y0 + total_rows * ch + 20
+        cv.create_text(x0, leg_y, text="Легенда (варіанти):",
+                       anchor="w", font=("Times New Roman",10,"bold"))
+        cpr = 3
         for i, v in enumerate(all_v):
-            lx = x0 + (i % cols_per_row)*240
-            ly = leg_y + 18 + (i // cols_per_row)*20
-            cv.create_rectangle(lx, ly, lx+13, ly+13,
-                                fill=cmap[v], outline="#888")
-            cv.create_text(lx+17, ly+7, text=v, anchor="w",
+            lx = x0 + (i%cpr)*260; ly = leg_y+18+(i//cpr)*22
+            cv.create_oval(lx, ly, lx+14, ly+14, fill=cmap[v], outline="#666")
+            cv.create_text(lx+18, ly+7, text=v, anchor="w",
                            font=("Times New Roman",9))
 
-        tot_w = x0 + nc*cw + 20
-        tot_h = leg_y + 22*(len(all_v)//cols_per_row+2) + 10
+        leg_y2 = leg_y + 18 + ((len(all_v)-1)//cpr+1)*22 + 8
+        # Пояснення символів
+        cv.create_oval(x0, leg_y2, x0+14, leg_y2+14,
+                       fill=GUARD_COLOR, outline="#999")
+        cv.create_text(x0+18, leg_y2+7,
+                       text="З — захисна рослина (не обліковується)",
+                       anchor="w", font=("Times New Roman",9), fill="#666")
+        cv.create_oval(x0, leg_y2+20, x0+14, leg_y2+34,
+                       fill="#e8e8e8", outline="#bbb")
+        cv.create_text(x0+18, leg_y2+27,
+                       text="Захисний ряд між повторностями",
+                       anchor="w", font=("Times New Roman",9), fill="#666")
+        # Схема садіння
+        cv.create_text(x0, leg_y2+50,
+                       text=f"Схема садіння: {row_sp} м × {plant_sp} м  |  "
+                            f"Облікових {unit}/ділянку: {n_plot}  |  "
+                            f"Захисних з кожного боку: {g_ends}",
+                       anchor="w", font=("Times New Roman",9), fill="#333")
+
+        tot_w = x0 + total_plants_row*cw + 20
+        tot_h = leg_y2 + 70
         cv.configure(scrollregion=(0, 0, tot_w, tot_h))
 
     # ═══════════════════════════════════════════════════════
@@ -13361,34 +13706,51 @@ def _SADTk_new_init(self, root):
     header.pack(fill=tk.X, side=tk.TOP)
     header.pack_propagate(False)
 
-    # Логотип і назва
+
+    # ── Логотип і назва ───────────────────────────────────
     logo_frm = tk.Frame(header, bg="#0d1020")
-    logo_frm.pack(side=tk.LEFT, padx=16, pady=8)
-    try:
+    logo_frm.pack(side=tk.LEFT, padx=12, pady=4)
+
+    # Завантажуємо Logo.png, fallback — icon.ico
+    def _load_logo(size):
         from PIL import Image, ImageTk
-        img = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                      "icon.ico")).resize((34,34), Image.LANCZOS)
-        _logo_img = ImageTk.PhotoImage(img); root._logo_img = _logo_img
-        tk.Label(logo_frm, image=_logo_img, bg="#0d1020").pack(side=tk.LEFT, padx=(0,8))
+        base = os.path.dirname(os.path.abspath(__file__))
+        for fname in ("Logo.png", "logo.png", "icon.ico"):
+            p = os.path.join(base, fname)
+            if os.path.exists(p):
+                img = Image.open(p).convert("RGBA").resize(size, Image.LANCZOS)
+                return ImageTk.PhotoImage(img)
+        return None
+
+    try:
+        _logo_img = _load_logo((44, 44))
+        if _logo_img:
+            root._logo_img = _logo_img
+            tk.Label(logo_frm, image=_logo_img, bg="#0d1020"
+                     ).pack(side=tk.LEFT, padx=(0, 10))
     except Exception: pass
-    tk.Label(logo_frm, text="S.A.D.", bg="#0d1020", fg=C["text"],
-             font=("Arial",16,"bold")).pack(side=tk.LEFT)
-    tk.Label(logo_frm, text=" Статистичний аналіз даних", bg="#0d1020",
-             fg=C["sub"], font=("Arial",10)).pack(side=tk.LEFT, pady=4)
+
+    # Назва
+    name_f = tk.Frame(logo_frm, bg="#0d1020"); name_f.pack(side=tk.LEFT)
+    tk.Label(name_f, text="S.A.D.", bg="#0d1020", fg=C["text"],
+             font=("Arial", 18, "bold")).pack(anchor="w")
+    tk.Label(name_f, text="Статистичний аналіз даних", bg="#0d1020",
+             fg=C["sub"], font=("Arial", 9)).pack(anchor="w")
 
     # Права частина header — версія, розробник, підтримка
     hr = tk.Frame(header, bg="#0d1020"); hr.pack(side=tk.RIGHT, padx=16)
     def _about():
         dlg = tk.Toplevel(root); dlg.title("Про програму S.A.D.")
-        dlg.geometry("480x520"); dlg.resizable(False, False)
+        dlg.geometry("480x560"); dlg.resizable(False, False)
         dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
+
+        # Логотип у діалозі
         try:
-            from PIL import Image, ImageTk
-            img2 = Image.open(os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "icon.ico")
-            ).resize((72, 72), Image.LANCZOS)
-            _li = ImageTk.PhotoImage(img2); dlg._li = _li
-            tk.Label(dlg, image=_li, bg=C["card"]).pack(pady=(20, 4))
+            _li = _load_logo((120, 120))
+            if _li:
+                dlg._li = _li
+                tk.Label(dlg, image=_li, bg=C["card"]
+                         ).pack(pady=(20, 4))
         except Exception: pass
 
         tk.Label(dlg, text="S.A.D.", bg=C["card"], fg=C["text"],
