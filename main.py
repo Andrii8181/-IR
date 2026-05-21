@@ -6387,8 +6387,9 @@ class RegressionWindow:
         if not HAS_MPL:
             messagebox.showwarning("","matplotlib недоступний."); return
 
-        g1_outer = tk.Frame(row1)
-        g1_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        g1_outer = tk.Frame(row1, width=480)
+        g1_outer.pack(side=tk.LEFT, fill=tk.Y)
+        g1_outer.pack_propagate(False)
 
         # Toolbar графіка 1
         tb1 = tk.Frame(g1_outer, bg="#f0f0f0", padx=4, pady=2); tb1.pack(fill=tk.X)
@@ -13815,12 +13816,6 @@ def _SADTk_new_init(self, root):
         ("stab","Аналіз стабільності","Eberhart-Russell · GGE",
          "#8c1a1a",StabilityWindow,True,None,
          "gxe стабільність адаптація сортовипробування eberhart gge"),
-        ("sample","Розмір вибірки","Потужність · n · α",
-         C["sub"],SampleSizeWindow,False,None,
-         "потужність розмір вибірки повторності скільки n alpha"),
-        ("trial","Генерація плану","CRD · RCBD · Split-plot",
-         C["teal"],TrialDesignWindow,False,None,
-         "план рандомізація дослід польовий схема повторності"),
     ]
 
     def _open(key, cls, needs_gs, custom_fn=None):
@@ -13844,24 +13839,34 @@ def _SADTk_new_init(self, root):
     logo_frm = tk.Frame(header, bg="#0d1020")
     logo_frm.pack(side=tk.LEFT, padx=12, pady=4)
 
-    # Завантажуємо Logo.png, fallback — icon.ico
+    # Завантажуємо Logo.png, fallback — icon.ico, далі — текстовий логотип
     def _load_logo(size):
-        from PIL import Image, ImageTk
-        base = os.path.dirname(os.path.abspath(__file__))
-        for fname in ("Logo.png", "logo.png", "icon.ico"):
-            p = os.path.join(base, fname)
-            if os.path.exists(p):
-                img = Image.open(p).convert("RGBA").resize(size, Image.LANCZOS)
-                return ImageTk.PhotoImage(img)
+        if not HAS_PIL:
+            return None
+        try:
+            from PIL import Image, ImageTk
+            base = os.path.dirname(os.path.abspath(__file__))
+            for fname in ("Logo.png", "logo.png", "SAD_logo.png", "icon.ico"):
+                p = os.path.join(base, fname)
+                if os.path.exists(p):
+                    img = Image.open(p).convert("RGBA").resize(size, Image.LANCZOS)
+                    return ImageTk.PhotoImage(img)
+        except Exception:
+            pass
         return None
 
-    try:
-        _logo_img = _load_logo((44, 44))
-        if _logo_img:
-            root._logo_img = _logo_img
-            tk.Label(logo_frm, image=_logo_img, bg="#0d1020"
-                     ).pack(side=tk.LEFT, padx=(0, 10))
-    except Exception: pass
+    _logo_img = _load_logo((44, 44))
+    if _logo_img:
+        root._logo_img = _logo_img
+        tk.Label(logo_frm, image=_logo_img, bg="#0d1020"
+                 ).pack(side=tk.LEFT, padx=(0, 10))
+    else:
+        # Fallback — кольоровий текстовий логотип
+        fb = tk.Frame(logo_frm, bg="#1a4b8c", width=44, height=44)
+        fb.pack(side=tk.LEFT, padx=(0, 10))
+        fb.pack_propagate(False)
+        tk.Label(fb, text="S", bg="#1a4b8c", fg="#ffffff",
+                 font=("Arial", 22, "bold")).place(relx=0.5, rely=0.5, anchor="center")
 
     # Назва
     name_f = tk.Frame(logo_frm, bg="#0d1020"); name_f.pack(side=tk.LEFT)
@@ -13878,13 +13883,17 @@ def _SADTk_new_init(self, root):
         dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
 
         # Логотип у діалозі
-        try:
-            _li = _load_logo((120, 120))
-            if _li:
-                dlg._li = _li
-                tk.Label(dlg, image=_li, bg=C["card"]
-                         ).pack(pady=(20, 4))
-        except Exception: pass
+        _li = _load_logo((120, 120))
+        if _li:
+            dlg._li = _li
+            tk.Label(dlg, image=_li, bg=C["card"]
+                     ).pack(pady=(20, 4))
+        else:
+            fb2 = tk.Frame(dlg, bg="#1a4b8c", width=80, height=80)
+            fb2.pack(pady=(20, 4))
+            fb2.pack_propagate(False)
+            tk.Label(fb2, text="S", bg="#1a4b8c", fg="#ffffff",
+                     font=("Arial", 36, "bold")).place(relx=0.5, rely=0.5, anchor="center")
 
         tk.Label(dlg, text="S.A.D.", bg=C["card"], fg=C["text"],
                  font=("Arial", 22, "bold")).pack()
@@ -14221,7 +14230,7 @@ Email: sad.stat.support@gmail.com
         ("Зв'язок змінних",  ["corr","reg","ancova"]),
         ("Багатовимірні",     ["manova","rm","mix"]),
         ("Багатовимірний ML", ["cluster","pca"]),
-        ("Спеціальні",        ["stab","sample","trial"]),
+        ("Спеціальні",        ["stab"]),
     ]
     _ana_map = {a[0]: a for a in ANALYSES}
     _sb_btns = {}
@@ -14543,7 +14552,7 @@ Email: sad.stat.support@gmail.com
         footer.pack(fill=tk.X)
         tk.Label(footer,
                  text="© 2024–2025  Чаплоуцький А.М.  |  "
-                      "Уманський НУС, Україна  |  "
+                      "Уманський НУ, Україна  |  "
                       "Усі права захищені",
                  bg="#0d1020", fg=C["sub"],
                  font=("Arial", 8)).pack(side=tk.LEFT)
