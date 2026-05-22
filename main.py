@@ -5,6 +5,58 @@ S.A.D. — Статистичний аналіз даних  v2.1
 Залежності: pip install numpy scipy openpyxl matplotlib pillow
 """
 import os, sys, math, json, io
+
+# ── Визначення платформи ───────────────────────────────────────
+IS_WIN   = sys.platform == "win32"
+IS_MAC   = sys.platform == "darwin"
+IS_LINUX = sys.platform.startswith("linux")
+
+if IS_MAC:
+    FONT_SERIF = "Times New Roman"
+    FONT_SANS  = "Helvetica Neue"
+    FONT_MONO  = "Menlo"
+elif IS_WIN:
+    FONT_SERIF = "Times New Roman"
+    FONT_SANS  = "Arial"
+    FONT_MONO  = "Consolas"
+else:
+    FONT_SERIF = "DejaVu Serif"
+    FONT_SANS  = "DejaVu Sans"
+    FONT_MONO  = "DejaVu Sans Mono"
+
+
+def open_file_cross(path: str):
+    """Відкриває файл стандартним застосунком на будь-якій платформі."""
+    try:
+        if IS_WIN:
+            os.startfile(path)
+        elif IS_MAC:
+            import subprocess; subprocess.Popen(["open", path])
+        else:
+            import subprocess; subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
+def maximize_win(win):
+    """Розгортає вікно на весь екран на Windows, macOS і Linux."""
+    try:
+        if IS_WIN:
+            win.state("zoomed")
+        elif IS_MAC:
+            win.update_idletasks()
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            win.geometry(f"{sw}x{sh-25}+0+25")
+        else:
+            try:
+                win.attributes("-zoomed", True)
+            except Exception:
+                sw = win.winfo_screenwidth()
+                sh = win.winfo_screenheight()
+                win.geometry(f"{sw}x{sh}+0+0")
+    except Exception:
+        win.geometry("1280x800")
 import numpy as np
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, colorchooser
@@ -56,13 +108,14 @@ if HAS_MPL:
     })
 
 # ── DPI awareness ──────────────────────────────────────────────
-try:
-    import ctypes
-    try:    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        try: ctypes.windll.user32.SetProcessDPIAware()
-        except Exception: pass
-except Exception: pass
+if IS_WIN:
+    try:
+        import ctypes
+        try:    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try: ctypes.windll.user32.SetProcessDPIAware()
+            except Exception: pass
+    except Exception: pass
 
 # ── Icon ──────────────────────────────────────────────────────
 def _find_icon():
@@ -3811,8 +3864,7 @@ class SADTk:
             self.report_win.destroy()
         self.report_win = rw = tk.Toplevel(self.table_win or self.root)
         rw.title("Звіт ANOVA — " + kw.get("indicator",""))
-        try: rw.state("zoomed")
-        except Exception: rw.geometry("1400x900")
+        maximize_win(rw)
         set_icon(rw)
 
         # ── Бокова панель + контент ──────────────────────────
@@ -4054,8 +4106,7 @@ class SADTk:
                 self.graph_win.destroy()
             self.graph_win = gw = tk.Toplevel(self.table_win or self.root)
             gw.title(f"Графічний звіт — {indicator}")
-            try: gw.state("zoomed")
-            except Exception: gw.geometry("1400x900")
+            maximize_win(gw)
             set_icon(gw)
             main = tk.Frame(gw); main.pack(fill=tk.BOTH, expand=True)
             sidebar = tk.Frame(main, width=190, bg="#2c3e50")
@@ -4108,8 +4159,7 @@ class SADTk:
                 self.graph_win.destroy()
             self.graph_win = gw = tk.Toplevel(self.table_win or self.root)
             gw.title(f"Графічний звіт — {indicator}")
-            try: gw.state("zoomed")
-            except Exception: gw.geometry("1400x900")
+            maximize_win(gw)
             set_icon(gw)
             outer_f = tk.Frame(gw); outer_f.pack(fill=tk.BOTH, expand=True)
             sidebar = tk.Frame(outer_f, width=195, bg="#2c3e50")
@@ -4423,6 +4473,7 @@ class SADTk:
                    color=bar_colors, edgecolor="white", linewidth=0.8,
                    error_kw={"ecolor":"#444","lw":1.2,"capthick":1.2})
             allv=[m+se for m,se in zip(means,ses)]
+            lowv=[m-se for m,se in zip(means,ses)]
             if allv and means:
                 off=max(0.02*(max(allv)-min(means)) if len(allv)>1 else 0.3, 0.3)
                 for i,(f_,lv_) in enumerate(let_list):
@@ -4430,6 +4481,13 @@ class SADTk:
                     if lt:
                         ax.text(positions[i], means[i]+ses[i]+off, lt,
                                 ha="center", va="bottom", **fp)
+                # Y від розумного мінімуму — не від нуля
+                data_min = min(lowv) if lowv else 0
+                data_max = max(allv) if allv else 1
+                spread = data_max - data_min if data_max != data_min else 1
+                ymin = data_min - spread * 0.12
+                ymax = data_max + spread * 0.18
+                ax.set_ylim(ymin, ymax)
             ax.set_xticks(positions)
             ax.set_xticklabels(xlbls, rotation=30, ha="right",
                                fontfamily=ff, fontsize=max(7,fz-1))
@@ -5952,8 +6010,7 @@ class RegressionWindow:
         self.win.title("Регресійний аналіз")
         set_icon(self.win)
         self.win.resizable(True, True)
-        try: self.win.state("zoomed")
-        except Exception: self.win.geometry("1400x860")
+        maximize_win(self.win)
         self.gs = gs
         self._fig = None
         self._graph_title = ""
@@ -13603,8 +13660,7 @@ class TrialDesignWindow:
         try:
             fig.savefig(path, dpi=150, bbox_inches="tight")
             messagebox.showinfo("Збережено", f"PNG збережено:\n{path}")
-            import sys, os
-            if sys.platform == "win32": os.startfile(path)
+            open_file_cross(path)
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
 
@@ -13715,12 +13771,6 @@ def _SADTk_new_init(self, root):
         ("stab","Аналіз стабільності","Eberhart-Russell · GGE",
          "#8c1a1a",StabilityWindow,True,None,
          "gxe стабільність адаптація сортовипробування eberhart gge"),
-        ("sample","Розмір вибірки","Потужність · n · α",
-         C["sub"],SampleSizeWindow,False,None,
-         "потужність розмір вибірки повторності скільки n alpha"),
-        ("trial","Генерація плану","CRD · RCBD · Split-plot",
-         C["teal"],TrialDesignWindow,False,None,
-         "план рандомізація дослід польовий схема повторності"),
     ]
 
     def _open(key, cls, needs_gs, custom_fn=None):
@@ -13744,26 +13794,37 @@ def _SADTk_new_init(self, root):
     logo_frm = tk.Frame(header, bg="#0d1020")
     logo_frm.pack(side=tk.LEFT, padx=12, pady=4)
 
-    # Завантажуємо Logo.png, fallback — icon.ico
+    # Завантажуємо Logo.png → icon.ico → текстовий fallback
     def _load_logo(size):
-        from PIL import Image, ImageTk
-        base = os.path.dirname(os.path.abspath(__file__))
-        for fname in ("Logo.png", "logo.png", "icon.ico"):
-            p = os.path.join(base, fname)
-            if os.path.exists(p):
-                img = Image.open(p).convert("RGBA").resize(size, Image.LANCZOS)
-                return ImageTk.PhotoImage(img)
+        if not HAS_PIL:
+            return None
+        try:
+            from PIL import Image, ImageTk
+            base = os.path.dirname(os.path.abspath(__file__))
+            for fname in ("Logo.png", "logo.png", "SAD_logo.png", "icon.ico"):
+                p = os.path.join(base, fname)
+                if os.path.exists(p):
+                    img = Image.open(p).convert("RGBA").resize(size, Image.LANCZOS)
+                    return ImageTk.PhotoImage(img)
+        except Exception:
+            pass
         return None
 
-    try:
-        _logo_img = _load_logo((44, 44))
-        if _logo_img:
-            root._logo_img = _logo_img
-            tk.Label(logo_frm, image=_logo_img, bg="#0d1020"
-                     ).pack(side=tk.LEFT, padx=(0, 10))
-    except Exception: pass
+    # Іконка окремо від тексту
+    _logo_img = _load_logo((44, 44))
+    if _logo_img:
+        root._logo_img = _logo_img
+        tk.Label(logo_frm, image=_logo_img, bg="#0d1020"
+                 ).pack(side=tk.LEFT, padx=(0, 10))
+    else:
+        # Текстовий fallback — синій квадрат
+        fb = tk.Frame(logo_frm, bg="#1a4b8c", width=44, height=44)
+        fb.pack(side=tk.LEFT, padx=(0, 10))
+        fb.pack_propagate(False)
+        tk.Label(fb, text="S", bg="#1a4b8c", fg="#ffffff",
+                 font=("Arial", 22, "bold")).place(relx=0.5, rely=0.5, anchor="center")
 
-    # Назва
+    # Назва ОКРЕМО від логотипа
     name_f = tk.Frame(logo_frm, bg="#0d1020"); name_f.pack(side=tk.LEFT)
     tk.Label(name_f, text="S.A.D.", bg="#0d1020", fg=C["text"],
              font=("Arial", 18, "bold")).pack(anchor="w")
@@ -13778,13 +13839,16 @@ def _SADTk_new_init(self, root):
         dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
 
         # Логотип у діалозі
-        try:
-            _li = _load_logo((120, 120))
-            if _li:
-                dlg._li = _li
-                tk.Label(dlg, image=_li, bg=C["card"]
-                         ).pack(pady=(20, 4))
-        except Exception: pass
+        _li = _load_logo((120, 120))
+        if _li:
+            dlg._li = _li
+            tk.Label(dlg, image=_li, bg=C["card"]).pack(pady=(20, 4))
+        else:
+            fb2 = tk.Frame(dlg, bg="#1a4b8c", width=80, height=80)
+            fb2.pack(pady=(20, 4))
+            fb2.pack_propagate(False)
+            tk.Label(fb2, text="S", bg="#1a4b8c", fg="#ffffff",
+                     font=("Arial", 36, "bold")).place(relx=0.5, rely=0.5, anchor="center")
 
         tk.Label(dlg, text="S.A.D.", bg=C["card"], fg=C["text"],
                  font=("Arial", 22, "bold")).pack()
@@ -14121,7 +14185,7 @@ Email: sad.stat.support@gmail.com
         ("Зв'язок змінних",  ["corr","reg","ancova"]),
         ("Багатовимірні",     ["manova","rm","mix"]),
         ("Багатовимірний ML", ["cluster","pca"]),
-        ("Спеціальні",        ["stab","sample","trial"]),
+        ("Спеціальні",        ["stab"]),
     ]
     _ana_map = {a[0]: a for a in ANALYSES}
     _sb_btns = {}
