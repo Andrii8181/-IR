@@ -14,12 +14,12 @@ IS_LINUX = sys.platform.startswith("linux")
 
 # Шрифт з підтримкою кирилиці на всіх платформах
 if IS_MAC:
-    FONT_SERIF = FONT_SERIF   # є на macOS
+    FONT_SERIF = "Times New Roman"   # є на macOS
     FONT_SANS  = "Helvetica Neue"
     FONT_MONO  = "Menlo"
 elif IS_WIN:
-    FONT_SERIF = FONT_SERIF
-    FONT_SANS  = FONT_SANS
+    FONT_SERIF = "Times New Roman"
+    FONT_SANS  = "Arial"
     FONT_MONO  = "Consolas"
 else:                                # Linux
     FONT_SERIF = "DejaVu Serif"
@@ -14962,7 +14962,7 @@ Email: sad.stat.support@gmail.com
         footer.pack(fill=tk.X)
         tk.Label(footer,
                  text="© 2024–2025  Чаплоуцький А.М.  |  "
-                      "Уманський НУС, Україна  |  "
+                      "Уманський НУ, Україна  |  "
                       "Усі права захищені",
                  bg="#0d1020", fg=C["sub"],
                  font=(FONT_SANS, 8)).pack(side=tk.LEFT)
