@@ -53,7 +53,96 @@ if HAS_MPL:
         'xtick.labelsize': 10, 'ytick.labelsize': 10,
         'axes.linewidth': 0.8,
         'axes.spines.top': False, 'axes.spines.right': False,
+        # ── Темний фон графіків ──────────────────────────────
+        'figure.facecolor': '#1e2336',
+        'axes.facecolor':   '#1e2336',
+        'text.color':       '#e8eaf0',
+        'axes.labelcolor':  '#e8eaf0',
+        'axes.edgecolor':   '#2a3350',
+        'xtick.color':      '#8892a4',
+        'ytick.color':      '#8892a4',
+        'grid.color':       '#2a3350',
+        'legend.facecolor': '#252d45',
+        'legend.edgecolor': '#2a3350',
+        'legend.labelcolor':'#e8eaf0',
+        'axes.titlecolor':  '#e8eaf0',
     })
+
+# ── Глобальна палітра — використовується в усіх вікнах ────────
+THEME = {
+    "bg":       "#0f1117",   # основний фон вікна
+    "panel":    "#161b27",   # панелі, toolbar-и
+    "card":     "#1e2336",   # картки, фрейми
+    "card2":    "#252d45",   # другорядні фрейми, hover
+    "accent":   "#4a90d9",   # синій акцент
+    "accent2":  "#1a4b8c",   # темніший синій (кнопки)
+    "danger":   "#c62828",   # кнопки аналізу/ОК
+    "text":     "#e8eaf0",   # основний текст
+    "sub":      "#8892a4",   # підтекст, мітки
+    "border":   "#2a3350",   # межі
+    "entry":    "#1a2035",   # фон полів введення
+    "entry_fg": "#e8eaf0",   # текст у полях введення
+    "sel":      "#2a4a7f",   # виділення
+    "ok":       "#27ae60",   # зелений (значущо)
+    "warn":     "#e67e22",   # жовтогарячий (увага)
+}
+
+# ── Клас Tooltip — спливаюча підказка при наведенні ───────────
+class Tooltip:
+    """
+    Використання:
+        Tooltip(widget, "Текст підказки")
+    або для кнопки «?»:
+        btn = tk.Label(parent, text="?", ...)
+        Tooltip(btn, "Пояснення параметру")
+    """
+    _delay = 600   # мс до появи
+    _wrap  = 280   # ширина переносу тексту
+
+    def __init__(self, widget, text: str):
+        self._w    = widget
+        self._text = text
+        self._tip  = None
+        self._job  = None
+        widget.bind("<Enter>",    self._schedule, add="+")
+        widget.bind("<Leave>",    self._cancel,   add="+")
+        widget.bind("<Button>",   self._cancel,   add="+")
+        widget.bind("<Destroy>",  self._cancel,   add="+")
+
+    def _schedule(self, _=None):
+        self._cancel()
+        self._job = self._w.after(self._delay, self._show)
+
+    def _cancel(self, _=None):
+        if self._job:
+            self._w.after_cancel(self._job); self._job = None
+        if self._tip:
+            self._tip.destroy(); self._tip = None
+
+    def _show(self):
+        if not self._text: return
+        x = self._w.winfo_rootx() + self._w.winfo_width() // 2
+        y = self._w.winfo_rooty() + self._w.winfo_height() + 4
+        self._tip = tw = tk.Toplevel(self._w)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw.attributes("-topmost", True)
+        outer = tk.Frame(tw, bg=THEME["border"], padx=1, pady=1)
+        outer.pack()
+        tk.Label(outer, text=self._text,
+                 bg=THEME["card2"], fg=THEME["text"],
+                 font=("Times New Roman", 9),
+                 wraplength=self._wrap, justify="left",
+                 padx=8, pady=5).pack()
+
+
+def _apply_theme(win, bg=None):
+    """Застосовує темну палітру до вікна Toplevel і всіх його Frame/Label."""
+    bg = bg or THEME["card"]
+    try:
+        win.configure(bg=bg)
+    except Exception:
+        pass
 
 # ── DPI awareness ──────────────────────────────────────────────
 try:
@@ -995,6 +1084,7 @@ class GraphSettingsDlg(tk.Toplevel):
         super().__init__(parent)
         self.title("Налаштування графіків")
         self.resizable(False, False); set_icon(self)
+        self.configure(bg=THEME["bg"])
         self.gs = dict(gs); self.result = None
         self._col_box = gs["box_color"]; self._col_med = gs["median_color"]
         self._col_wh  = gs["whisker_color"]; self._col_fl = gs["flier_color"]
@@ -1177,6 +1267,7 @@ class HeatmapSettingsDlg(tk.Toplevel):
         super().__init__(parent)
         self.title("Налаштування теплової карти")
         self.resizable(False, False); set_icon(self)
+        self.configure(bg=THEME["bg"])
         self.gs = dict(gs); self.result = None
         self._hannot_col = gs.get("heatmap_annot_color", "#000000")
 
@@ -1246,6 +1337,7 @@ class ScatterSettingsDlg(tk.Toplevel):
         super().__init__(parent)
         self.title("Налаштування матриці розсіювання")
         self.resizable(False, False); set_icon(self)
+        self.configure(bg=THEME["bg"])
         self.sc_gs = dict(sc_gs); self.result = None
         self._pt_color  = sc_gs.get("sc_point_color",  "#4c72b0")
         self._tr_color  = sc_gs.get("sc_trend_color",  "#c62828")
@@ -1449,6 +1541,7 @@ class CorrelationWindow:
         self.win = tk.Toplevel(root)
         self.win.title("Кореляційний аналіз")
         self.win.geometry("1060x660"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
 
         self._build_menu()
         self._build_toolbar()
@@ -1750,7 +1843,7 @@ class CorrelationWindow:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
         vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip())
@@ -2012,7 +2105,7 @@ class CorrelationWindow:
             _sc_outer.pack_forget()
             _hm_outer.pack(fill=tk.BOTH, expand=True)
             _active_tab[0] = 0
-            _btn_hm.configure(bg="white", fg="#1a4b8c", relief=tk.FLAT,
+            _btn_hm.configure(bg=THEME["card"], fg="#1a4b8c", relief=tk.FLAT,
                                font=("Times New Roman",11,"bold"))
             _btn_sc.configure(bg="#1a4b8c", fg="#d0d8e8", relief=tk.FLAT,
                                font=("Times New Roman",11))
@@ -2020,13 +2113,13 @@ class CorrelationWindow:
             _hm_outer.pack_forget()
             _sc_outer.pack(fill=tk.BOTH, expand=True)
             _active_tab[0] = 1
-            _btn_sc.configure(bg="white", fg="#1a4b8c", relief=tk.FLAT,
+            _btn_sc.configure(bg=THEME["card"], fg="#1a4b8c", relief=tk.FLAT,
                                font=("Times New Roman",11,"bold"))
             _btn_hm.configure(bg="#1a4b8c", fg="#d0d8e8", relief=tk.FLAT,
                                font=("Times New Roman",11))
 
         _btn_hm = tk.Button(switch_f, text="  🌡  Теплова карта  ",
-                            bg="white", fg="#1a4b8c",
+                            bg=THEME["card"], fg="#1a4b8c",
                             font=("Times New Roman",11,"bold"),
                             relief=tk.FLAT, padx=16, pady=8,
                             cursor="hand2", command=_show_hm)
@@ -2042,7 +2135,7 @@ class CorrelationWindow:
                  font=("Times New Roman",9), fg="#a0b8cc").pack(side=tk.LEFT, padx=8)
 
         # ── Теплова карта ──────────────────────────────────────
-        tb1 = tk.Frame(_hm_outer, bg="#f0f0f0", padx=6, pady=4); tb1.pack(fill=tk.X)
+        tb1 = tk.Frame(_hm_outer, bg=THEME["panel"], padx=6, pady=4); tb1.pack(fill=tk.X)
         for btxt, bcmd, bcol in [
             ("💾 Зберегти PNG", lambda: self._save_fig_png(self._hm_fig,"теплова_карта"), None),
             ("📋 Копіювати",    self._copy_heatmap, None),
@@ -2056,7 +2149,7 @@ class CorrelationWindow:
         self._hm_frame.pack(fill=tk.BOTH, expand=True)
 
         # ── Матриця розсіювання ────────────────────────────────
-        tb2 = tk.Frame(_sc_outer, bg="#f0f0f0", padx=6, pady=4); tb2.pack(fill=tk.X)
+        tb2 = tk.Frame(_sc_outer, bg=THEME["panel"], padx=6, pady=4); tb2.pack(fill=tk.X)
         for btxt, bcmd, bcol in [
             ("💾 Зберегти PNG", lambda: self._save_fig_png(self._sc_fig,"матриця_розсіювання"), None),
             ("📋 Копіювати",    lambda: self._copy_scatter(), None),
@@ -2338,11 +2431,11 @@ class SADTk:
         try: ttk.Style().theme_use("clam")
         except Exception: pass
 
-        mf = tk.Frame(root, bg="white"); mf.pack(expand=True, fill=tk.BOTH)
+        mf = tk.Frame(root, bg=THEME["card"]); mf.pack(expand=True, fill=tk.BOTH)
         tk.Label(mf, text="S.A.D. — Статистичний аналіз даних",
-                 font=("Times New Roman", 20, "bold"), fg="#000000", bg="white").pack(pady=16)
+                 font=("Times New Roman", 20, "bold"), fg="#000000", bg=THEME["card"]).pack(pady=16)
 
-        bf = tk.Frame(mf, bg="white"); bf.pack(pady=8)
+        bf = tk.Frame(mf, bg=THEME["card"]); bf.pack(pady=8)
         for i, (txt, fc) in enumerate([("Однофакторний аналіз", 1), ("Двофакторний аналіз", 2),
                                         ("Трифакторний аналіз", 3), ("Чотирифакторний аналіз", 4)]):
             tk.Button(bf, text=txt, width=22, height=2, font=("Times New Roman", 13),
@@ -2353,7 +2446,7 @@ class SADTk:
                   command=self.open_correlation).pack(pady=(4, 10))
 
         tk.Label(mf, text="Виберіть тип аналізу → Введіть дані → Аналіз даних",
-                 font=("Times New Roman", 12), fg="#555555", bg="white").pack(pady=4)
+                 font=("Times New Roman", 12), fg="#555555", bg=THEME["card"]).pack(pady=4)
 
         self.table_win = None; self.report_win = None; self.graph_win = None
         self._graph_figs = {}
@@ -2524,7 +2617,7 @@ class SADTk:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", text.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
@@ -2808,7 +2901,7 @@ class SADTk:
         return None
 
     def _mk_entry(self, parent):
-        return tk.Entry(parent, width=COL_W, fg="#000000", font=("Times New Roman", 12),
+        return tk.Entry(parent, width=COL_W, fg=THEME["text"], font=("Times New Roman", 12),
                         highlightthickness=1, highlightbackground="#c0c0c0", highlightcolor="#c0c0c0")
 
     # ── rename factor ─────────────────────────────────────────
@@ -2871,6 +2964,7 @@ class SADTk:
         # Для 3-факторного — додаємо опис ЛК у довідку
         tw.title(f"S.A.D. — {factor_names.get(fc,str(fc)+'-факторний')} дисперсійний аналіз")
         tw.geometry("1280x720"); set_icon(tw)
+        tw.configure(bg=THEME["bg"])
 
         # ── Toolbar ───────────────────────────────────────────
         ctl = tk.Frame(tw, padx=6, pady=4); ctl.pack(fill=tk.X)
@@ -2964,7 +3058,7 @@ class SADTk:
         self.cols += 1; ci = self.cols - 1
         nm = f"Повт.{ci - self.factors_count + 1}"
         lbl = tk.Label(self.inner, text=nm, relief=tk.RIDGE, width=COL_W,
-                       bg="#f0f0f0", fg="#000000", font=("Times New Roman", 12, "bold"))
+                       bg=THEME["panel"], fg=THEME["text"], font=("Times New Roman", 12, "bold"))
         lbl.grid(row=0, column=ci, padx=2, pady=2, sticky="nsew"); self.header_labels.append(lbl)
         for i, row in enumerate(self.entries):
             e = self._mk_entry(self.inner); e.grid(row=i + 1, column=ci, padx=2, pady=2)
@@ -3027,7 +3121,8 @@ class SADTk:
         parent = self.table_win or self.root
         dlg = tk.Toplevel(parent); dlg.title("Параметри аналізу")
         dlg.resizable(False, False); set_icon(dlg)
-        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        dlg.configure(bg=THEME["bg"])
+        frm = tk.Frame(dlg, padx=16, pady=14, bg=THEME["card"]); frm.pack(fill=tk.BOTH, expand=True)
         rf = ("Times New Roman", 12)
         rb_f = ("Times New Roman", 13)
 
@@ -3060,7 +3155,7 @@ class SADTk:
                      "  Типово: фактор A = обробка всього поля, B = сорт на підділянці."
                  ),
                  font=("Times New Roman",10), justify="left",
-                 bg="#f0f4ff", relief=tk.FLAT, padx=8, pady=6
+                 bg=THEME["card2"], relief=tk.FLAT, padx=8, pady=6
                  ).pack(fill=tk.X)
 
         dv = tk.StringVar(value="crd")
@@ -3085,7 +3180,7 @@ class SADTk:
                  "  Модель: Y = μ + Варіант + Рядок + Стовпець + ε\n"
                  "  df(похибка) = (k-1)(k-2)",
             font=("Times New Roman",10), fg="#1a4b8c",
-            bg="#eef4ff", relief=tk.FLAT, padx=8, pady=6, justify="left")
+            bg=THEME["card2"], relief=tk.FLAT, padx=8, pady=6, justify="left")
         latin_hint.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0,4))
         latin_hint.grid_remove()
 
@@ -3122,7 +3217,7 @@ class SADTk:
                      "Тип IV — Для сильно незбалансованих дизайнів з порожніми клітинками."
                  ),
                  font=("Times New Roman",10), justify="left",
-                 bg="#f0f4ff", relief=tk.FLAT, padx=8, pady=4
+                 bg=THEME["card2"], relief=tk.FLAT, padx=8, pady=4
                  ).grid(row=8, column=0, columnspan=2, sticky="ew")
         ssv = tk.StringVar(value="III")
         ssf = tk.Frame(frm); ssf.grid(row=9, column=0, columnspan=2, sticky="w", pady=4)
@@ -3157,7 +3252,8 @@ class SADTk:
         parent = self.table_win or self.root
         dlg = tk.Toplevel(parent); dlg.title("Вибір методу")
         dlg.resizable(False, False); set_icon(dlg)
-        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        dlg.configure(bg=THEME["bg"])
+        frm = tk.Frame(dlg, padx=16, pady=14, bg=THEME["card"]); frm.pack(fill=tk.BOTH, expand=True)
         normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
         rb_f = ("Times New Roman", 13)
         ordinal = getattr(self, '_ordinal_mode', False)
@@ -3836,7 +3932,7 @@ class SADTk:
         def _show_panel(frame, btn):
             if self._active_panel: self._active_panel.pack_forget()
             if self._active_rpt_btn:
-                self._active_rpt_btn.configure(bg="#2c3e50", fg="#bdc3c7")
+                self._active_rpt_btn.configure(bg=THEME["panel"], fg=THEME["sub"])
             frame.pack(fill=tk.BOTH, expand=True)
             self._active_panel = frame
             btn.configure(bg="#c62828", fg="white")
@@ -3844,7 +3940,7 @@ class SADTk:
 
         def _sidebar_btn(text, tooltip):
             fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
-            b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+            b = tk.Button(fr, text=f"  {text}", bg=THEME["panel"], fg=THEME["sub"],
                           font=("Times New Roman",11), relief=tk.FLAT,
                           anchor="w", padx=12, pady=6,
                           activebackground="#c62828", activeforeground="white")
@@ -4073,14 +4169,14 @@ class SADTk:
             def _show_panel(frame, btn):
                 if self._active_panel: self._active_panel.pack_forget()
                 if self._active_rpt_btn:
-                    self._active_rpt_btn.configure(bg="#2c3e50", fg="#bdc3c7")
+                    self._active_rpt_btn.configure(bg=THEME["panel"], fg=THEME["sub"])
                 frame.pack(fill=tk.BOTH, expand=True)
                 self._active_panel = frame
                 btn.configure(bg="#c62828", fg="white")
                 self._active_rpt_btn = btn
             def _sidebar_btn(text, tooltip):
                 fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
-                b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+                b = tk.Button(fr, text=f"  {text}", bg=THEME["panel"], fg=THEME["sub"],
                               font=("Times New Roman",11), relief=tk.FLAT,
                               anchor="w", padx=12, pady=6,
                               activebackground="#c62828", activeforeground="white")
@@ -4128,7 +4224,7 @@ class SADTk:
             def _show_panel(frame, btn):
                 if self._active_panel: self._active_panel.pack_forget()
                 if self._active_rpt_btn:
-                    self._active_rpt_btn.configure(bg="#2c3e50", fg="#bdc3c7")
+                    self._active_rpt_btn.configure(bg=THEME["panel"], fg=THEME["sub"])
                 frame.pack(fill=tk.BOTH, expand=True)
                 self._active_panel = frame
                 btn.configure(bg="#c62828", fg="white")
@@ -4138,7 +4234,7 @@ class SADTk:
 
         def _make_btn(lbl, tooltip):
             fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
-            b = tk.Button(fr, text=f"  {lbl}", bg="#2c3e50", fg="#bdc3c7",
+            b = tk.Button(fr, text=f"  {lbl}", bg=THEME["panel"], fg=THEME["sub"],
                           font=("Times New Roman",11), relief=tk.FLAT,
                           anchor="w", padx=10, pady=5,
                           activebackground="#c62828", activeforeground="white")
@@ -4205,7 +4301,7 @@ class SADTk:
 
     # ── Toolbar кожної вкладки з PNG і налаштуваннями ─────────
     def _tab_toolbar(self, frame, fig_key, rebuild_fn=None, settings_fn=None):
-        tb = tk.Frame(frame, bg="#f0f0f0", padx=4, pady=4)
+        tb = tk.Frame(frame, bg=THEME["panel"], padx=4, pady=4)
         tb.pack(fill=tk.X, side=tk.BOTTOM)
         tk.Button(tb, text="💾 Зберегти PNG",
                   font=("Times New Roman",10),
@@ -4998,6 +5094,7 @@ class DescriptiveWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("Описова статистика")
         self.win.geometry("1000x640"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.gs = dict(gs)
         self._bp_fig  = None   # боксплот
         self._qq_fig  = None   # QQ-графіки
@@ -5209,7 +5306,7 @@ class DescriptiveWindow:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
         vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip())
@@ -5576,6 +5673,7 @@ SHAPIRO-WILK:
         self.win = tk.Toplevel(parent)
         self.win.title("t-тест / Критерій Манна-Уітні")
         self.win.geometry("700x660"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self._build()
 
     def _build(self):
@@ -5638,7 +5736,7 @@ SHAPIRO-WILK:
         self.res_txt = tk.Text(res_frm, wrap="word",
                                font=("Times New Roman",11),
                                yscrollcommand=vsb.set,
-                               relief=tk.FLAT, bg="#f8f8f8",
+                               relief=tk.FLAT, bg=THEME["card"],
                                padx=8, pady=6, cursor="arrow",
                                state="disabled", height=8)
         self.res_txt.pack(fill=tk.BOTH, expand=True)
@@ -5680,7 +5778,7 @@ SHAPIRO-WILK:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
@@ -5957,6 +6055,7 @@ class RegressionWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("Регресійний аналіз")
         set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.win.resizable(True, True)
         try: self.win.state("zoomed")
         except Exception: self.win.geometry("1400x860")
@@ -5969,15 +6068,15 @@ class RegressionWindow:
         rf = ("Times New Roman", 11)
 
         # ── Toolbar ───────────────────────────────────────────
-        top = tk.Frame(self.win, padx=8, pady=5, bg="#f5f5f5")
+        top = tk.Frame(self.win, padx=8, pady=5, bg=THEME["card"])
         top.pack(fill=tk.X)
-        tk.Frame(top, bg="#e0e0e0", height=1).pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Frame(top, bg=THEME["border"], height=1).pack(fill=tk.X, side=tk.BOTTOM)
 
-        tk.Label(top, text="Модель:", font=rf, bg="#f5f5f5").pack(side=tk.LEFT)
+        tk.Label(top, text="Модель:", font=rf, bg=THEME["card"]).pack(side=tk.LEFT)
         self.model_var = tk.StringVar(value=self.MODELS[0])
         ttk.Combobox(top, textvariable=self.model_var, values=self.MODELS,
                      state="readonly", width=42, font=rf).pack(side=tk.LEFT, padx=6)
-        tk.Label(top, text="α:", font=rf, bg="#f5f5f5").pack(side=tk.LEFT, padx=(8,2))
+        tk.Label(top, text="α:", font=rf, bg=THEME["card"]).pack(side=tk.LEFT, padx=(8,2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var,
                      values=["0.01","0.05","0.10"],
@@ -6176,7 +6275,7 @@ class RegressionWindow:
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
-                      yscrollcommand=vsb.set, relief=tk.FLAT, bg="#fafafa",
+                      yscrollcommand=vsb.set, relief=tk.FLAT, bg=THEME["card"],
                       padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
         vsb.config(command=txt.yview)
@@ -6350,13 +6449,13 @@ class RegressionWindow:
         row1.pack_propagate(False)
 
         # Текстовий звіт (ліворуч у row1)
-        txt_f = tk.Frame(row1, bg="#f8f8f8", width=310)
+        txt_f = tk.Frame(row1, bg=THEME["card"], width=310)
         txt_f.pack(side=tk.LEFT, fill=tk.Y)
         txt_f.pack_propagate(False)
 
         tk.Label(txt_f, text="РЕЗУЛЬТАТИ РЕГРЕСІЇ",
                  font=("Times New Roman",11,"bold"), fg="#1a4b8c",
-                 bg="#f8f8f8", pady=6).pack(anchor="w", padx=8)
+                 bg=THEME["card"], pady=6).pack(anchor="w", padx=8)
 
         fields = [
             ("Модель:",      model_name),
@@ -6374,13 +6473,13 @@ class RegressionWindow:
             ("Нормальність:", "✓ Нормальні" if sw_ok else "⚠ Не норм."),
         ]
         for lbl, val in fields:
-            row = tk.Frame(txt_f, bg="#f8f8f8"); row.pack(fill=tk.X, padx=8, pady=1)
+            row = tk.Frame(txt_f, bg=THEME["card"]); row.pack(fill=tk.X, padx=8, pady=1)
             tk.Label(row, text=lbl, font=("Times New Roman",10,"bold"),
-                     bg="#f8f8f8", fg="#555", width=14, anchor="w").pack(side=tk.LEFT)
+                     bg=THEME["card"], fg="#555", width=14, anchor="w").pack(side=tk.LEFT)
             color = ("#27ae60" if "✓" in val else
                      "#c62828" if ("✗" in val or "⚠" in val) else "#000")
             tk.Label(row, text=val, font=("Times New Roman",10),
-                     bg="#f8f8f8", fg=color,
+                     bg=THEME["card"], fg=color,
                      wraplength=160, justify="left", anchor="w").pack(side=tk.LEFT)
 
         # Графік регресії (праворуч у row1)
@@ -6392,9 +6491,9 @@ class RegressionWindow:
         g1_outer.pack_propagate(False)
 
         # Toolbar графіка 1
-        tb1 = tk.Frame(g1_outer, bg="#f0f0f0", padx=4, pady=2); tb1.pack(fill=tk.X)
+        tb1 = tk.Frame(g1_outer, bg=THEME["panel"], padx=4, pady=2); tb1.pack(fill=tk.X)
         tk.Label(tb1, text="Графік регресії",
-                 font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
+                 font=("Times New Roman",10,"bold"), bg=THEME["panel"], fg=THEME["text"]).pack(side=tk.LEFT, padx=4)
         tk.Button(tb1, text="💾 Зберегти",
                   font=("Times New Roman",9), relief=tk.FLAT, padx=6,
                   command=lambda: _save_fig(fig1,"графік_регресії")).pack(side=tk.RIGHT, padx=2)
@@ -6454,12 +6553,12 @@ class RegressionWindow:
         embed_figure(fig1, g1_outer)
 
         # ── РЯД 2: Аналіз залишків ─────────────────────────────
-        tk.Frame(self.res_frame, bg="#e0e0e0", height=1).pack(fill=tk.X, pady=4)
+        tk.Frame(self.res_frame, bg=THEME["border"], height=1).pack(fill=tk.X, pady=4)
 
         row2 = tk.Frame(self.res_frame); row2.pack(fill=tk.BOTH, expand=False)
-        tb2 = tk.Frame(row2, bg="#f0f0f0", padx=4, pady=2); tb2.pack(fill=tk.X)
+        tb2 = tk.Frame(row2, bg=THEME["panel"], padx=4, pady=2); tb2.pack(fill=tk.X)
         tk.Label(tb2, text="Аналіз залишків",
-                 font=("Times New Roman",10,"bold"), bg="#f0f0f0").pack(side=tk.LEFT, padx=4)
+                 font=("Times New Roman",10,"bold"), bg=THEME["panel"], fg=THEME["text"]).pack(side=tk.LEFT, padx=4)
 
         # Settings for residuals graph
         def _res_settings():
@@ -6641,6 +6740,7 @@ class SampleSizeWindow:
         self.win.geometry("680x700")
         self.win.resizable(True, True)
         set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self._build()
 
     def _build(self):
@@ -6703,7 +6803,7 @@ class SampleSizeWindow:
         self.res_txt = tk.Text(res_frm, wrap="word",
                                font=("Courier New",11),
                                yscrollcommand=vsb.set,
-                               relief=tk.FLAT, bg="#f8f8f8",
+                               relief=tk.FLAT, bg=THEME["card"],
                                padx=8, pady=6, cursor="arrow",
                                state="disabled")
         self.res_txt.pack(fill=tk.BOTH, expand=True)
@@ -6723,7 +6823,7 @@ class SampleSizeWindow:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
@@ -6949,6 +7049,7 @@ class ClusterWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("Кластерний аналіз")
         self.win.geometry("960x660"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.gs = gs
         self._cl_fig = None
         self._cl_gs  = {
@@ -7136,7 +7237,7 @@ class ClusterWindow:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
@@ -7425,6 +7526,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.win = tk.Toplevel(parent)
         self.win.title("Аналіз головних компонент (PCA)")
         self.win.geometry("1000x680"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.gs = gs
         self._pca_fig = None
         self._pca_gs  = {
@@ -7604,7 +7706,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
@@ -8068,6 +8170,7 @@ class RepeatedMeasuresWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("Дисперсійний аналіз повторних вимірювань")
         self.win.geometry("940x660"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.gs = gs
         self._rm_fig = None
         self._rm_gs  = {
@@ -8308,7 +8411,7 @@ class RepeatedMeasuresWindow:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
@@ -8719,6 +8822,7 @@ class MixedRepeatedWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("Змішаний аналіз повторних вимірювань")
         self.win.geometry("1060x700"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.gs = gs
         self._fig = None
         self._plot_gs = {
@@ -8999,7 +9103,7 @@ class MixedRepeatedWindow:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
@@ -9527,6 +9631,7 @@ class StabilityWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("Аналіз стабільності (GxE)")
         self.win.geometry("1020x680"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.gs = gs
         self._stab_fig = None
         self._build()
@@ -9728,7 +9833,7 @@ class StabilityWindow:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>", lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
@@ -9918,6 +10023,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.win = tk.Toplevel(parent)
         self.win.title("ANCOVA — Коваріаційний аналіз")
         self.win.geometry("980x680"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.gs = gs; self._build()
 
     def _build(self):
@@ -9951,13 +10057,13 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                   command=self._show_help).pack(side=tk.LEFT, padx=8)
 
         # ── Інформаційний рядок ──────────────────────────────
-        info = tk.Frame(self.win, bg="#f0f4ff", padx=8, pady=4)
+        info = tk.Frame(self.win, bg=THEME["card2"], padx=8, pady=4)
         info.pack(fill=tk.X, padx=8, pady=(0, 4))
         tk.Label(info, text=(
             "Порядок стовпців:  [Група/Фактор]  [Коваріата 1]  [Коваріата 2 ...]  [Залежна Y]\n"
             "Заголовки стовпців (блакитні) можна редагувати.  "
             "Перший стовпець — текстові мітки груп.  Решта — числа."),
-            font=("Times New Roman", 10), bg="#f0f4ff", justify="left").pack(anchor="w")
+            font=("Times New Roman", 10), bg=THEME["card2"], justify="left").pack(anchor="w")
 
         # ── Таблиця даних ────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -10000,7 +10106,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
         vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip())
@@ -10519,6 +10625,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.win = tk.Toplevel(parent)
         self.win.title("MANOVA — Багатовимірний дисперсійний аналіз")
         self.win.geometry("1020x700"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.gs = gs; self._build()
 
     def _build(self):
@@ -10555,13 +10662,13 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                   command=self._show_help).pack(side=tk.LEFT, padx=8)
 
         # ── Інформаційний рядок ──────────────────────────────
-        info = tk.Frame(self.win, bg="#f0f4ff", padx=8, pady=4)
+        info = tk.Frame(self.win, bg=THEME["card2"], padx=8, pady=4)
         info.pack(fill=tk.X, padx=8, pady=(0, 4))
         tk.Label(info, text=(
             "Порядок стовпців:  [Група/Фактор]  [Залежна змінна 1]  [Залежна змінна 2]  ...\n"
             "Заголовки (блакитні) можна редагувати.  Перший стовпець — текстові мітки груп.  "
             "Мінімум: 1 група + 2 залежних змінних.  Критично: n > p у кожній групі."),
-            font=("Times New Roman", 10), bg="#f0f4ff", justify="left").pack(anchor="w")
+            font=("Times New Roman", 10), bg=THEME["card2"], justify="left").pack(anchor="w")
 
         # ── Таблиця даних ────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -10612,7 +10719,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
         vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip())
@@ -12231,6 +12338,7 @@ class HelpWindow:
         self.win = tk.Toplevel(parent)
         self.win.title("S.A.D. — Довідка")
         self.win.geometry("1000x660"); set_icon(self.win)
+        self.win.configure(bg=THEME["bg"])
         self.current_topic = None
         self._build()
         topic = start_topic or list(HELP_CONTENT.keys())[0]
@@ -12238,29 +12346,29 @@ class HelpWindow:
 
     def _build(self):
         # Left panel
-        left = tk.Frame(self.win, width=220, bg="#f5f5f5", relief=tk.RIDGE, bd=1)
+        left = tk.Frame(self.win, width=220, bg=THEME["card"], relief=tk.RIDGE, bd=1)
         left.pack(side=tk.LEFT, fill=tk.Y); left.pack_propagate(False)
         tk.Label(left, text="Зміст довідки",
                  font=("Times New Roman",12,"bold"), bg="#1a4b8c", fg="white",
                  pady=8).pack(fill=tk.X)
         # Search
-        sf = tk.Frame(left, bg="#f5f5f5"); sf.pack(fill=tk.X, padx=6, pady=6)
-        tk.Label(sf, text="Пошук:", bg="#f5f5f5", font=("Times New Roman",11)).pack(side=tk.LEFT)
+        sf = tk.Frame(left, bg=THEME["card"]); sf.pack(fill=tk.X, padx=6, pady=6)
+        tk.Label(sf, text="Пошук:", bg=THEME["card"], font=("Times New Roman",11)).pack(side=tk.LEFT)
         self._sv = tk.StringVar(); self._sv.trace_add("write", self._on_search)
         tk.Entry(sf, textvariable=self._sv, font=("Times New Roman",11),
-                 relief=tk.FLAT, bg="white").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+                 relief=tk.FLAT, bg=THEME["card"]).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         # Topic buttons frame (scrollable)
-        self._tf = tk.Frame(left, bg="#f5f5f5"); self._tf.pack(fill=tk.BOTH, expand=True)
+        self._tf = tk.Frame(left, bg=THEME["card"]); self._tf.pack(fill=tk.BOTH, expand=True)
         self._btn = {}; self._build_list(list(HELP_CONTENT.keys()))
         # Right panel
-        right = tk.Frame(self.win, bg="white"); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        right = tk.Frame(self.win, bg=THEME["card"]); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._title = tk.Label(right, text="", font=("Times New Roman",14,"bold"),
                                bg="#1a4b8c", fg="white", pady=8, padx=10, anchor="w")
         self._title.pack(fill=tk.X)
         tf2 = tk.Frame(right); tf2.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         ysb = ttk.Scrollbar(tf2); ysb.pack(side=tk.RIGHT, fill=tk.Y)
         self._txt = tk.Text(tf2, wrap="word", font=("Times New Roman",12),
-                            state="disabled", relief=tk.FLAT, bg="white",
+                            state="disabled", relief=tk.FLAT, bg=THEME["card"],
                             yscrollcommand=ysb.set, padx=10, pady=8, cursor="arrow")
         self._txt.pack(fill=tk.BOTH, expand=True)
         ysb.config(command=self._txt.yview)
@@ -12272,7 +12380,7 @@ class HelpWindow:
         self._txt.tag_configure("warn",  foreground="#c62828", font=("Times New Roman",12))
         self._txt.tag_configure("normal",font=("Times New Roman",12))
         # Bottom
-        bot = tk.Frame(right, bg="#f0f0f0", pady=4); bot.pack(fill=tk.X)
+        bot = tk.Frame(right, bg=THEME["panel"], pady=4); bot.pack(fill=tk.X)
         tk.Button(bot, text="<- Попередня", command=self._prev,
                   font=("Times New Roman",11)).pack(side=tk.LEFT, padx=8)
         tk.Button(bot, text="Наступна ->", command=self._next,
@@ -12285,26 +12393,28 @@ class HelpWindow:
         self._btn = {}
         for topic in topics:
             info = HELP_CONTENT.get(topic, {})
-            frm = tk.Frame(self._tf, bg="#f5f5f5", cursor="hand2")
+            frm = tk.Frame(self._tf, bg=THEME["card"], cursor="hand2")
             frm.pack(fill=tk.X, padx=3, pady=1)
             icon = info.get("icon","•")
             lbl = tk.Label(frm, text=f"{icon}  {topic}",
-                           font=("Times New Roman",11,"bold"), bg="#f5f5f5",
+                           font=("Times New Roman",11,"bold"), bg=THEME["card"],
                            anchor="w", padx=6, pady=2)
             lbl.pack(fill=tk.X)
             sub = tk.Label(frm, text=f"    {info.get('short','')}",
-                           font=("Times New Roman",9), fg="#666", bg="#f5f5f5", anchor="w", padx=6)
+                           font=("Times New Roman",9), fg="#666", bg=THEME["card"], anchor="w", padx=6)
             sub.pack(fill=tk.X)
             for w in [frm, lbl, sub]:
                 w.bind("<Button-1>", lambda e, t=topic: self._show_topic(t))
-                w.bind("<Enter>",  lambda e, f=frm: [c.configure(bg="#dce8ff") for c in [f]+list(f.winfo_children())])
+                w.bind("<Enter>",  lambda e, f=frm: [c.configure(bg=THEME["card2"]) for c in [f]+list(f.winfo_children())])
                 w.bind("<Leave>",  lambda e, f=frm, t=topic: self._set_bg(f, t))
             self._btn[topic] = frm
 
     def _set_bg(self, frm, topic):
-        bg = "#c8d8ff" if topic == self.current_topic else "#f5f5f5"
+        bg = THEME["accent2"] if topic == self.current_topic else THEME["card"]
         frm.configure(bg=bg)
-        for w in frm.winfo_children(): w.configure(bg=bg)
+        for w in frm.winfo_children():
+            try: w.configure(bg=bg, fg=THEME["text"])
+            except Exception: pass
 
     def _on_search(self, *_):
         q = self._sv.get().strip().lower()
@@ -12609,7 +12719,7 @@ class TrialDesignWindow:
                            font=("Times New Roman", 11),
                            command=self._on_design).pack(side=tk.LEFT)
         self._design_hint = tk.Label(df, text="", font=("Times New Roman", 9),
-                                     fg="#1a4b8c", bg="#eef4ff",
+                                     fg="#1a4b8c", bg=THEME["card2"],
                                      justify="left", wraplength=320, padx=4, pady=3)
         self._design_hint.pack(fill=tk.X, pady=4)
 
@@ -12737,7 +12847,7 @@ class TrialDesignWindow:
                  font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
         tk.Button(t1_tb, text="💾 Зберегти PNG", font=("Times New Roman",10),
                   command=self._save_png).pack(side=tk.RIGHT, padx=4)
-        self._scheme_cv = tk.Canvas(t1, bg="white")
+        self._scheme_cv = tk.Canvas(t1, bg=THEME["card"])
         s_vsb = ttk.Scrollbar(t1, orient="vertical",
                                command=self._scheme_cv.yview)
         s_hsb = ttk.Scrollbar(t1, orient="horizontal",
@@ -12887,7 +12997,7 @@ class TrialDesignWindow:
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
-                      bg="#fafafa", padx=10, pady=8, cursor="arrow")
+                      bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>",
@@ -14552,7 +14662,7 @@ Email: sad.stat.support@gmail.com
         footer.pack(fill=tk.X)
         tk.Label(footer,
                  text="© 2024–2025  Чаплоуцький А.М.  |  "
-                      "Уманський НУ, Україна  |  "
+                      "Уманський НУС, Україна  |  "
                       "Усі права захищені",
                  bg="#0d1020", fg=C["sub"],
                  font=("Arial", 8)).pack(side=tk.LEFT)
