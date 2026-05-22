@@ -5,6 +5,79 @@ S.A.D. — Статистичний аналіз даних  v2.1
 Залежності: pip install numpy scipy openpyxl matplotlib pillow
 """
 import os, sys, math, json, io
+import platform as _platform
+
+# ── Визначення платформи ───────────────────────────────────────
+IS_WIN   = sys.platform == "win32"
+IS_MAC   = sys.platform == "darwin"
+IS_LINUX = sys.platform.startswith("linux")
+
+# Шрифт з підтримкою кирилиці на всіх платформах
+if IS_MAC:
+    FONT_SERIF = FONT_SERIF   # є на macOS
+    FONT_SANS  = "Helvetica Neue"
+    FONT_MONO  = "Menlo"
+elif IS_WIN:
+    FONT_SERIF = FONT_SERIF
+    FONT_SANS  = FONT_SANS
+    FONT_MONO  = "Consolas"
+else:                                # Linux
+    FONT_SERIF = "DejaVu Serif"
+    FONT_SANS  = "DejaVu Sans"
+    FONT_MONO  = "DejaVu Sans Mono"
+
+
+def open_file_cross(path: str):
+    """Відкриває файл стандартним застосунком на будь-якій платформі."""
+    try:
+        if IS_WIN:
+            os.startfile(path)
+        elif IS_MAC:
+            import subprocess; subprocess.Popen(["open", path])
+        else:
+            import subprocess; subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
+def maximize_win(win):
+    """Розгортає вікно на весь екран на Windows, macOS і Linux."""
+    try:
+        if IS_WIN:
+            win.state("zoomed")
+        elif IS_MAC:
+            # macOS: zoomed не завжди працює — використовуємо geometry
+            win.update_idletasks()
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            # Враховуємо Dock і Menu bar
+            win.geometry(f"{sw}x{sh-25}+0+25")
+        else:
+            # Linux/X11
+            try:
+                win.attributes("-zoomed", True)
+            except Exception:
+                sw = win.winfo_screenwidth()
+                sh = win.winfo_screenheight()
+                win.geometry(f"{sw}x{sh}+0+0")
+    except Exception:
+        win.geometry("1280x800")
+
+
+def right_click_event():
+    """Повертає правильний event для контекстного меню."""
+    return "<Button-2>" if IS_MAC else right_click_event()
+
+
+def ctrl_key():
+    """Command на macOS, Ctrl на Windows/Linux."""
+    return "Command" if IS_MAC else "Control"
+
+
+def bind_ctrl(widget, letter, callback):
+    """Прив'язує Ctrl+letter (або Cmd+letter на macOS)."""
+    widget.bind(f"<{ctrl_key()}-{letter}>", callback)
+    widget.bind(f"<{ctrl_key()}-{letter.upper()}>", callback)
 import numpy as np
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, colorchooser
@@ -48,12 +121,11 @@ if HAS_MPL:
     import matplotlib
     matplotlib.rcParams.update({
         'font.family': 'serif',
-        'font.serif':  ['Times New Roman','Times','DejaVu Serif'],
+        'font.serif':  ['Times New Roman', 'DejaVu Serif', 'Bitstream Vera Serif', 'Georgia'],
         'font.size': 11, 'axes.titlesize': 12, 'axes.labelsize': 11,
         'xtick.labelsize': 10, 'ytick.labelsize': 10,
         'axes.linewidth': 0.8,
         'axes.spines.top': False, 'axes.spines.right': False,
-        # ── Темний фон графіків ──────────────────────────────
         'figure.facecolor': '#1e2336',
         'axes.facecolor':   '#1e2336',
         'text.color':       '#e8eaf0',
@@ -131,7 +203,7 @@ class Tooltip:
         outer.pack()
         tk.Label(outer, text=self._text,
                  bg=THEME["card2"], fg=THEME["text"],
-                 font=("Times New Roman", 9),
+                 font=(FONT_SERIF, 9),
                  wraplength=self._wrap, justify="left",
                  padx=8, pady=5).pack()
 
@@ -144,35 +216,233 @@ def _apply_theme(win, bg=None):
     except Exception:
         pass
 
-# ── DPI awareness ──────────────────────────────────────────────
-try:
-    import ctypes
-    try:    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+
+def _theme_win(win):
+    """Рекурсивно застосовує темну тему до всіх віджетів вікна."""
+    def _walk(w):
+        cls = w.winfo_class()
+        try:
+            if cls in ("Frame", "Labelframe", "Canvas"):
+                w.configure(bg=THEME["card"])
+            elif cls == "Label":
+                w.configure(bg=THEME["card"], fg=THEME["text"])
+            elif cls == "Button":
+                # Не чіпаємо кольорові кнопки (червоні/сині)
+                cur_bg = w.cget("bg")
+                if cur_bg not in ("#c62828","#1a4b8c","#27ae60","#e67e22"):
+                    w.configure(bg=THEME["card2"], fg=THEME["text"],
+                                activebackground=THEME["card2"],
+                                activeforeground=THEME["text"],
+                                relief="flat", bd=1,
+                                highlightbackground=THEME["border"])
+            elif cls == "Entry":
+                w.configure(bg=THEME["entry"], fg=THEME["entry_fg"],
+                            insertbackground=THEME["text"],
+                            highlightbackground=THEME["border"],
+                            highlightcolor=THEME["accent"],
+                            highlightthickness=1,
+                            disabledbackground=THEME["panel"],
+                            disabledforeground=THEME["sub"])
+            elif cls == "Text":
+                w.configure(bg=THEME["card"], fg=THEME["text"],
+                            insertbackground=THEME["text"],
+                            selectbackground=THEME["sel"],
+                            selectforeground=THEME["text"])
+            elif cls in ("Scrollbar",):
+                pass  # ttk Scrollbar — залишаємо системний
+            elif cls == "Menubutton":
+                cur_bg = w.cget("bg")
+                if cur_bg not in ("#c62828","#1a4b8c"):
+                    w.configure(bg=THEME["card2"], fg=THEME["text"],
+                                activebackground=THEME["card2"],
+                                activeforeground=THEME["text"])
+        except Exception:
+            pass
+        try:
+            for child in w.winfo_children():
+                _walk(child)
+        except Exception:
+            pass
+    _walk(win)
+
+def _apply_dark_ttk_style():
+    """Глобальна темна тема для ttk.Treeview, Scrollbar, Notebook."""
+    try:
+        style = ttk.Style()
+
+        # На macOS тема "aqua" — не можна змінити на "default"
+        # бо зламається рідне відображення. Використовуємо clam де доступна.
+        available = style.theme_names()
+        if IS_MAC:
+            # На macOS aqua обов'язкова для нативних віджетів
+            # Застосовуємо лише кольори через configure без зміни теми
+            pass
+        elif "clam" in available:
+            style.theme_use("clam")
+        else:
+            style.theme_use("default")
+
+        # ── Treeview ───────────────────────────────────────────
+        style.configure("Treeview",
+            background=THEME["card"],
+            foreground=THEME["text"],
+            fieldbackground=THEME["card"],
+            rowheight=22,
+            borderwidth=0,
+            font=(FONT_SERIF, 11))
+        style.configure("Treeview.Heading",
+            background=THEME["accent2"],
+            foreground="#ffffff",
+            font=(FONT_SERIF, 11, "bold"),
+            relief="flat", padding=(4, 4))
+        style.map("Treeview",
+            background=[("selected", THEME["sel"])],
+            foreground=[("selected", THEME["text"])])
+        style.map("Treeview.Heading",
+            background=[("active", THEME["accent"])])
+
+        # ── Journal Treeview ───────────────────────────────────
+        style.configure("Journal.Treeview",
+            background=THEME["card"],
+            foreground=THEME["text"],
+            fieldbackground=THEME["card"],
+            rowheight=22,
+            font=(FONT_SERIF, 10))
+        style.configure("Journal.Treeview.Heading",
+            background=THEME["accent2"],
+            foreground="#ffffff",
+            font=(FONT_SERIF, 10, "bold"),
+            relief="raised", padding=(4, 4))
+        style.map("Journal.Treeview.Heading",
+            background=[("active", THEME["accent"])],
+            foreground=[("active", "#ffffff")])
+
+        # ── Scrollbar ──────────────────────────────────────────
+        if not IS_MAC:   # на macOS scrollbar нативний — не чіпаємо
+            style.configure("Vertical.TScrollbar",
+                background=THEME["card2"],
+                troughcolor=THEME["panel"],
+                arrowcolor=THEME["sub"],
+                borderwidth=0)
+            style.configure("Horizontal.TScrollbar",
+                background=THEME["card2"],
+                troughcolor=THEME["panel"],
+                arrowcolor=THEME["sub"],
+                borderwidth=0)
+
+        # ── Combobox ───────────────────────────────────────────
+        style.configure("TCombobox",
+            fieldbackground=THEME["entry"],
+            background=THEME["card2"],
+            foreground=THEME["text"],
+            insertcolor=THEME["text"],
+            bordercolor=THEME["border"])
+        style.map("TCombobox",
+            fieldbackground=[("readonly", THEME["entry"])],
+            foreground=[("readonly", THEME["text"])],
+            selectbackground=[("readonly", THEME["sel"])],
+            selectforeground=[("readonly", THEME["text"])])
+
     except Exception:
-        try: ctypes.windll.user32.SetProcessDPIAware()
-        except Exception: pass
-except Exception: pass
+        pass
+
+        # ── Treeview ───────────────────────────────────────────
+        style.configure("Treeview",
+            background=THEME["card"],
+            foreground=THEME["text"],
+            fieldbackground=THEME["card"],
+            rowheight=22,
+            borderwidth=0,
+            font=(FONT_SERIF, 11))
+        style.configure("Treeview.Heading",
+            background=THEME["accent2"],
+            foreground="#ffffff",
+            font=(FONT_SERIF, 11, "bold"),
+            relief="flat", padding=(4, 4))
+        style.map("Treeview",
+            background=[("selected", THEME["sel"])],
+            foreground=[("selected", THEME["text"])])
+        style.map("Treeview.Heading",
+            background=[("active", THEME["accent"])])
+
+        # ── Journal Treeview (польовий журнал) ─────────────────
+        style.configure("Journal.Treeview",
+            background=THEME["card"],
+            foreground=THEME["text"],
+            fieldbackground=THEME["card"],
+            rowheight=22,
+            font=(FONT_SERIF, 10))
+        style.configure("Journal.Treeview.Heading",
+            background=THEME["accent2"],
+            foreground="#ffffff",
+            font=(FONT_SERIF, 10, "bold"),
+            relief="raised", padding=(4, 4))
+        style.map("Journal.Treeview.Heading",
+            background=[("active", THEME["accent"])],
+            foreground=[("active", "#ffffff")])
+
+        # ── Scrollbar ──────────────────────────────────────────
+        style.configure("Vertical.TScrollbar",
+            background=THEME["card2"],
+            troughcolor=THEME["panel"],
+            arrowcolor=THEME["sub"],
+            borderwidth=0)
+        style.configure("Horizontal.TScrollbar",
+            background=THEME["card2"],
+            troughcolor=THEME["panel"],
+            arrowcolor=THEME["sub"],
+            borderwidth=0)
+
+
+# ── DPI awareness — тільки Windows ────────────────────────────
+if IS_WIN:
+    try:
+        import ctypes
+        try:    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try: ctypes.windll.user32.SetProcessDPIAware()
+            except Exception: pass
+    except Exception: pass
 
 # ── Icon ──────────────────────────────────────────────────────
 def _find_icon():
+    """Шукає файл іконки у директорії програми."""
     dirs = [os.getcwd()]
     try: dirs.insert(0, os.path.dirname(os.path.abspath(__file__)))
     except Exception: pass
     try:
         if hasattr(sys, "_MEIPASS"): dirs.append(sys._MEIPASS)
     except Exception: pass
+    # Windows: .ico; macOS/Linux: .png або .gif (iconphoto)
+    fnames = ["icon.ico"] if IS_WIN else ["Logo.png","logo.png","icon.png","icon.gif"]
     for d in dirs:
-        p = os.path.join(d, "icon.ico")
-        if os.path.exists(p): return p
+        for fname in fnames:
+            p = os.path.join(d, fname)
+            if os.path.exists(p): return p
     return None
 
+
 def set_icon(win):
+    """Встановлює іконку вікна відповідно до платформи."""
     ico = _find_icon()
     if not ico: return
-    try: win.iconbitmap(ico)
+    try:
+        if IS_WIN:
+            win.iconbitmap(ico)
+        else:
+            # macOS і Linux: iconphoto через PhotoImage або PIL
+            if HAS_PIL:
+                from PIL import Image, ImageTk
+                img = Image.open(ico).resize((32, 32), Image.LANCZOS)
+                ph  = ImageTk.PhotoImage(img)
+                win._icon_img = ph   # зберігаємо щоб GC не забрав
+                win.iconphoto(True, ph)
+            else:
+                ph = tk.PhotoImage(file=ico)
+                win._icon_img = ph
+                win.iconphoto(True, ph)
     except Exception:
-        try: win.iconbitmap(default=ico)
-        except Exception: pass
+        pass
 
 # ── Clipboard PNG → Windows ────────────────────────────────────
 def embed_figure(fig, master, dpi=96):
@@ -191,8 +461,31 @@ def _copy_fig_to_clipboard(fig):
         fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
         buf.seek(0)
         pil = _PILImage.open(buf)
-        ok, msg = _copy_pil_win(pil); buf.close(); return ok, msg
+        if IS_WIN:
+            ok, msg = _copy_pil_win(pil); buf.close(); return ok, msg
+        elif IS_MAC:
+            ok, msg = _copy_pil_mac(pil); buf.close(); return ok, msg
+        else:
+            buf.close()
+            return False, "Копіювання до буфера підтримується лише на Windows та macOS"
     except Exception as ex: return False, str(ex)
+
+
+def _copy_pil_mac(pil_img):
+    """Копіює PIL Image до буфера на macOS через osascript."""
+    try:
+        import subprocess, tempfile
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            pil_img.save(tmp.name, "PNG")
+            script = f'set the clipboard to (read (POSIX file "{tmp.name}") as «class PNGf»)'
+            result = subprocess.run(["osascript", "-e", script],
+                                    capture_output=True, timeout=5)
+            os.unlink(tmp.name)
+            if result.returncode == 0:
+                return True, ""
+            return False, result.stderr.decode("utf-8", errors="replace")
+    except Exception as ex:
+        return False, str(ex)
 
 def _copy_pil_win(pil_img):
     try: import ctypes; from ctypes import wintypes
@@ -303,7 +596,7 @@ def cliffs_lbl(d):
     if d < 0.474: return "середній"
     return "сильний"
 
-def fit_font(texts, family="Times New Roman", start=13, min_s=9, target=155):
+def fit_font(texts, family=FONT_SERIF, start=13, min_s=9, target=155):
     f = tkfont.Font(family=family, size=start); sz = start
     while sz > min_s:
         if max(f.measure(t) for t in texts) <= target: break
@@ -324,7 +617,7 @@ def make_tv(parent, headers, rows, min_col=90):
     vsb.pack(side=tk.RIGHT, fill=tk.Y)
     hsb.pack(side=tk.BOTTOM, fill=tk.X)
     tv.pack(fill=tk.BOTH, expand=True)
-    fnt = tkfont.Font(family="Times New Roman", size=11)
+    fnt = tkfont.Font(family=FONT_SERIF, size=11)
     for i, h in enumerate(headers):
         cw = max(fnt.measure(str(h)) + 24, min_col,
                  max((fnt.measure(str(r[i]) if i < len(r) and r[i] else "") + 20) for r in rows) if rows else min_col)
@@ -333,8 +626,8 @@ def make_tv(parent, headers, rows, min_col=90):
     for row in rows:
         tv.insert("", "end", values=[("" if v is None else str(v)) for v in row])
     style = ttk.Style()
-    style.configure("Treeview", font=("Times New Roman", 11), rowheight=22)
-    style.configure("Treeview.Heading", font=("Times New Roman", 11, "bold"))
+    style.configure("Treeview", font=(FONT_SERIF, 11), rowheight=22)
+    style.configure("Treeview.Heading", font=(FONT_SERIF, 11, "bold"))
     return frm, tv
 
 # ═══════════════════════════════════════════════════════════════
@@ -1064,7 +1357,7 @@ def project_from_dict(app, d):
 # GRAPH SETTINGS
 # ═══════════════════════════════════════════════════════════════
 DEF_GS = {
-    "font_family": "Times New Roman", "font_style": "normal", "font_size": 11,
+    "font_family": FONT_SERIF, "font_style": "normal", "font_size": 11,
     "box_color": "#ffffff", "median_color": "#c62828",
     "whisker_color": "#000000", "flier_color": "#555555",
     "venn_colors": ["#4c72b0", "#dd8452", "#55a868", "#c44e52"],
@@ -1076,7 +1369,7 @@ DEF_GS = {
 # GRAPH SETTINGS DIALOG
 # ═══════════════════════════════════════════════════════════════
 class GraphSettingsDlg(tk.Toplevel):
-    FONTS  = ["Times New Roman", "Arial", "Calibri", "Georgia", "Verdana", "Courier New"]
+    FONTS  = [FONT_SERIF, FONT_SANS, "Calibri", "Georgia", "Verdana", "Courier New"]
     STYLES = ["normal", "bold", "italic", "bold italic"]
     CMAPS  = ["RdYlGn", "coolwarm", "RdBu", "PiYG", "PRGn", "bwr", "seismic", "viridis", "plasma"]
 
@@ -1275,21 +1568,21 @@ class HeatmapSettingsDlg(tk.Toplevel):
 
         self._hcmap = tk.StringVar(value=gs.get("heatmap_cmap","RdYlGn"))
         self._hfz   = tk.IntVar(value=gs.get("heatmap_font_size", 10))
-        self._ff    = tk.StringVar(value=gs.get("font_family","Times New Roman"))
+        self._ff    = tk.StringVar(value=gs.get("font_family",FONT_SERIF))
 
         r = 0
         for lbl, wid in [("Палітра кольорів:", None),
                           ("Шрифт:", None),
                           ("Розмір шрифту:", None),
                           ("Колір тексту у клітинках:", None)]:
-            tk.Label(frm, text=lbl, font=("Times New Roman",12)
+            tk.Label(frm, text=lbl, font=(FONT_SERIF,12)
                      ).grid(row=r, column=0, sticky="w", pady=6)
             if r == 0:
                 ttk.Combobox(frm, textvariable=self._hcmap, values=self.CMAPS,
                              state="readonly", width=20).grid(row=r, column=1,
                              sticky="w", padx=8)
             elif r == 1:
-                fonts = ["Times New Roman","Arial","Calibri","Georgia","Verdana","Courier New"]
+                fonts = [FONT_SERIF,FONT_SANS,"Calibri","Georgia","Verdana","Courier New"]
                 ttk.Combobox(frm, textvariable=self._ff, values=fonts,
                              state="readonly", width=20).grid(row=r, column=1,
                              sticky="w", padx=8)
@@ -1305,9 +1598,9 @@ class HeatmapSettingsDlg(tk.Toplevel):
 
         bf = tk.Frame(frm); bf.grid(row=r, column=0, columnspan=2, pady=(14,0))
         tk.Button(bf, text="OK", width=10, bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=self._ok).pack(side=tk.LEFT, padx=4)
+                  font=(FONT_SERIF,12), command=self._ok).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", width=12,
-                  font=("Times New Roman",12), command=self.destroy).pack(side=tk.LEFT)
+                  font=(FONT_SERIF,12), command=self.destroy).pack(side=tk.LEFT)
         self.update_idletasks(); center_win(self); self.grab_set()
 
     def _pick_col(self):
@@ -1331,7 +1624,7 @@ class HeatmapSettingsDlg(tk.Toplevel):
 class ScatterSettingsDlg(tk.Toplevel):
     """Діалог налаштувань матриці діаграм розсіювання."""
     COLORS = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#1a6b1a","#c62828","#555555"]
-    FONTS  = ["Times New Roman","Arial","Calibri","Georgia","Verdana","Courier New"]
+    FONTS  = [FONT_SERIF,FONT_SANS,"Calibri","Georgia","Verdana","Courier New"]
 
     def __init__(self, parent, sc_gs: dict):
         super().__init__(parent)
@@ -1349,7 +1642,7 @@ class ScatterSettingsDlg(tk.Toplevel):
         self._pt_alpha = tk.DoubleVar(value=sc_gs.get("sc_point_alpha", 0.75))
         self._show_tr  = tk.BooleanVar(value=sc_gs.get("sc_show_trend", True))
         self._tr_width = tk.DoubleVar(value=sc_gs.get("sc_trend_width", 0.9))
-        self._ff       = tk.StringVar(value=sc_gs.get("font_family","Times New Roman"))
+        self._ff       = tk.StringVar(value=sc_gs.get("font_family",FONT_SERIF))
         self._fz       = tk.IntVar(value=sc_gs.get("sc_font_size", 6))
 
         rows_cfg = [
@@ -1363,7 +1656,7 @@ class ScatterSettingsDlg(tk.Toplevel):
         self._btn_refs = {}
         r = 0
         for lbl, wtype, var, opts in rows_cfg:
-            tk.Label(frm, text=lbl, font=("Times New Roman",12)
+            tk.Label(frm, text=lbl, font=(FONT_SERIF,12)
                      ).grid(row=r, column=0, sticky="w", pady=5)
             if wtype == "combo":
                 ttk.Combobox(frm, textvariable=var, values=opts,
@@ -1385,7 +1678,7 @@ class ScatterSettingsDlg(tk.Toplevel):
             ("Колір лінії тренду:","_tr_color",  self._tr_color),
             ("Колір гістограм:",   "_hist_col",  self._hist_col),
         ]:
-            tk.Label(frm, text=lbl, font=("Times New Roman",12)
+            tk.Label(frm, text=lbl, font=(FONT_SERIF,12)
                      ).grid(row=r, column=0, sticky="w", pady=5)
             btn = tk.Button(frm, width=6, relief=tk.SUNKEN, bg=init,
                             command=lambda a=attr: self._pick(a))
@@ -1394,9 +1687,9 @@ class ScatterSettingsDlg(tk.Toplevel):
 
         bf = tk.Frame(frm); bf.grid(row=r, column=0, columnspan=2, pady=(14,0))
         tk.Button(bf, text="OK", width=10, bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=self._ok).pack(side=tk.LEFT, padx=4)
+                  font=(FONT_SERIF,12), command=self._ok).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", width=12,
-                  font=("Times New Roman",12), command=self.destroy).pack(side=tk.LEFT)
+                  font=(FONT_SERIF,12), command=self.destroy).pack(side=tk.LEFT)
         self.update_idletasks(); center_win(self); self.grab_set()
 
     def _pick(self, attr):
@@ -1566,13 +1859,13 @@ class CorrelationWindow:
 
     # ── Панель інструментів ───────────────────────────────────
     def _build_toolbar(self):
-        tb = tk.Frame(self.win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tb = tk.Frame(self.win, bg=THEME["panel"], padx=6, pady=5); tb.pack(fill=tk.X)
         tk.Button(tb, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
+                  font=(FONT_SERIF, 13),
                   command=self._run_analysis).pack(side=tk.LEFT, padx=4)
         self._settings_btn = tk.Menubutton(tb, text="⚙ Налаштування ▾",
-                                           font=("Times New Roman", 11),
-                                           relief=tk.RAISED, bd=2)
+                                           font=(FONT_SERIF, 11),
+                                           relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         self._settings_btn.pack(side=tk.LEFT, padx=4)
         sm = tk.Menu(self._settings_btn, tearoff=0)
         sm.add_command(label="Додати рядок",      command=self.add_row)
@@ -1584,14 +1877,14 @@ class CorrelationWindow:
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         self._settings_btn["menu"] = sm
         tk.Button(tb, text="Вставити з буфера",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
         tk.Label(tb,
                  text="Двічі клікніть на синій заголовок щоб перейменувати показник",
-                 font=("Times New Roman", 9), fg="#666"
+                 font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]
                  ).pack(side=tk.LEFT, padx=10)
 
     def _clear_table(self):
@@ -1631,7 +1924,7 @@ class CorrelationWindow:
             lbl = tk.Label(self.inner, textvariable=var,
                            relief=tk.RIDGE, width=14, cursor="hand2",
                            bg="#1a4b8c", fg="white",
-                           font=("Times New Roman", 11, "bold"))
+                           font=(FONT_SERIF, 11, "bold"))
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
             self.header_labels.append(lbl)
@@ -1640,24 +1933,24 @@ class CorrelationWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
         dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
         tk.Label(dlg, text=f"Назва показника {idx+1}:",
-                 font=("Times New Roman", 12)).pack(padx=16, pady=14)
+                 font=(FONT_SERIF, 12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman", 12), width=28)
+        e = tk.Entry(dlg, textvariable=var, font=(FONT_SERIF, 12), width=28)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.header_vars[idx].set(nm)
             dlg.destroy()
         tk.Button(dlg, text="ОК", bg="#c62828", fg="white",
-                  font=("Times New Roman", 12), command=apply).pack(pady=(4,14))
+                  font=(FONT_SERIF, 12), command=apply).pack(pady=(4,14))
         dlg.bind("<Return>", lambda ev: apply())
         center_win(dlg)
 
     def _add_row_widgets(self, i):
         row_ = []
         for j in range(self.cols):
-            e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=14, font=(FONT_SERIF, 11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=j, padx=2, pady=2)
             e.bind("<Return>", self._on_enter)
             e.bind("<Tab>",    self._on_tab)
@@ -1683,13 +1976,13 @@ class CorrelationWindow:
         lbl = tk.Label(self.inner, textvariable=var,
                        relief=tk.RIDGE, width=14, cursor="hand2",
                        bg="#1a4b8c", fg="white",
-                       font=("Times New Roman", 11, "bold"))
+                       font=(FONT_SERIF, 11, "bold"))
         lbl.grid(row=0, column=ci, padx=2, pady=2, sticky="nsew")
         lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
         self.header_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=14, font=(FONT_SERIF, 11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=ci, padx=2, pady=2)
             e.bind("<Return>", self._on_enter); e.bind("<Tab>", self._on_tab)
             row_.append(e)
@@ -1841,7 +2134,7 @@ class CorrelationWindow:
         win.geometry("700x640"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
@@ -1851,7 +2144,7 @@ class CorrelationWindow:
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     # ── Діалог параметрів і запуск ────────────────────────────
     def _run_analysis(self):
@@ -1861,11 +2154,11 @@ class CorrelationWindow:
         dlg.title("Параметри кореляційного аналізу")
         dlg.resizable(False, False); set_icon(dlg)
         frm = tk.Frame(dlg, padx=20, pady=16); frm.pack(fill=tk.BOTH, expand=True)
-        rb_f = ("Times New Roman", 12)
+        rb_f = (FONT_SERIF, 12)
 
         # ── Метод кореляції ──────────────────────────────────
         tk.Label(frm, text="Метод кореляції:",
-                 font=("Times New Roman", 12, "bold")).grid(
+                 font=(FONT_SERIF, 12, "bold")).grid(
                  row=0, column=0, columnspan=2, sticky="w", pady=0)
         meth_var = tk.StringVar(value="auto")
         methods = [
@@ -1890,7 +2183,7 @@ class CorrelationWindow:
 
         # ── Поправка на множинні порівняння ──────────────────
         tk.Label(frm, text="Поправка на множинні порівняння:",
-                 font=("Times New Roman", 12, "bold")).grid(
+                 font=(FONT_SERIF, 12, "bold")).grid(
                  row=5, column=0, columnspan=2, sticky="w", pady=0)
         corr_var = tk.StringVar(value="bonferroni")
         corrections = [
@@ -1913,11 +2206,11 @@ class CorrelationWindow:
 
         # ── Рівень значущості ─────────────────────────────────
         tk.Label(frm, text="Рівень значущості α:",
-                 font=("Times New Roman", 12, "bold")).grid(row=10, column=0, sticky="w")
+                 font=(FONT_SERIF, 12, "bold")).grid(row=10, column=0, sticky="w")
         alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(frm, textvariable=alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=9,
-                     font=("Times New Roman",12)).grid(row=10, column=1, sticky="w", padx=8)
+                     font=(FONT_SERIF,12)).grid(row=10, column=1, sticky="w", padx=8)
 
         # ── Кнопки ───────────────────────────────────────────
         bf = tk.Frame(frm); bf.grid(row=11, column=0, columnspan=2, pady=(16,0))
@@ -1932,9 +2225,9 @@ class CorrelationWindow:
 
         tk.Button(bf, text="▶ Виконати аналіз", width=20,
                   bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=ok).pack(side=tk.LEFT, padx=4)
+                  font=(FONT_SERIF,12), command=ok).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", width=12,
-                  font=("Times New Roman",12), command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+                  font=(FONT_SERIF,12), command=dlg.destroy).pack(side=tk.LEFT, padx=4)
 
         dlg.update_idletasks()
         center_win(dlg)
@@ -2106,33 +2399,33 @@ class CorrelationWindow:
             _hm_outer.pack(fill=tk.BOTH, expand=True)
             _active_tab[0] = 0
             _btn_hm.configure(bg=THEME["card"], fg="#1a4b8c", relief=tk.FLAT,
-                               font=("Times New Roman",11,"bold"))
+                               font=(FONT_SERIF,11,"bold"))
             _btn_sc.configure(bg="#1a4b8c", fg="#d0d8e8", relief=tk.FLAT,
-                               font=("Times New Roman",11))
+                               font=(FONT_SERIF,11))
         def _show_sc():
             _hm_outer.pack_forget()
             _sc_outer.pack(fill=tk.BOTH, expand=True)
             _active_tab[0] = 1
             _btn_sc.configure(bg=THEME["card"], fg="#1a4b8c", relief=tk.FLAT,
-                               font=("Times New Roman",11,"bold"))
+                               font=(FONT_SERIF,11,"bold"))
             _btn_hm.configure(bg="#1a4b8c", fg="#d0d8e8", relief=tk.FLAT,
-                               font=("Times New Roman",11))
+                               font=(FONT_SERIF,11))
 
         _btn_hm = tk.Button(switch_f, text="  🌡  Теплова карта  ",
                             bg=THEME["card"], fg="#1a4b8c",
-                            font=("Times New Roman",11,"bold"),
+                            font=(FONT_SERIF,11,"bold"),
                             relief=tk.FLAT, padx=16, pady=8,
                             cursor="hand2", command=_show_hm)
         _btn_hm.pack(side=tk.LEFT)
         _btn_sc = tk.Button(switch_f, text="  ⬡  Матриця розсіювання  ",
                             bg="#1a4b8c", fg="#d0d8e8",
-                            font=("Times New Roman",11),
+                            font=(FONT_SERIF,11),
                             relief=tk.FLAT, padx=16, pady=8,
                             cursor="hand2", command=_show_sc)
         _btn_sc.pack(side=tk.LEFT)
         tk.Label(switch_f, bg="#1a4b8c",
                  text=f"  Метод: {meth_lbl}  |  α={alpha}  |  Поправка: {corr_label}",
-                 font=("Times New Roman",9), fg="#a0b8cc").pack(side=tk.LEFT, padx=8)
+                 font=(FONT_SERIF,9), fg="#a0b8cc").pack(side=tk.LEFT, padx=8)
 
         # ── Теплова карта ──────────────────────────────────────
         tb1 = tk.Frame(_hm_outer, bg=THEME["panel"], padx=6, pady=4); tb1.pack(fill=tk.X)
@@ -2142,7 +2435,7 @@ class CorrelationWindow:
             ("⚙ Налаштування", lambda: self._settings_heatmap(), "#1a4b8c"),
         ]:
             kw = {"bg": bcol, "fg": "white"} if bcol else {}
-            tk.Button(tb1, text=btxt, font=("Times New Roman",10),
+            tk.Button(tb1, text=btxt, font=(FONT_SERIF,10),
                       relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                       command=bcmd, **kw).pack(side=tk.RIGHT, padx=3)
         self._hm_frame = tk.Frame(_hm_outer)
@@ -2156,7 +2449,7 @@ class CorrelationWindow:
             ("⚙ Налаштування", lambda: self._settings_scatter(labels,arrays,method), "#1a4b8c"),
         ]:
             kw = {"bg": bcol, "fg": "white"} if bcol else {}
-            tk.Button(tb2, text=btxt, font=("Times New Roman",10),
+            tk.Button(tb2, text=btxt, font=(FONT_SERIF,10),
                       relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                       command=bcmd, **kw).pack(side=tk.RIGHT, padx=3)
         self._sc_frame = tk.Frame(_sc_outer)
@@ -2192,16 +2485,16 @@ class CorrelationWindow:
         dlg = tk.Toplevel(self._res_win); dlg.title("Заголовок теплової карти")
         dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
         tk.Label(dlg, text="Заголовок графіка:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+                 font=(FONT_SERIF,12)).pack(padx=16, pady=(14,4))
         tv = tk.StringVar(value=self._hm_title)
-        te = tk.Entry(dlg, textvariable=tv, font=("Times New Roman",12), width=40)
+        te = tk.Entry(dlg, textvariable=tv, font=(FONT_SERIF,12), width=40)
         te.pack(padx=16, pady=4); te.focus_set()
         def _ok():
             self._hm_title = tv.get().strip()
             dlg.destroy()
             self._redraw_heatmap()
         tk.Button(dlg, text="Застосувати", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=_ok).pack(pady=(4,14))
+                  font=(FONT_SERIF,12), command=_ok).pack(pady=(4,14))
         dlg.bind("<Return>", lambda e: _ok())
         center_win(dlg)
 
@@ -2215,7 +2508,7 @@ class CorrelationWindow:
     def _settings_scatter(self, labels, arrays, method):
         dlg = tk.Toplevel(self._res_win); dlg.title("Налаштування матриці розсіювання")
         dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
-        rf = ("Times New Roman",11)
+        rf = (FONT_SERIF,11)
         frm = tk.Frame(dlg, padx=16, pady=12); frm.pack()
 
         # Заголовок
@@ -2286,7 +2579,7 @@ class CorrelationWindow:
         cmap_name = gs.get("heatmap_cmap","RdYlGn")
         fsize     = gs.get("heatmap_font_size", 9)
         acol      = gs.get("heatmap_annot_color","#000000")
-        ff        = gs.get("font_family","Times New Roman")
+        ff        = gs.get("font_family",FONT_SERIF)
 
         try:    cmap = matplotlib.cm.get_cmap(cmap_name)
         except: cmap = matplotlib.cm.get_cmap("RdYlGn")
@@ -2341,7 +2634,7 @@ class CorrelationWindow:
             "sc_point_alpha":  0.75,
             "sc_show_trend":   True,
             "sc_trend_width":  0.9,
-            "font_family":     "Times New Roman",
+            "font_family":     FONT_SERIF,
             "sc_font_size":    6,
         })
         self._sc_labels = labels; self._sc_arrays = arrays; self._sc_method = method
@@ -2355,7 +2648,7 @@ class CorrelationWindow:
         pt_alpha = sc.get("sc_point_alpha",  0.75)
         show_tr  = sc.get("sc_show_trend",   True)
         tr_width = sc.get("sc_trend_width",  0.9)
-        ff       = sc.get("font_family",     "Times New Roman")
+        ff       = sc.get("font_family",     FONT_SERIF)
         fz       = sc.get("sc_font_size",    6)
 
         dpi = 96
@@ -2433,20 +2726,20 @@ class SADTk:
 
         mf = tk.Frame(root, bg=THEME["card"]); mf.pack(expand=True, fill=tk.BOTH)
         tk.Label(mf, text="S.A.D. — Статистичний аналіз даних",
-                 font=("Times New Roman", 20, "bold"), fg="#000000", bg=THEME["card"]).pack(pady=16)
+                 font=(FONT_SERIF, 20, "bold"), fg="#000000", bg=THEME["card"]).pack(pady=16)
 
         bf = tk.Frame(mf, bg=THEME["card"]); bf.pack(pady=8)
         for i, (txt, fc) in enumerate([("Однофакторний аналіз", 1), ("Двофакторний аналіз", 2),
                                         ("Трифакторний аналіз", 3), ("Чотирифакторний аналіз", 4)]):
-            tk.Button(bf, text=txt, width=22, height=2, font=("Times New Roman", 13),
+            tk.Button(bf, text=txt, width=22, height=2, font=(FONT_SERIF, 13),
                       command=lambda f=fc: self.open_table(f)).grid(row=i // 2, column=i % 2, padx=10, pady=6)
 
-        tk.Button(mf, text="Кореляційний аналіз", width=30, height=2, font=("Times New Roman", 13),
+        tk.Button(mf, text="Кореляційний аналіз", width=30, height=2, font=(FONT_SERIF, 13),
                   bg="#1a4b8c", fg="white",
                   command=self.open_correlation).pack(pady=(4, 10))
 
         tk.Label(mf, text="Виберіть тип аналізу → Введіть дані → Аналіз даних",
-                 font=("Times New Roman", 12), fg="#555555", bg=THEME["card"]).pack(pady=4)
+                 font=(FONT_SERIF, 12), fg="#555555", bg=THEME["card"]).pack(pady=4)
 
         self.table_win = None; self.report_win = None; self.graph_win = None
         self._graph_figs = {}
@@ -2615,7 +2908,7 @@ class SADTk:
         win.geometry("680x540"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
@@ -2623,7 +2916,7 @@ class SADTk:
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     # ── factor titles ─────────────────────────────────────────
     def ftitle(self, fk): return self.factor_title_map.get(fk, f"Фактор {fk}")
@@ -2723,10 +3016,11 @@ class SADTk:
         e.bind("<Down>",                 self._on_arrow)
         e.bind("<Left>",                 self._on_arrow)
         e.bind("<Right>",                self._on_arrow)
-        e.bind("<Control-c>",            self._on_copy)
-        e.bind("<Control-C>",            self._on_copy)
-        e.bind("<Control-v>",            self._on_paste)
-        e.bind("<Control-V>",            self._on_paste)
+        e.bind("<Control-c>", self._on_copy);  e.bind("<Control-C>", self._on_copy)
+        e.bind("<Control-v>", self._on_paste); e.bind("<Control-V>", self._on_paste)
+        if IS_MAC:  # Cmd на macOS
+            e.bind("<Command-c>", self._on_copy);  e.bind("<Command-C>", self._on_copy)
+            e.bind("<Command-v>", self._on_paste); e.bind("<Command-V>", self._on_paste)
         e.bind("<FocusIn>",              lambda ev: self._set_active(ev.widget))
         e.bind("<ButtonPress-1>",        self._on_press)
         e.bind("<B1-Motion>",            self._on_drag)
@@ -2901,8 +3195,12 @@ class SADTk:
         return None
 
     def _mk_entry(self, parent):
-        return tk.Entry(parent, width=COL_W, fg=THEME["text"], font=("Times New Roman", 12),
-                        highlightthickness=1, highlightbackground="#c0c0c0", highlightcolor="#c0c0c0")
+        return tk.Entry(parent, width=COL_W, font=(FONT_SERIF, 12),
+                        highlightthickness=1,
+                        highlightbackground=THEME["border"],
+                        highlightcolor=THEME["accent"],
+                        bg=THEME["entry"], fg=THEME["entry_fg"],
+                        insertbackground=THEME["text"])
 
     # ── rename factor ─────────────────────────────────────────
     def rename_factor(self, col):
@@ -2912,9 +3210,9 @@ class SADTk:
         dlg.title("Перейменувати фактор"); dlg.resizable(False, False)
         set_icon(dlg); dlg.grab_set()
         tk.Label(dlg, text=f"Назва фактору {fk}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=14)
+                 font=(FONT_SERIF,12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=old)
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=28)
+        e = tk.Entry(dlg, textvariable=var, font=(FONT_SERIF,12), width=28)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def ok():
             new = var.get().strip()
@@ -2924,7 +3222,7 @@ class SADTk:
                 self.header_labels[col].configure(text=new)
             dlg.destroy()
         tk.Button(dlg, text="OK", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=ok).pack(pady=(4,14))
+                  font=(FONT_SERIF,12), command=ok).pack(pady=(4,14))
         dlg.bind("<Return>", lambda ev: ok())
         center_win(dlg)
         dlg.update_idletasks(); center_win(dlg); dlg.bind("<Return>", lambda ev: ok()); dlg.grab_set()
@@ -2970,13 +3268,13 @@ class SADTk:
         ctl = tk.Frame(tw, padx=6, pady=4); ctl.pack(fill=tk.X)
 
         tk.Button(ctl, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
+                  font=(FONT_SERIF, 13),
                   command=self.analyze).pack(side=tk.LEFT, padx=4)
 
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(ctl, text="⚙ Налаштування ▾",
-                            font=("Times New Roman", 11),
-                            relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF, 11),
+                            relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=4)
         sm2 = tk.Menu(mb2, tearoff=0)
         sm2.add_command(label="Додати рядок",      command=self.add_row)
@@ -2992,17 +3290,17 @@ class SADTk:
         mb2["menu"] = sm2
 
         tk.Button(ctl, text="Вставити з буфера",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._paste_from_focus).pack(side=tk.LEFT, padx=4)
         tk.Button(ctl, text="📚 Довідка",
                   bg="#1a4b8c", fg="white",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=lambda: self._show_anova_help(tw, fc)).pack(side=tk.LEFT, padx=4)
 
         # Підказка
         tk.Label(ctl,
                  text="Подвійний клік на синьому заголовку фактора → перейменувати",
-                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+                 font=(FONT_SERIF,9), fg="#666").pack(side=tk.LEFT, padx=8)
 
         # ── Table canvas ──────────────────────────────────────
         self.canvas = tk.Canvas(tw)
@@ -3024,7 +3322,7 @@ class SADTk:
                            bg="#1a4b8c" if is_factor else "#2e6b2e",
                            fg="white",
                            cursor="hand2" if is_factor else "arrow",
-                           font=("Times New Roman", 12, "bold"))
+                           font=(FONT_SERIF, 12, "bold"))
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             self.header_labels.append(lbl)
             if is_factor:
@@ -3038,6 +3336,8 @@ class SADTk:
         self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
         self.entries[0][0].focus_set()
         tw.bind("<Control-v>", self._on_paste); tw.bind("<Control-V>", self._on_paste)
+        if IS_MAC:
+            tw.bind("<Command-v>", self._on_paste); tw.bind("<Command-V>", self._on_paste)
 
     # ── table editing ─────────────────────────────────────────
     def add_row(self):
@@ -3058,7 +3358,7 @@ class SADTk:
         self.cols += 1; ci = self.cols - 1
         nm = f"Повт.{ci - self.factors_count + 1}"
         lbl = tk.Label(self.inner, text=nm, relief=tk.RIDGE, width=COL_W,
-                       bg=THEME["panel"], fg=THEME["text"], font=("Times New Roman", 12, "bold"))
+                       bg=THEME["panel"], fg=THEME["text"], font=(FONT_SERIF, 12, "bold"))
         lbl.grid(row=0, column=ci, padx=2, pady=2, sticky="nsew"); self.header_labels.append(lbl)
         for i, row in enumerate(self.entries):
             e = self._mk_entry(self.inner); e.grid(row=i + 1, column=ci, padx=2, pady=2)
@@ -3123,8 +3423,8 @@ class SADTk:
         dlg.resizable(False, False); set_icon(dlg)
         dlg.configure(bg=THEME["bg"])
         frm = tk.Frame(dlg, padx=16, pady=14, bg=THEME["card"]); frm.pack(fill=tk.BOTH, expand=True)
-        rf = ("Times New Roman", 12)
-        rb_f = ("Times New Roman", 13)
+        rf = (FONT_SERIF, 12)
+        rb_f = (FONT_SERIF, 13)
 
         tk.Label(frm, text="Назва показника (необов'язково):",
                  font=rf).grid(row=0, column=0, sticky="w", pady=4)
@@ -3136,7 +3436,7 @@ class SADTk:
         e_un.grid(row=1, column=1, pady=4, padx=6)
 
         # ── Дизайн ───────────────────────────────────────────
-        tk.Label(frm, text="Дизайн досліду:", font=("Times New Roman",12,"bold")
+        tk.Label(frm, text="Дизайн досліду:", font=(FONT_SERIF,12,"bold")
                  ).grid(row=2, column=0, columnspan=2, sticky="w", pady=14)
 
         design_info = tk.Frame(frm); design_info.grid(row=3, column=0, columnspan=2, sticky="w")
@@ -3154,7 +3454,7 @@ class SADTk:
                      "  Другорядний фактор (sub-plot) = дрібніші, всередині великих.\n"
                      "  Типово: фактор A = обробка всього поля, B = сорт на підділянці."
                  ),
-                 font=("Times New Roman",10), justify="left",
+                 font=(FONT_SERIF,10), justify="left",
                  bg=THEME["card2"], relief=tk.FLAT, padx=8, pady=6
                  ).pack(fill=tk.X)
 
@@ -3179,7 +3479,7 @@ class SADTk:
                  "  4. Вимога: k варіантів = k рядів = k стовпців (k ≥ 3).\n"
                  "  Модель: Y = μ + Варіант + Рядок + Стовпець + ε\n"
                  "  df(похибка) = (k-1)(k-2)",
-            font=("Times New Roman",10), fg="#1a4b8c",
+            font=(FONT_SERIF,10), fg="#1a4b8c",
             bg=THEME["card2"], relief=tk.FLAT, padx=8, pady=6, justify="left")
         latin_hint.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0,4))
         latin_hint.grid_remove()
@@ -3204,7 +3504,7 @@ class SADTk:
         # ── Тип SS ───────────────────────────────────────────
         ttk.Separator(frm, orient="horizontal").grid(
             row=6, column=0, columnspan=2, sticky="ew", pady=8)
-        tk.Label(frm, text="Тип суми квадратів (SS):", font=("Times New Roman",12,"bold")
+        tk.Label(frm, text="Тип суми квадратів (SS):", font=(FONT_SERIF,12,"bold")
                  ).grid(row=7, column=0, columnspan=2, sticky="w", pady=0)
         tk.Label(frm,
                  text=(
@@ -3216,7 +3516,7 @@ class SADTk:
                      "  Стандарт SPSS/SAS. Не залежить від порядку. Взаємодії враховані.\n\n"
                      "Тип IV — Для сильно незбалансованих дизайнів з порожніми клітинками."
                  ),
-                 font=("Times New Roman",10), justify="left",
+                 font=(FONT_SERIF,10), justify="left",
                  bg=THEME["card2"], relief=tk.FLAT, padx=8, pady=4
                  ).grid(row=8, column=0, columnspan=2, sticky="ew")
         ssv = tk.StringVar(value="III")
@@ -3255,14 +3555,14 @@ class SADTk:
         dlg.configure(bg=THEME["bg"])
         frm = tk.Frame(dlg, padx=16, pady=14, bg=THEME["card"]); frm.pack(fill=tk.BOTH, expand=True)
         normal = (p_norm is not None) and (not math.isnan(p_norm)) and (p_norm > 0.05)
-        rb_f = ("Times New Roman", 13)
+        rb_f = (FONT_SERIF, 13)
         ordinal = getattr(self, '_ordinal_mode', False)
 
         if ordinal:
             # ── Режим бальних даних: ЛИШЕ непараметричні ────
             tk.Label(frm,
                      text="⚠ Бальна шкала → ЛИШЕ непараметричні методи",
-                     fg="#c62828", font=("Times New Roman",12,"bold")
+                     fg="#c62828", font=(FONT_SERIF,12,"bold")
                      ).pack(anchor="w", pady=0)
             tk.Label(frm,
                      text=(
@@ -3271,7 +3571,7 @@ class SADTk:
                          "стандартне відхилення методично некоректні для них.\n"
                          "Оберіть непараметричний критерій:"
                      ),
-                     fg="#555", font=("Times New Roman",11), justify="left"
+                     fg="#555", font=(FONT_SERIF,11), justify="left"
                      ).pack(anchor="w", pady=(0,10))
             if design == "crd":
                 options = [
@@ -3285,7 +3585,7 @@ class SADTk:
         elif normal:
             tk.Label(frm, text="✓ Дані відповідають нормальному розподілу (Shapiro–Wilk).",
                      justify="left", fg="#1a6b1a",
-                     font=("Times New Roman",11)).pack(anchor="w", pady=0)
+                     font=(FONT_SERIF,11)).pack(anchor="w", pady=0)
             options = [("НІР₀₅ (LSD)", "lsd"),
                        ("Тест Тьюкі", "tukey"),
                        ("Тест Дункана", "duncan"),
@@ -3298,14 +3598,14 @@ class SADTk:
                               "Залишки не нормальні → аналіз некоректний.\n"
                               "Рекомендація: трансформуйте або оберіть CRD/RCBD.",
                          fg="#c62828", justify="left",
-                         font=("Times New Roman",11)).pack(anchor="w")
+                         font=(FONT_SERIF,11)).pack(anchor="w")
                 options = []
             else:
                 tk.Label(frm,
                          text="⚠ Дані НЕ відповідають нормальному розподілу.\n"
                               "Оберіть метод:",
                          fg="#c62828", justify="left",
-                         font=("Times New Roman",11)).pack(anchor="w", pady=(0, 8))
+                         font=(FONT_SERIF,11)).pack(anchor="w", pady=(0, 8))
                 if design == "crd":
                     options = [
                         ("Краскела–Уолліса", "kw"),
@@ -3343,9 +3643,9 @@ class SADTk:
             out.update({"ok": True, "method": var.get()}); dlg.destroy()
         bf = tk.Frame(frm); bf.pack(pady=(12, 0))
         tk.Button(bf, text="▶ Виконати", width=14, bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=ok).pack(side=tk.LEFT, padx=4)
+                  font=(FONT_SERIF,12), command=ok).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", width=12,
-                  font=("Times New Roman",12), command=dlg.destroy).pack(side=tk.LEFT)
+                  font=(FONT_SERIF,12), command=dlg.destroy).pack(side=tk.LEFT)
         dlg.update_idletasks(); center_win(dlg); dlg.bind("<Return>", lambda e: ok())
         dlg.grab_set(); parent.wait_window(dlg); return out
 
@@ -3913,8 +4213,7 @@ class SADTk:
             self.report_win.destroy()
         self.report_win = rw = tk.Toplevel(self.table_win or self.root)
         rw.title("Звіт ANOVA — " + kw.get("indicator",""))
-        try: rw.state("zoomed")
-        except Exception: rw.geometry("1400x900")
+        maximize_win(rw)
         set_icon(rw)
 
         # ── Бокова панель + контент ──────────────────────────
@@ -3924,7 +4223,7 @@ class SADTk:
         content = tk.Frame(main_frame); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         tk.Label(sidebar, text="ЗВІТ", bg="#2c3e50", fg="#ecf0f1",
-                 font=("Times New Roman",12,"bold"), pady=12).pack(fill=tk.X)
+                 font=(FONT_SERIF,12,"bold"), pady=12).pack(fill=tk.X)
 
         self._active_panel = None
         self._active_rpt_btn = None
@@ -3941,12 +4240,12 @@ class SADTk:
         def _sidebar_btn(text, tooltip):
             fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
             b = tk.Button(fr, text=f"  {text}", bg=THEME["panel"], fg=THEME["sub"],
-                          font=("Times New Roman",11), relief=tk.FLAT,
+                          font=(FONT_SERIF,11), relief=tk.FLAT,
                           anchor="w", padx=12, pady=6,
                           activebackground="#c62828", activeforeground="white")
             b.pack(fill=tk.X)
             tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
-                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+                     font=(FONT_SERIF,8), anchor="w").pack(fill=tk.X)
             tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
             return b
 
@@ -3961,7 +4260,7 @@ class SADTk:
             rw.clipboard_append("\n".join(self._report_buf))
             messagebox.showinfo("","Текстовий звіт скопійовано у буфер.\nВставте у Word через Ctrl+V.")
         tk.Button(rpt_tb, text="📋 Копіювати звіт",
-                  font=("Times New Roman",11), command=copy_all).pack(side=tk.LEFT, padx=4)
+                  font=(FONT_SERIF,11), command=copy_all).pack(side=tk.LEFT, padx=4)
 
         # Scrollable body звіту
         outer = tk.Frame(rpt_frame); outer.pack(fill=tk.BOTH, expand=True)
@@ -3982,11 +4281,11 @@ class SADTk:
 
         buf = self._report_buf
         def _txt(s):
-            tk.Label(body, text=s, font=("Times New Roman", 12), fg="#000000",
+            tk.Label(body, text=s, font=(FONT_SERIF, 12), fg="#000000",
                      justify="left", anchor="w", wraplength=1100).pack(fill=tk.X, padx=12, pady=1)
             buf.append(s)
         def _head(s):
-            tk.Label(body, text=s, font=("Times New Roman", 13, "bold"), fg="#000000",
+            tk.Label(body, text=s, font=(FONT_SERIF, 13, "bold"), fg="#000000",
                      justify="left", anchor="w").pack(fill=tk.X, padx=12, pady=8)
             buf.append("\n" + s)
         def _sep():
@@ -4148,7 +4447,7 @@ class SADTk:
             # Роздільник між звітом і графіками
             tk.Frame(sidebar, bg="#1a3a4a", height=2).pack(fill=tk.X)
             tk.Label(sidebar, text="ГРАФІКИ", bg="#2c3e50", fg="#ecf0f1",
-                     font=("Times New Roman",11,"bold"),
+                     font=(FONT_SERIF,11,"bold"),
                      pady=8).pack(fill=tk.X)
         else:
             # Відкриваємо окреме вікно
@@ -4156,15 +4455,14 @@ class SADTk:
                 self.graph_win.destroy()
             self.graph_win = gw = tk.Toplevel(self.table_win or self.root)
             gw.title(f"Графічний звіт — {indicator}")
-            try: gw.state("zoomed")
-            except Exception: gw.geometry("1400x900")
+            maximize_win(gw)
             set_icon(gw)
             main = tk.Frame(gw); main.pack(fill=tk.BOTH, expand=True)
             sidebar = tk.Frame(main, width=190, bg="#2c3e50")
             sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
             content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             tk.Label(sidebar, text="ГРАФІКИ", bg="#2c3e50", fg="#ecf0f1",
-                     font=("Times New Roman",11,"bold"), pady=12).pack(fill=tk.X)
+                     font=(FONT_SERIF,11,"bold"), pady=12).pack(fill=tk.X)
             self._active_panel = None; self._active_rpt_btn = None
             def _show_panel(frame, btn):
                 if self._active_panel: self._active_panel.pack_forget()
@@ -4177,12 +4475,12 @@ class SADTk:
             def _sidebar_btn(text, tooltip):
                 fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
                 b = tk.Button(fr, text=f"  {text}", bg=THEME["panel"], fg=THEME["sub"],
-                              font=("Times New Roman",11), relief=tk.FLAT,
+                              font=(FONT_SERIF,11), relief=tk.FLAT,
                               anchor="w", padx=12, pady=6,
                               activebackground="#c62828", activeforeground="white")
                 b.pack(fill=tk.X)
                 tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
-                         font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+                         font=(FONT_SERIF,8), anchor="w").pack(fill=tk.X)
                 tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
                 return b
 
@@ -4210,8 +4508,7 @@ class SADTk:
                 self.graph_win.destroy()
             self.graph_win = gw = tk.Toplevel(self.table_win or self.root)
             gw.title(f"Графічний звіт — {indicator}")
-            try: gw.state("zoomed")
-            except Exception: gw.geometry("1400x900")
+            maximize_win(gw)
             set_icon(gw)
             outer_f = tk.Frame(gw); outer_f.pack(fill=tk.BOTH, expand=True)
             sidebar = tk.Frame(outer_f, width=195, bg="#2c3e50")
@@ -4219,7 +4516,7 @@ class SADTk:
             content = tk.Frame(outer_f)
             content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             tk.Label(sidebar, text="ГРАФІКИ", bg="#2c3e50", fg="#ecf0f1",
-                     font=("Times New Roman",11,"bold"), pady=10).pack(fill=tk.X)
+                     font=(FONT_SERIF,11,"bold"), pady=10).pack(fill=tk.X)
             self._active_panel = None; self._active_rpt_btn = None
             def _show_panel(frame, btn):
                 if self._active_panel: self._active_panel.pack_forget()
@@ -4235,12 +4532,12 @@ class SADTk:
         def _make_btn(lbl, tooltip):
             fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
             b = tk.Button(fr, text=f"  {lbl}", bg=THEME["panel"], fg=THEME["sub"],
-                          font=("Times New Roman",11), relief=tk.FLAT,
+                          font=(FONT_SERIF,11), relief=tk.FLAT,
                           anchor="w", padx=10, pady=5,
                           activebackground="#c62828", activeforeground="white")
             b.pack(fill=tk.X)
             tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
-                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+                     font=(FONT_SERIF,8), anchor="w").pack(fill=tk.X)
             tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
             return b
 
@@ -4280,7 +4577,7 @@ class SADTk:
 
         tk.Label(sidebar, text=f"{indicator}\n{units}",
                  bg="#2c3e50", fg="#95a5a6",
-                 font=("Times New Roman",8), justify="center",
+                 font=(FONT_SERIF,8), justify="center",
                  wraplength=180).pack(side=tk.BOTTOM, pady=6)
 
         # Будуємо всі графіки (але не показуємо жодного)
@@ -4304,16 +4601,16 @@ class SADTk:
         tb = tk.Frame(frame, bg=THEME["panel"], padx=4, pady=4)
         tb.pack(fill=tk.X, side=tk.BOTTOM)
         tk.Button(tb, text="💾 Зберегти PNG",
-                  font=("Times New Roman",10),
+                  font=(FONT_SERIF,10),
                   command=lambda: self._save_fig_png(fig_key)
                   ).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📋 Копіювати",
-                  font=("Times New Roman",10),
+                  font=(FONT_SERIF,10),
                   command=lambda: self._copy_fig(fig_key)
                   ).pack(side=tk.LEFT, padx=4)
         if settings_fn:
             tk.Button(tb, text="⚙ Налаштування",
-                      font=("Times New Roman",10),
+                      font=(FONT_SERIF,10),
                       bg="#1a4b8c", fg="white",
                       command=settings_fn
                       ).pack(side=tk.LEFT, padx=4)
@@ -4339,7 +4636,7 @@ class SADTk:
         dlg = tk.Toplevel(gw or self.report_win or self.root)
         dlg.title("Налаштування графіка"); dlg.resizable(False, False)
         set_icon(dlg); dlg.grab_set()
-        rf = ("Times New Roman",12)
+        rf = (FONT_SERIF,12)
         frm = tk.Frame(dlg, padx=16, pady=12); frm.pack()
 
         # Заголовок графіка
@@ -4354,9 +4651,9 @@ class SADTk:
         gs = self.graph_settings
         tk.Label(frm, text="Шрифт:", font=rf
                  ).grid(row=1, column=0, sticky="w", pady=4)
-        ff_v = tk.StringVar(value=gs.get("font_family","Times New Roman"))
+        ff_v = tk.StringVar(value=gs.get("font_family",FONT_SERIF))
         ttk.Combobox(frm, textvariable=ff_v,
-                     values=["Times New Roman","Arial","Calibri","Georgia"],
+                     values=[FONT_SERIF,FONT_SANS,"Calibri","Georgia"],
                      state="readonly", width=18
                      ).grid(row=1, column=1, sticky="w", padx=8)
 
@@ -5099,7 +5396,7 @@ class DescriptiveWindow:
         self._bp_fig  = None   # боксплот
         self._qq_fig  = None   # QQ-графіки
         self._bp_gs   = {      # налаштування боксплоту
-            "font_family": gs.get("font_family","Times New Roman"),
+            "font_family": gs.get("font_family", FONT_SERIF),
             "font_size": 11,
             "box_color":    gs.get("box_color","#ffffff"),
             "median_color": gs.get("median_color","#c62828"),
@@ -5107,12 +5404,13 @@ class DescriptiveWindow:
             "flier_color":  gs.get("flier_color","#555555"),
         }
         self._qq_gs   = {      # налаштування QQ
-            "font_family": gs.get("font_family","Times New Roman"),
+            "font_family": gs.get("font_family", FONT_SERIF),
             "font_size": 9,
             "pt_color":    "#4c72b0",
             "line_color":  "#c62828",
         }
         self._build()
+        _theme_win(self.win)
 
     # ── Побудова вікна ───────────────────────────────────────
     def _build(self):
@@ -5123,16 +5421,16 @@ class DescriptiveWindow:
         mb.add_cascade(label="Файл", menu=fm)
 
         # ── Панель інструментів ──
-        tb = tk.Frame(self.win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tb = tk.Frame(self.win, bg=THEME["panel"], padx=6, pady=5); tb.pack(fill=tk.X)
 
         tk.Button(tb, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
+                  font=(FONT_SERIF, 13),
                   command=self._analyze).pack(side=tk.LEFT, padx=4)
 
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(tb, text="⚙ Налаштування ▾",
-                            font=("Times New Roman", 11),
-                            relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF, 11),
+                            relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=4)
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",      command=self._add_row)
@@ -5145,22 +5443,22 @@ class DescriptiveWindow:
         mb2["menu"] = sm
 
         tk.Button(tb, text="Вставити з буфера",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
         tk.Label(tb,
                  text="Двічі клікніть синій заголовок щоб перейменувати показник",
-                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT, padx=10)
+                 font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]).pack(side=tk.LEFT, padx=10)
 
         # ── Таблиця ──
-        tf = tk.Frame(self.win); tf.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        tf = tk.Frame(self.win, bg=THEME["card"]); tf.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
         self.rows = 20; self.cols = 8
-        canvas = tk.Canvas(tf); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(tf, bg=THEME["card"], highlightthickness=0); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb = ttk.Scrollbar(tf, orient="vertical", command=canvas.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y); canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(canvas)
+        self.inner = tk.Frame(canvas, bg=THEME["card"])
         canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
         self.win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
@@ -5175,7 +5473,7 @@ class DescriptiveWindow:
             lbl = tk.Label(self.inner, textvariable=var,
                            relief=tk.RIDGE, width=13, cursor="hand2",
                            bg="#1a4b8c", fg="white",
-                           font=("Times New Roman", 11, "bold"))
+                           font=(FONT_SERIF, 11, "bold"))
             lbl.grid(row=0, column=j, padx=2, pady=2, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
             self.header_labels.append(lbl)
@@ -5184,8 +5482,8 @@ class DescriptiveWindow:
         for i in range(self.rows):
             row_ = []
             for j in range(self.cols):
-                e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
-                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e = tk.Entry(self.inner, width=13, font=(FONT_SERIF, 11),
+                             highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
                 e.grid(row=i+1, column=j, padx=2, pady=2)
                 row_.append(e)
             self.entries.append(row_)
@@ -5196,24 +5494,24 @@ class DescriptiveWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва показника {idx+1}:",
-                 font=("Times New Roman", 12)).pack(padx=16, pady=14)
+                 font=(FONT_SERIF, 12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman", 12), width=28)
+        e = tk.Entry(dlg, textvariable=var, font=(FONT_SERIF, 12), width=28)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.header_vars[idx].set(nm)
             dlg.destroy()
         tk.Button(dlg, text="ОК", bg="#c62828", fg="white",
-                  font=("Times New Roman", 12), command=apply).pack(pady=(4, 14))
+                  font=(FONT_SERIF, 12), command=apply).pack(pady=(4, 14))
         dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
 
     # ── Управління таблицею ───────────────────────────────────
     def _add_row(self):
         i = len(self.entries); row_ = []
         for j in range(self.cols):
-            e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=13, font=(FONT_SERIF, 11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=j, padx=2, pady=2); row_.append(e)
         self.entries.append(row_); self.rows += 1
         _bind_nav(self.entries, self.win)
@@ -5231,13 +5529,13 @@ class DescriptiveWindow:
         self.header_vars.append(var)
         lbl = tk.Label(self.inner, textvariable=var, relief=tk.RIDGE, width=13,
                        cursor="hand2", bg="#1a4b8c", fg="white",
-                       font=("Times New Roman", 11, "bold"))
+                       font=(FONT_SERIF, 11, "bold"))
         lbl.grid(row=0, column=ci, padx=2, pady=2, sticky="nsew")
         lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
         self.header_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=13, font=(FONT_SERIF, 11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=ci, padx=2, pady=2); row_.append(e)
         _bind_nav(self.entries, self.win)
 
@@ -5304,7 +5602,7 @@ class DescriptiveWindow:
         win.geometry("700x640"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF, 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
@@ -5313,7 +5611,7 @@ class DescriptiveWindow:
         txt.configure(state="disabled")
         txt.bind("<MouseWheel>", lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman", 11)).pack(pady=6)
+                  font=(FONT_SERIF, 11)).pack(pady=6)
 
     # ── Аналіз ───────────────────────────────────────────────
     def _analyze(self):
@@ -5368,15 +5666,15 @@ class DescriptiveWindow:
 
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
         tk.Button(tb, text="📋 Копіювати таблицю",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=lambda: self._copy_table(win, headers, rows)
                   ).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📊 Боксплоти",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=lambda: self._plot_boxes(arrays, names)
                   ).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📈 QQ-графіки",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=lambda: self._plot_qq(arrays, names)
                   ).pack(side=tk.LEFT, padx=4)
 
@@ -5402,11 +5700,11 @@ class DescriptiveWindow:
 
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
         tk.Button(tb, text="📋 Копіювати PNG",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=lambda: self._copy_fig(self._bp_fig)
                   ).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="⚙ Налаштування",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=lambda: self._restyle_bp(win, arrays, names)
                   ).pack(side=tk.LEFT, padx=4)
 
@@ -5417,7 +5715,7 @@ class DescriptiveWindow:
     def _draw_boxes(self, frame, arrays, names):
         for w in frame.winfo_children(): w.destroy()
         gs = self._bp_gs
-        ff  = gs.get("font_family", "Times New Roman")
+        ff  = gs.get("font_family", FONT_SERIF)
         fz  = gs.get("font_size", 11)
         n   = len(arrays)
         fig = Figure(figsize=(10, 6), dpi=100)
@@ -5445,9 +5743,9 @@ class DescriptiveWindow:
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         gs = self._bp_gs
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        rb_f = ("Times New Roman", 12)
+        rb_f = (FONT_SERIF, 12)
 
-        ff_var = tk.StringVar(value=gs.get("font_family","Times New Roman"))
+        ff_var = tk.StringVar(value=gs.get("font_family",FONT_SERIF))
         fz_var = tk.IntVar(value=gs.get("font_size", 11))
         col_box = [gs.get("box_color",    "#ffffff")]
         col_med = [gs.get("median_color", "#c62828")]
@@ -5456,7 +5754,7 @@ class DescriptiveWindow:
 
         tk.Label(frm, text="Шрифт:", font=rb_f).grid(row=0, column=0, sticky="w", pady=5)
         ttk.Combobox(frm, textvariable=ff_var,
-                     values=["Times New Roman","Arial","Calibri","Georgia","Verdana"],
+                     values=[FONT_SERIF,FONT_SANS,"Calibri","Georgia","Verdana"],
                      state="readonly", width=22).grid(row=0, column=1, sticky="w", padx=8)
         tk.Label(frm, text="Розмір шрифту:", font=rb_f).grid(row=1, column=0, sticky="w", pady=5)
         tk.Spinbox(frm, from_=7, to=24, textvariable=fz_var, width=6).grid(row=1, column=1, sticky="w", padx=8)
@@ -5506,17 +5804,17 @@ class DescriptiveWindow:
 
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
         tk.Button(tb, text="📋 Копіювати PNG",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=lambda: self._copy_fig(self._qq_fig)
                   ).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="⚙ Налаштування",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=lambda: self._restyle_qq(win, arrays, names)
                   ).pack(side=tk.LEFT, padx=4)
         tk.Label(tb,
                  text="Точки на прямій → нормальний розподіл ✓   |   "
                       "Відхилення від прямої → ненормальний ⚠",
-                 font=("Times New Roman", 9), fg="#555").pack(side=tk.LEFT, padx=8)
+                 font=(FONT_SERIF, 9), fg="#555").pack(side=tk.LEFT, padx=8)
 
         self._qq_frame   = tk.Frame(win); self._qq_frame.pack(fill=tk.BOTH, expand=True)
         self._qq_arrays  = arrays; self._qq_names = names
@@ -5526,7 +5824,7 @@ class DescriptiveWindow:
         from scipy.stats import probplot
         for w in frame.winfo_children(): w.destroy()
         gs    = self._qq_gs
-        ff    = gs.get("font_family", "Times New Roman")
+        ff    = gs.get("font_family", FONT_SERIF)
         fz    = gs.get("font_size", 9)
         pt_c  = gs.get("pt_color",   "#4c72b0")
         ln_c  = gs.get("line_color", "#c62828")
@@ -5553,16 +5851,16 @@ class DescriptiveWindow:
         dlg = tk.Toplevel(win); dlg.title("Налаштування QQ-графіків")
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        rb_f = ("Times New Roman", 12)
+        rb_f = (FONT_SERIF, 12)
 
-        ff_var  = tk.StringVar(value=self._qq_gs.get("font_family","Times New Roman"))
+        ff_var  = tk.StringVar(value=self._qq_gs.get("font_family",FONT_SERIF))
         fz_var  = tk.IntVar(value=self._qq_gs.get("font_size", 9))
         pt_col  = [self._qq_gs.get("pt_color","#4c72b0")]
         ln_col  = [self._qq_gs.get("line_color","#c62828")]
 
         tk.Label(frm, text="Шрифт:", font=rb_f).grid(row=0, column=0, sticky="w", pady=4)
         ttk.Combobox(frm, textvariable=ff_var,
-                     values=["Times New Roman","Arial","Calibri","Georgia"],
+                     values=[FONT_SERIF,FONT_SANS,"Calibri","Georgia"],
                      state="readonly", width=20).grid(row=0, column=1, sticky="w", padx=8)
         tk.Label(frm, text="Розмір шрифту:", font=rb_f).grid(row=1, column=0, sticky="w", pady=4)
         tk.Spinbox(frm, from_=6, to=18, textvariable=fz_var, width=6).grid(row=1, column=1, sticky="w", padx=8)
@@ -5675,33 +5973,34 @@ SHAPIRO-WILK:
         self.win.geometry("700x660"); set_icon(self.win)
         self.win.configure(bg=THEME["bg"])
         self._build()
+        _theme_win(self.win)
 
     def _build(self):
         # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
-                  font=("Times New Roman",13),
+                  font=(FONT_SERIF,13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="α:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+        tk.Label(top, text="α:", font=(FONT_SERIF,12)).pack(side=tk.LEFT, padx=(10,2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
         tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._paste).pack(side=tk.LEFT, padx=8)
         tk.Button(top, text="📋 Копіювати результат",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._copy_result).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._show_help).pack(side=tk.LEFT, padx=8)
 
         # ── Тип тесту ────────────────────────────────────────
         frm = tk.Frame(self.win, padx=12); frm.pack(fill=tk.BOTH, expand=True)
         tk.Label(frm, text="Тип тесту:",
-                 font=("Times New Roman",12,"bold")).grid(row=0, column=0, sticky="w", pady=4)
+                 font=(FONT_SERIF,12,"bold")).grid(row=0, column=0, sticky="w", pady=4)
         self.test_var = tk.StringVar(value="ind")
-        rf = ("Times New Roman",12)
+        rf = (FONT_SERIF,12)
         tests = [("Незалежні вибірки (2 різні групи)", "ind"),
                  ("Парні вибірки (до/після, однакові об'єкти)", "paired"),
                  ("Одна вибірка (проти відомого μ₀)", "one")]
@@ -5712,20 +6011,20 @@ SHAPIRO-WILK:
 
         # ── Поля введення ─────────────────────────────────────
         tk.Label(frm, text="Група 1 / Вибірка:",
-                 font=("Times New Roman",12)).grid(row=4, column=0, sticky="w", pady=10)
-        self.e1 = tk.Text(frm, width=55, height=5, font=("Times New Roman",11))
+                 font=(FONT_SERIF,12)).grid(row=4, column=0, sticky="w", pady=10)
+        self.e1 = tk.Text(frm, width=55, height=5, font=(FONT_SERIF,11))
         self.e1.grid(row=5, column=0, columnspan=2, sticky="ew")
         tk.Label(frm, text="Вводьте через кому, пробіл або кожне значення з нового рядка",
-                 font=("Times New Roman",9), fg="#666"
+                 font=(FONT_SERIF,9), fg="#666"
                  ).grid(row=6, column=0, columnspan=2, sticky="w")
 
-        self.lbl2 = tk.Label(frm, text="Група 2:", font=("Times New Roman",12))
+        self.lbl2 = tk.Label(frm, text="Група 2:", font=(FONT_SERIF,12))
         self.lbl2.grid(row=7, column=0, sticky="w", pady=8)
-        self.e2 = tk.Text(frm, width=55, height=5, font=("Times New Roman",11))
+        self.e2 = tk.Text(frm, width=55, height=5, font=(FONT_SERIF,11))
         self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
 
-        self.lbl_mu = tk.Label(frm, text="Відоме середнє (μ₀):", font=("Times New Roman",12))
-        self.e_mu = tk.Entry(frm, width=12, font=("Times New Roman",12))
+        self.lbl_mu = tk.Label(frm, text="Відоме середнє (μ₀):", font=(FONT_SERIF,12))
+        self.e_mu = tk.Entry(frm, width=12, font=(FONT_SERIF,12))
         self.e_mu.insert(0, "0")
 
         # ── Результати (scrollable) ───────────────────────────
@@ -5734,7 +6033,7 @@ SHAPIRO-WILK:
         frm.rowconfigure(13, weight=1); frm.columnconfigure(0, weight=1)
         vsb = ttk.Scrollbar(res_frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.res_txt = tk.Text(res_frm, wrap="word",
-                               font=("Times New Roman",11),
+                               font=(FONT_SERIF,11),
                                yscrollcommand=vsb.set,
                                relief=tk.FLAT, bg=THEME["card"],
                                padx=8, pady=6, cursor="arrow",
@@ -5776,7 +6075,7 @@ SHAPIRO-WILK:
         win.geometry("680x640"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
@@ -5784,7 +6083,7 @@ SHAPIRO-WILK:
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     def _run(self):
         from scipy.stats import ttest_ind, ttest_rel, ttest_1samp
@@ -6057,15 +6356,15 @@ class RegressionWindow:
         set_icon(self.win)
         self.win.configure(bg=THEME["bg"])
         self.win.resizable(True, True)
-        try: self.win.state("zoomed")
-        except Exception: self.win.geometry("1400x860")
+        maximize_win(self.win)
         self.gs = gs
         self._fig = None
         self._graph_title = ""
         self._build()
+        _theme_win(self.win)
 
     def _build(self):
-        rf = ("Times New Roman", 11)
+        rf = (FONT_SERIF, 11)
 
         # ── Toolbar ───────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=5, bg=THEME["card"])
@@ -6082,7 +6381,7 @@ class RegressionWindow:
                      values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
-                  font=("Times New Roman",13), relief=tk.FLAT, padx=14, pady=3,
+                  font=(FONT_SERIF,13), relief=tk.FLAT, padx=14, pady=3,
                   cursor="hand2", command=self._run).pack(side=tk.LEFT, padx=(10,4))
         tk.Button(top, text="📋 Вставити",
                   font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
@@ -6099,22 +6398,22 @@ class RegressionWindow:
         left.pack_propagate(False)
         hdr_f = tk.Frame(left, bg="#1a4b8c"); hdr_f.pack(fill=tk.X, pady=(0,4))
         tk.Label(hdr_f, text="  Дані", bg="#1a4b8c", fg="white",
-                 font=("Times New Roman",11,"bold"), pady=5).pack(side=tk.LEFT)
+                 font=(FONT_SERIF,11,"bold"), pady=5).pack(side=tk.LEFT)
         cf = tk.Frame(left); cf.pack(fill=tk.BOTH, expand=True)
         for ci, lbl in enumerate(["x  (незалежна)", "y  (залежна)"]):
-            tk.Label(cf, text=lbl, font=("Times New Roman",10,"bold"),
+            tk.Label(cf, text=lbl, font=(FONT_SERIF,10,"bold"),
                      fg="#1a4b8c").grid(row=0, column=ci, padx=3, pady=2)
-        self.tx = tk.Text(cf, width=10, font=("Times New Roman",11),
+        self.tx = tk.Text(cf, width=10, font=(FONT_SERIF,11),
                           relief=tk.FLAT, highlightthickness=1,
-                          highlightbackground="#c0c0c0", highlightcolor="#1a4b8c")
+                          highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"], highlightcolor="#1a4b8c")
         self.tx.grid(row=1, column=0, padx=3, pady=2, sticky="nsew")
-        self.ty = tk.Text(cf, width=10, font=("Times New Roman",11),
+        self.ty = tk.Text(cf, width=10, font=(FONT_SERIF,11),
                           relief=tk.FLAT, highlightthickness=1,
-                          highlightbackground="#c0c0c0", highlightcolor="#1a4b8c")
+                          highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"], highlightcolor="#1a4b8c")
         self.ty.grid(row=1, column=1, padx=3, pady=2, sticky="nsew")
         cf.rowconfigure(1, weight=1); cf.columnconfigure(0, weight=1); cf.columnconfigure(1, weight=1)
         tk.Label(left, text="Одне значення на рядок\nабо вставте два стовпці з Excel.",
-                 font=("Times New Roman",8), fg="#888", justify="left"
+                 font=(FONT_SERIF,8), fg="#888", justify="left"
                  ).pack(anchor="w", padx=4, pady=2)
 
         # Роздільник
@@ -6151,14 +6450,14 @@ class RegressionWindow:
 
         tk.Label(self.res_frame,
                  text="Введіть дані, оберіть модель і натисніть  ▶ Виконати",
-                 font=("Times New Roman",12), fg="#aaa").pack(expand=True, pady=40)
+                 font=(FONT_SERIF,12), fg="#aaa").pack(expand=True, pady=40)
 
     def _graph_settings(self):
         if self._fig is None:
             messagebox.showinfo("","Спочатку виконайте аналіз."); return
         dlg = tk.Toplevel(self.win); dlg.title("Налаштування графіка регресії")
         dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
-        rf = ("Times New Roman",11)
+        rf = (FONT_SERIF,11)
         frm = tk.Frame(dlg, padx=16, pady=12); frm.pack()
 
         tk.Label(frm, text="Заголовок графіка:", font=rf
@@ -6274,7 +6573,7 @@ class RegressionWindow:
         win.geometry("680x620"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT, bg=THEME["card"],
                       padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
@@ -6283,7 +6582,7 @@ class RegressionWindow:
         txt.configure(state="disabled")
         txt.bind("<MouseWheel>", lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     # ── Виконання аналізу ─────────────────────────────────────
     def _run(self):
@@ -6454,7 +6753,7 @@ class RegressionWindow:
         txt_f.pack_propagate(False)
 
         tk.Label(txt_f, text="РЕЗУЛЬТАТИ РЕГРЕСІЇ",
-                 font=("Times New Roman",11,"bold"), fg="#1a4b8c",
+                 font=(FONT_SERIF,11,"bold"), fg="#1a4b8c",
                  bg=THEME["card"], pady=6).pack(anchor="w", padx=8)
 
         fields = [
@@ -6474,11 +6773,11 @@ class RegressionWindow:
         ]
         for lbl, val in fields:
             row = tk.Frame(txt_f, bg=THEME["card"]); row.pack(fill=tk.X, padx=8, pady=1)
-            tk.Label(row, text=lbl, font=("Times New Roman",10,"bold"),
+            tk.Label(row, text=lbl, font=(FONT_SERIF,10,"bold"),
                      bg=THEME["card"], fg="#555", width=14, anchor="w").pack(side=tk.LEFT)
             color = ("#27ae60" if "✓" in val else
                      "#c62828" if ("✗" in val or "⚠" in val) else "#000")
-            tk.Label(row, text=val, font=("Times New Roman",10),
+            tk.Label(row, text=val, font=(FONT_SERIF,10),
                      bg=THEME["card"], fg=color,
                      wraplength=160, justify="left", anchor="w").pack(side=tk.LEFT)
 
@@ -6493,15 +6792,15 @@ class RegressionWindow:
         # Toolbar графіка 1
         tb1 = tk.Frame(g1_outer, bg=THEME["panel"], padx=4, pady=2); tb1.pack(fill=tk.X)
         tk.Label(tb1, text="Графік регресії",
-                 font=("Times New Roman",10,"bold"), bg=THEME["panel"], fg=THEME["text"]).pack(side=tk.LEFT, padx=4)
+                 font=(FONT_SERIF,10,"bold"), bg=THEME["panel"], fg=THEME["text"]).pack(side=tk.LEFT, padx=4)
         tk.Button(tb1, text="💾 Зберегти",
-                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  font=(FONT_SERIF,9), relief=tk.FLAT, padx=6,
                   command=lambda: _save_fig(fig1,"графік_регресії")).pack(side=tk.RIGHT, padx=2)
         tk.Button(tb1, text="📋 Копіювати",
-                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  font=(FONT_SERIF,9), relief=tk.FLAT, padx=6,
                   command=lambda: _copy_fig(fig1)).pack(side=tk.RIGHT, padx=2)
         tk.Button(tb1, text="⚙ Налаштування",
-                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  font=(FONT_SERIF,9), relief=tk.FLAT, padx=6,
                   bg="#1a4b8c", fg="white",
                   command=self._graph_settings).pack(side=tk.RIGHT, padx=2)
 
@@ -6542,7 +6841,7 @@ class RegressionWindow:
         eq = r.get("equation","")
         ax1.text(0.03, 0.97, f"{eq}\n{r2_str}",
                  transform=ax1.transAxes, fontsize=8, va="top",
-                 fontfamily="Times New Roman",
+                 fontfamily=FONT_SERIF,
                  bbox=dict(boxstyle="round,pad=0.4", facecolor="#eef4ff",
                            edgecolor="#1a4b8c", alpha=0.9, linewidth=1),
                  zorder=5)
@@ -6558,13 +6857,13 @@ class RegressionWindow:
         row2 = tk.Frame(self.res_frame); row2.pack(fill=tk.BOTH, expand=False)
         tb2 = tk.Frame(row2, bg=THEME["panel"], padx=4, pady=2); tb2.pack(fill=tk.X)
         tk.Label(tb2, text="Аналіз залишків",
-                 font=("Times New Roman",10,"bold"), bg=THEME["panel"], fg=THEME["text"]).pack(side=tk.LEFT, padx=4)
+                 font=(FONT_SERIF,10,"bold"), bg=THEME["panel"], fg=THEME["text"]).pack(side=tk.LEFT, padx=4)
 
         # Settings for residuals graph
         def _res_settings():
             dlg = tk.Toplevel(self.win); dlg.title("Налаштування залишків")
             dlg.resizable(False,False); dlg.grab_set(); set_icon(dlg)
-            rf2 = ("Times New Roman",11)
+            rf2 = (FONT_SERIF,11)
             frm = tk.Frame(dlg, padx=14, pady=12); frm.pack()
             tk.Label(frm, text="Заголовок графіка:", font=rf2
                      ).grid(row=0, column=0, sticky="w", pady=4)
@@ -6583,13 +6882,13 @@ class RegressionWindow:
             center_win(dlg)
 
         tk.Button(tb2, text="💾 Зберегти",
-                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  font=(FONT_SERIF,9), relief=tk.FLAT, padx=6,
                   command=lambda: _save_fig(fig2,"аналіз_залишків")).pack(side=tk.RIGHT, padx=2)
         tk.Button(tb2, text="📋 Копіювати",
-                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  font=(FONT_SERIF,9), relief=tk.FLAT, padx=6,
                   command=lambda: _copy_fig(fig2)).pack(side=tk.RIGHT, padx=2)
         tk.Button(tb2, text="⚙ Налаштування",
-                  font=("Times New Roman",9), relief=tk.FLAT, padx=6,
+                  font=(FONT_SERIF,9), relief=tk.FLAT, padx=6,
                   bg="#1a4b8c", fg="white",
                   command=_res_settings).pack(side=tk.RIGHT, padx=2)
 
@@ -6651,7 +6950,7 @@ class RegressionWindow:
             tk.Label(self.res_frame,
                      text=(f"⚠ Тест Граббса: підозрілий викид — спостереження "
                            f"№{out_idx+1}  (G = {fmt(G,3)}). Перевірте дані."),
-                     fg="#c62828", font=("Times New Roman",10),
+                     fg="#c62828", font=(FONT_SERIF,10),
                      justify="left", padx=8).pack(anchor="w", pady=4)
 
         out_idx, G, _ = detect_outliers_grubbs(r["residuals"])
@@ -6660,7 +6959,7 @@ class RegressionWindow:
                      text=(f"⚠ Тест Граббса: підозрілий викид у залишках — "
                            f"спостереження №{out_idx+1}  (G = {fmt(G,3)}).\n"
                            f"   Перевірте це значення у вхідних даних."),
-                     fg="#c62828", font=("Times New Roman",11),
+                     fg="#c62828", font=(FONT_SERIF,11),
                      justify="left", padx=6).pack(anchor="w", pady=2)
 
 
@@ -6742,21 +7041,22 @@ class SampleSizeWindow:
         set_icon(self.win)
         self.win.configure(bg=THEME["bg"])
         self._build()
+        _theme_win(self.win)
 
     def _build(self):
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Розрахувати", bg="#c62828", fg="white",
-                  font=("Times New Roman",13),
+                  font=(FONT_SERIF,13),
                   command=self._calc).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
 
         pfrm = tk.LabelFrame(self.win, text="Параметри досліду",
-                             font=("Times New Roman",11,"bold"),
+                             font=(FONT_SERIF,11,"bold"),
                              padx=12, pady=8)
         pfrm.pack(fill=tk.X, padx=10, pady=(0,6))
-        rf = ("Times New Roman",12)
+        rf = (FONT_SERIF,12)
 
         params = [
             ("Дизайн досліду:",                     None,   "design"),
@@ -6791,12 +7091,12 @@ class SampleSizeWindow:
                          font=rf).grid(row=ri, column=1, sticky="w", padx=6)
                 if key in hints:
                     tk.Label(pfrm, text=hints[key],
-                             font=("Times New Roman",9), fg="#888"
+                             font=(FONT_SERIF,9), fg="#888"
                              ).grid(row=ri, column=2, sticky="w", padx=4)
             self.vars[key] = var
 
         res_frm = tk.LabelFrame(self.win, text="Результат",
-                                font=("Times New Roman",11,"bold"),
+                                font=(FONT_SERIF,11,"bold"),
                                 padx=8, pady=6)
         res_frm.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
         vsb = ttk.Scrollbar(res_frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -6821,7 +7121,7 @@ class SampleSizeWindow:
         win.geometry("660x640"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
@@ -6829,7 +7129,7 @@ class SampleSizeWindow:
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     def _calc(self):
         try:
@@ -7053,7 +7353,7 @@ class ClusterWindow:
         self.gs = gs
         self._cl_fig = None
         self._cl_gs  = {
-            "font_family":    "Times New Roman",
+            "font_family":    FONT_SERIF,
             "font_size":      9,
             "leaf_font_size": 9,
             "line_color":     "#2176ae",
@@ -7063,28 +7363,29 @@ class ClusterWindow:
             "figsize_h":      5.5,
         }
         self._build()
+        _theme_win(self.win)
 
     def _build(self):
         # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Кластеризувати", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
+                  font=(FONT_SERIF, 13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
         # Параметри
-        tk.Label(top, text="Метод:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(8,2))
+        tk.Label(top, text="Метод:", font=(FONT_SERIF,12)).pack(side=tk.LEFT, padx=(8,2))
         self.meth_var = tk.StringVar(value="ward")
         ttk.Combobox(top, textvariable=self.meth_var,
                      values=["ward","complete","average","single"],
                      state="readonly", width=12).pack(side=tk.LEFT, padx=2)
-        tk.Label(top, text="k:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(8,2))
+        tk.Label(top, text="k:", font=(FONT_SERIF,12)).pack(side=tk.LEFT, padx=(8,2))
         self.k_var = tk.IntVar(value=3)
         tk.Spinbox(top, from_=2, to=20, textvariable=self.k_var,
-                   width=4, font=("Times New Roman",11)).pack(side=tk.LEFT, padx=2)
+                   width=4, font=(FONT_SERIF,11)).pack(side=tk.LEFT, padx=2)
 
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
-                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF,11), relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=6)
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",      command=self._add_row)
@@ -7097,15 +7398,15 @@ class ClusterWindow:
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
 
         tk.Label(top,
                  text="Подвійний клік на заголовку → перейменувати",
-                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=6)
+                 font=(FONT_SERIF,9), fg="#666").pack(side=tk.LEFT, padx=6)
 
         # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -7129,7 +7430,7 @@ class ClusterWindow:
             self.header_vars.append(var)
             lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
                            bg="#1a4b8c", fg="white", relief=tk.RIDGE,
-                           font=("Times New Roman",11,"bold"))
+                           font=(FONT_SERIF,11,"bold"))
             lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
             self.header_labels.append(lbl)
@@ -7138,8 +7439,8 @@ class ClusterWindow:
         for i in range(self.rows_n):
             row_ = []
             for j in range(self.cols_n):
-                e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
-                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e = tk.Entry(self.inner, width=12, font=(FONT_SERIF,11),
+                             highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
@@ -7150,24 +7451,24 @@ class ClusterWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва стовпця {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=14)
+                 font=(FONT_SERIF,12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
+        e = tk.Entry(dlg, textvariable=var, font=(FONT_SERIF,12), width=26)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.header_vars[idx].set(nm)
             dlg.destroy()
         tk.Button(dlg, text="OK", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+                  font=(FONT_SERIF,12), command=apply).pack(pady=(4,14))
         dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
 
     # ── Управління таблицею ───────────────────────────────────
     def _add_row(self):
         i = self.rows_n; row_ = []
         for j in range(self.cols_n):
-            e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=12, font=(FONT_SERIF,11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
@@ -7184,13 +7485,13 @@ class ClusterWindow:
         self.header_vars.append(var)
         lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
                        bg="#1a4b8c", fg="white", relief=tk.RIDGE,
-                       font=("Times New Roman",11,"bold"))
+                       font=(FONT_SERIF,11,"bold"))
         lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
         lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
         self.header_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=12, font=(FONT_SERIF,11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
@@ -7235,7 +7536,7 @@ class ClusterWindow:
         win.geometry("720x680"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
@@ -7243,7 +7544,7 @@ class ClusterWindow:
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     # ── Налаштування графіка ──────────────────────────────────
     def _restyle_cluster(self, win, obj_names, Z, k, method, graph_frame):
@@ -7251,7 +7552,7 @@ class ClusterWindow:
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         gs = self._cl_gs
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        rb_f = ("Times New Roman",12)
+        rb_f = (FONT_SERIF,12)
 
         ff_v  = tk.StringVar(value=gs["font_family"])
         fz_v  = tk.IntVar(value=gs["font_size"])
@@ -7263,7 +7564,7 @@ class ClusterWindow:
         tc_ref = [gs["threshold_color"]]
 
         rows_cfg = [
-            ("Шрифт:",                  "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Шрифт:",                  "combo",  ff_v, [FONT_SERIF,FONT_SANS,"Calibri","Georgia"]),
             ("Розмір підписів осей:",   "spin",   fz_v, (6,18)),
             ("Розмір підписів об'єктів:", "spin", lf_v, (5,16)),
             ("Ширина графіка:",         "scale",  fw_v, (5.,20.)),
@@ -7403,15 +7704,15 @@ class ClusterWindow:
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
         graph_frame = tk.Frame(win); # буде pack після tb
 
-        tk.Button(tb, text="📋 Копіювати дендрограму", font=("Times New Roman",11),
+        tk.Button(tb, text="📋 Копіювати дендрограму", font=(FONT_SERIF,11),
                   command=lambda: self._copy_dendro()).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування графіка", font=("Times New Roman",11),
+        tk.Button(tb, text="⚙ Налаштування графіка", font=(FONT_SERIF,11),
                   command=lambda: self._restyle_cluster(
                       win, obj_names, Z, k, method, graph_frame)
                   ).pack(side=tk.LEFT, padx=4)
         tk.Label(tb,
                  text=f"Метод: {method}  |  k = {k}  |  Об'єктів: {len(obj_names)}",
-                 font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
+                 font=(FONT_SERIF,11), fg="#555").pack(side=tk.LEFT, padx=10)
 
         # Дендрограма
         graph_frame.pack(fill=tk.BOTH, expand=True, padx=4)
@@ -7420,7 +7721,7 @@ class ClusterWindow:
         # Таблиця приналежності (знизу, прокручувана)
         tbl_frame = tk.Frame(win); tbl_frame.pack(fill=tk.X, padx=8, pady=4)
         tk.Label(tbl_frame, text="Приналежність до кластерів:",
-                 font=("Times New Roman",11,"bold"), anchor="w").pack(fill=tk.X)
+                 font=(FONT_SERIF,11,"bold"), anchor="w").pack(fill=tk.X)
         membership_rows = sorted(
             [[nm, f"Кластер {cl}"] for nm, cl in zip(obj_names, labels_cl)],
             key=lambda r: r[1])
@@ -7535,7 +7836,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
             "bar_color":     "#4c72b0",
             "cum_color":     "#c62828",
             "heatmap_cmap":  "RdYlGn",
-            "font_family":   "Times New Roman",
+            "font_family":   FONT_SERIF,
             "font_size":     9,
             "point_size":    30,
             "arrow_scale":   0.7,
@@ -7543,17 +7844,18 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
             "annotate_var":  True,
         }
         self._build()
+        _theme_win(self.win)
 
     def _build(self):
         # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Виконати PCA", bg="#c62828", fg="white",
-                  font=("Times New Roman",13),
+                  font=(FONT_SERIF,13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
-                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF,11), relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=4)
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",      command=self._add_row)
@@ -7566,15 +7868,15 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
 
         tk.Label(top,
                  text="Подвійний клік на заголовку → перейменувати показник",
-                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=10)
+                 font=(FONT_SERIF,9), fg="#666").pack(side=tk.LEFT, padx=10)
 
         # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -7598,7 +7900,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
             self.header_vars.append(var)
             lbl = tk.Label(self.inner, textvariable=var, relief=tk.RIDGE, width=13,
                            bg="#1a4b8c", fg="white", cursor="hand2",
-                           font=("Times New Roman",11,"bold"))
+                           font=(FONT_SERIF,11,"bold"))
             lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_col(idx))
             self.header_labels.append(lbl)
@@ -7607,8 +7909,8 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         for i in range(self.rows_n):
             row_ = []
             for j in range(self.cols_n):
-                e = tk.Entry(self.inner, width=13, font=("Times New Roman",11),
-                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e = tk.Entry(self.inner, width=13, font=(FONT_SERIF,11),
+                             highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
@@ -7619,24 +7921,24 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва показника {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=14)
+                 font=(FONT_SERIF,12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.header_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
+        e = tk.Entry(dlg, textvariable=var, font=(FONT_SERIF,12), width=26)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.header_vars[idx].set(nm)
             dlg.destroy()
         tk.Button(dlg, text="OK", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+                  font=(FONT_SERIF,12), command=apply).pack(pady=(4,14))
         dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
 
     # ── Управління таблицею ───────────────────────────────────
     def _add_row(self):
         i = self.rows_n; row_ = []
         for j in range(self.cols_n):
-            e = tk.Entry(self.inner, width=13, font=("Times New Roman",11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=13, font=(FONT_SERIF,11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
@@ -7653,13 +7955,13 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.header_vars.append(var)
         lbl = tk.Label(self.inner, textvariable=var, relief=tk.RIDGE, width=13,
                        bg="#1a4b8c", fg="white", cursor="hand2",
-                       font=("Times New Roman",11,"bold"))
+                       font=(FONT_SERIF,11,"bold"))
         lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
         lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_col(idx))
         self.header_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=13, font=("Times New Roman",11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=13, font=(FONT_SERIF,11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
@@ -7704,7 +8006,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         win.geometry("700x660"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
@@ -7712,7 +8014,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     # ── Налаштування графіків PCA ─────────────────────────────
     def _restyle_pca(self, callback=None):
@@ -7720,7 +8022,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         gs = self._pca_gs
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        rb_f = ("Times New Roman",12)
+        rb_f = (FONT_SERIF,12)
 
         ff_v  = tk.StringVar(value=gs["font_family"])
         fz_v  = tk.IntVar(value=gs["font_size"])
@@ -7733,7 +8035,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         col_btns = {}
 
         rows_cfg = [
-            ("Шрифт:",               "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Шрифт:",               "combo",  ff_v, [FONT_SERIF,FONT_SANS,"Calibri","Georgia"]),
             ("Розмір шрифту:",       "spin",   fz_v, (6,18)),
             ("Розмір точок (biplot):","spin",  ps_v, (5,80)),
             ("Масштаб стрілок:",     "scale",  sc_v, (0.2,1.5)),
@@ -7863,9 +8165,9 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         # ── Toolbar ─────────────────────────────────────────
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати графіки", font=("Times New Roman",11),
+        tk.Button(tb, text="📋 Копіювати графіки", font=(FONT_SERIF,11),
                   command=lambda: self._copy_pca()).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування графіків", font=("Times New Roman",11),
+        tk.Button(tb, text="⚙ Налаштування графіків", font=(FONT_SERIF,11),
                   command=lambda: self._restyle_pca_live(
                       win, obj_names, var_names, eigenvalues, eigenvectors,
                       explained, scores, n_comp, min_c)).pack(side=tk.LEFT, padx=4)
@@ -7963,7 +8265,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         tk.Label(txt_body,
                  text="ГК = Головна компонента — «узагальнений показник» "
                       "що об'єднує кілька вихідних змінних. ГК1 пояснює найбільше варіації.",
-                 font=("Times New Roman",10), fg="#555", anchor="w"
+                 font=(FONT_SERIF,10), fg="#555", anchor="w"
                  ).pack(fill=tk.X, padx=12, pady=(6,0))
         summary_rows = [[f"ГК{i+1}  (Головна компонента {i+1})",
                          fmt(eigenvalues[i],4),
@@ -7980,7 +8282,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         tk.Label(txt_body,
                  text="Навантаження (loadings): кореляція показника з кожною ГК. "
                       "|Навантаження| > 0.5 — значуща роль показника у цій компоненті.",
-                 font=("Times New Roman",10), fg="#555", anchor="w"
+                 font=(FONT_SERIF,10), fg="#555", anchor="w"
                  ).pack(fill=tk.X, padx=12, pady=(0,0))
         n_show2 = min(6, n_comp)
         load_headers = ["Показник"] + [f"ГК{i+1}" for i in range(n_show2)]
@@ -8174,7 +8476,7 @@ class RepeatedMeasuresWindow:
         self.gs = gs
         self._rm_fig = None
         self._rm_gs  = {
-            "font_family":  "Times New Roman",
+            "font_family":  FONT_SERIF,
             "font_size":    10,
             "line_color":   "#4c72b0",
             "err_color":    "#c62828",
@@ -8184,6 +8486,7 @@ class RepeatedMeasuresWindow:
             "show_grid":    True,
         }
         self._build()
+        _theme_win(self.win)
 
     def _build(self):
         try:
@@ -8197,12 +8500,12 @@ class RepeatedMeasuresWindow:
         # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
+                  font=(FONT_SERIF, 13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
-                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF,11), relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=4)
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",       command=self._add_row)
@@ -8218,15 +8521,15 @@ class RepeatedMeasuresWindow:
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
 
         tk.Label(top,
                  text="Подвійний клік на заголовку часової точки → перейменувати",
-                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+                 font=(FONT_SERIF,9), fg="#666").pack(side=tk.LEFT, padx=8)
 
         # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -8246,7 +8549,7 @@ class RepeatedMeasuresWindow:
         # Перший заголовок — «Суб'єкт» (фіксований)
         tk.Label(self.inner, text="Суб'єкт", relief=tk.RIDGE, width=13,
                  bg="#444444", fg="white",
-                 font=("Times New Roman",11,"bold")).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+                 font=(FONT_SERIF,11,"bold")).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
 
         # Заголовки часових точок (перейменовувані)
         self.col_vars = []; self.col_labels = []
@@ -8255,7 +8558,7 @@ class RepeatedMeasuresWindow:
             self.col_vars.append(var)
             lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
                            bg="#1a4b8c", fg="white", relief=tk.RIDGE,
-                           font=("Times New Roman",11,"bold"))
+                           font=(FONT_SERIF,11,"bold"))
             lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j-1: self._rename_time_col(idx))
             self.col_labels.append(lbl)
@@ -8265,7 +8568,7 @@ class RepeatedMeasuresWindow:
             row_ = []
             for j in range(self.cols_n):
                 e = tk.Entry(self.inner, width=13 if j==0 else 12,
-                             font=("Times New Roman",11))
+                             font=(FONT_SERIF,11))
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
@@ -8276,16 +8579,16 @@ class RepeatedMeasuresWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати часову точку")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва часової точки {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=14)
+                 font=(FONT_SERIF,12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.col_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=26)
+        e = tk.Entry(dlg, textvariable=var, font=(FONT_SERIF,12), width=26)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.col_vars[idx].set(nm)
             dlg.destroy()
         tk.Button(dlg, text="OK", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+                  font=(FONT_SERIF,12), command=apply).pack(pady=(4,14))
         dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
 
     # ── Управління таблицею ───────────────────────────────────
@@ -8293,7 +8596,7 @@ class RepeatedMeasuresWindow:
         i = self.rows_n; row_ = []
         for j in range(self.cols_n):
             e = tk.Entry(self.inner, width=13 if j==0 else 12,
-                         font=("Times New Roman",11))
+                         font=(FONT_SERIF,11))
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
@@ -8310,12 +8613,12 @@ class RepeatedMeasuresWindow:
         self.col_vars.append(var)
         lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
                        bg="#1a4b8c", fg="white", relief=tk.RIDGE,
-                       font=("Times New Roman",11,"bold"))
+                       font=(FONT_SERIF,11,"bold"))
         lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
         lbl.bind("<Double-Button-1>", lambda e, idx=ci-1: self._rename_time_col(idx))
         self.col_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
+            e = tk.Entry(self.inner, width=12, font=(FONT_SERIF,11),
                          )
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
@@ -8409,7 +8712,7 @@ class RepeatedMeasuresWindow:
         win.geometry("720x680"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
@@ -8417,7 +8720,7 @@ class RepeatedMeasuresWindow:
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     # ── Налаштування графіка ──────────────────────────────────
     def _restyle_rm(self, win, time_names, data_arr, n, ph_results=None, alpha=0.05):
@@ -8425,7 +8728,7 @@ class RepeatedMeasuresWindow:
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         gs = self._rm_gs
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        rb_f = ("Times New Roman",12)
+        rb_f = (FONT_SERIF,12)
 
         ff_v  = tk.StringVar(value=gs["font_family"])
         fz_v  = tk.IntVar(value=gs["font_size"])
@@ -8436,7 +8739,7 @@ class RepeatedMeasuresWindow:
         lc_ref = [gs["line_color"]]; ec_ref = [gs["err_color"]]
 
         rows_cfg = [
-            ("Шрифт:",          "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Шрифт:",          "combo",  ff_v, [FONT_SERIF,FONT_SANS,"Calibri","Georgia"]),
             ("Розмір шрифту:",  "spin",   fz_v, (7,18)),
             ("Товщина лінії:",  "scale",  lw_v, (0.5,5.0)),
             ("Розмір маркера:", "spin",   ms_v, (3,20)),
@@ -8593,9 +8896,9 @@ class RepeatedMeasuresWindow:
         win.geometry("1020x760"); set_icon(win)
 
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати графік", font=("Times New Roman",11),
+        tk.Button(tb, text="📋 Копіювати графік", font=(FONT_SERIF,11),
                   command=lambda: self._copy_rm()).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування графіка", font=("Times New Roman",11),
+        tk.Button(tb, text="⚙ Налаштування графіка", font=(FONT_SERIF,11),
                   command=lambda: self._restyle_rm(win, time_names, data, n, ph_results, alpha)
                   ).pack(side=tk.LEFT, padx=4)
 
@@ -8609,10 +8912,10 @@ class RepeatedMeasuresWindow:
         win.bind("<MouseWheel>", lambda e: sc.yview_scroll(int(-1*(e.delta/120)),"units"))
 
         def _head(txt):
-            tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
+            tk.Label(body, text=txt, font=(FONT_SERIF,12,"bold"),
                      bg="#e8eeff", anchor="w", padx=8, pady=3).pack(fill=tk.X, padx=6, pady=8)
         def _txt(txt, color="#000000"):
-            tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
+            tk.Label(body, text=txt, font=(FONT_SERIF,11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
 
         _head("Дисперсійний аналіз повторних вимірювань")
@@ -8826,13 +9129,14 @@ class MixedRepeatedWindow:
         self.gs = gs
         self._fig = None
         self._plot_gs = {
-            "font_family": "Times New Roman", "font_size": 10,
+            "font_family": FONT_SERIF, "font_size": 10,
             "linewidth": 2.0, "markersize": 7, "marker": "o",
             "show_grid": True, "alpha_fill": 0.12,
             "colors": ["#4c72b0","#dd8452","#55a868","#c44e52",
                        "#8172b2","#937860","#da8bc3","#8c8c8c"],
         }
         self._build()
+        _theme_win(self.win)
 
     def _build(self):
         try:
@@ -8845,11 +9149,11 @@ class MixedRepeatedWindow:
         # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman",13),
+                  font=(FONT_SERIF,13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
-                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF,11), relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=4)
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",       command=self._add_row)
@@ -8865,14 +9169,14 @@ class MixedRepeatedWindow:
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
         tk.Label(top,
                  text="Стовп.1=Варіант  Стовп.2=Повторність  Решта=Значення по датах",
-                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+                 font=(FONT_SERIF,9), fg="#666").pack(side=tk.LEFT, padx=8)
 
         # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -8893,7 +9197,7 @@ class MixedRepeatedWindow:
         for j, txt in enumerate(["Варіант","Повторність"]):
             tk.Label(self.inner, text=txt, width=13, relief=tk.RIDGE,
                      bg="#444444", fg="white",
-                     font=("Times New Roman",11,"bold")
+                     font=(FONT_SERIF,11,"bold")
                      ).grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
 
         # Заголовки часових точок (перейменовувані)
@@ -8903,7 +9207,7 @@ class MixedRepeatedWindow:
             self.time_vars.append(var)
             lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
                            bg="#1a4b8c", fg="white", relief=tk.RIDGE,
-                           font=("Times New Roman",11,"bold"))
+                           font=(FONT_SERIF,11,"bold"))
             lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
             lbl.bind("<Double-Button-1>",
                      lambda e, idx=j-2: self._rename_col(idx))
@@ -8914,7 +9218,7 @@ class MixedRepeatedWindow:
             row_ = []
             for j in range(self.cols_n):
                 w = 13 if j < 2 else 12
-                e = tk.Entry(self.inner, width=w, font=("Times New Roman",11),
+                e = tk.Entry(self.inner, width=w, font=(FONT_SERIF,11),
                              )
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
@@ -8926,16 +9230,16 @@ class MixedRepeatedWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати дату")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва дати/точки {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=14)
+                 font=(FONT_SERIF,12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.time_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=24)
+        e = tk.Entry(dlg, textvariable=var, font=(FONT_SERIF,12), width=24)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.time_vars[idx].set(nm)
             dlg.destroy()
         tk.Button(dlg, text="OK", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+                  font=(FONT_SERIF,12), command=apply).pack(pady=(4,14))
         dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
 
     # ── Управління таблицею ───────────────────────────────────
@@ -8943,7 +9247,7 @@ class MixedRepeatedWindow:
         i = self.rows_n; row_ = []
         for j in range(self.cols_n):
             e = tk.Entry(self.inner, width=13 if j<2 else 12,
-                         font=("Times New Roman",11))
+                         font=(FONT_SERIF,11))
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
@@ -8960,13 +9264,13 @@ class MixedRepeatedWindow:
         self.time_vars.append(var)
         lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
                        bg="#1a4b8c", fg="white", relief=tk.RIDGE,
-                       font=("Times New Roman",11,"bold"))
+                       font=(FONT_SERIF,11,"bold"))
         lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
         lbl.bind("<Double-Button-1>",
                  lambda e, idx=ci-2: self._rename_col(idx))
         self.time_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=12, font=("Times New Roman",11),
+            e = tk.Entry(self.inner, width=12, font=(FONT_SERIF,11),
                          )
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
@@ -9101,7 +9405,7 @@ class MixedRepeatedWindow:
         win.geometry("720x680"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
@@ -9109,7 +9413,7 @@ class MixedRepeatedWindow:
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
     # ── Зчитування та аналіз ─────────────────────────────────
     def _run(self):
@@ -9325,9 +9629,9 @@ class MixedRepeatedWindow:
         # Toolbar
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
         self._graph_frame = tk.Frame(win)
-        tk.Button(tb, text="📋 Копіювати графік", font=("Times New Roman",11),
+        tk.Button(tb, text="📋 Копіювати графік", font=(FONT_SERIF,11),
                   command=lambda: self._copy_fig()).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування графіка", font=("Times New Roman",11),
+        tk.Button(tb, text="⚙ Налаштування графіка", font=(FONT_SERIF,11),
                   command=lambda: self._restyle(win, var_levels, var_data, time_names, alpha)
                   ).pack(side=tk.LEFT, padx=4)
 
@@ -9342,11 +9646,11 @@ class MixedRepeatedWindow:
         win.bind("<MouseWheel>", lambda e: sc.yview_scroll(int(-1*(e.delta/120)),"units"))
 
         def _head(t):
-            tk.Label(body, text=t, font=("Times New Roman",12,"bold"),
+            tk.Label(body, text=t, font=(FONT_SERIF,12,"bold"),
                      bg="#e8eeff", anchor="w", padx=8, pady=3
                      ).pack(fill=tk.X, padx=6, pady=8)
         def _txt(t, color="#000"):
-            tk.Label(body, text=t, font=("Times New Roman",11), fg=color,
+            tk.Label(body, text=t, font=(FONT_SERIF,11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
         def _tbl(hdrs, rows):
             f, _ = make_tv(body, hdrs, rows); f.pack(fill=tk.X, padx=8, pady=2)
@@ -9482,7 +9786,7 @@ class MixedRepeatedWindow:
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         gs = self._plot_gs
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        rb_f = ("Times New Roman",12)
+        rb_f = (FONT_SERIF,12)
         ff_v = tk.StringVar(value=gs["font_family"])
         fz_v = tk.IntVar(value=gs["font_size"])
         lw_v = tk.DoubleVar(value=gs["linewidth"])
@@ -9491,7 +9795,7 @@ class MixedRepeatedWindow:
         gr_v = tk.BooleanVar(value=gs["show_grid"])
         al_v = tk.DoubleVar(value=gs["alpha_fill"])
         rows_cfg = [
-            ("Шрифт:",          "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Шрифт:",          "combo",  ff_v, [FONT_SERIF,FONT_SANS,"Calibri","Georgia"]),
             ("Розмір шрифту:",  "spin",   fz_v, (7,18)),
             ("Товщина лінії:",  "scale",  lw_v, (0.5,5.0)),
             ("Розмір маркера:", "spin",   ms_v, (3,20)),
@@ -9524,7 +9828,7 @@ class MixedRepeatedWindow:
         for ci, lv in enumerate(var_levels[:8]):
             c = col_refs[ci] if ci < len(col_refs) else "#999"
             btn = tk.Button(cf, width=3, relief=tk.SUNKEN, bg=c,
-                            text=str(ci+1), font=("Times New Roman",8))
+                            text=str(ci+1), font=(FONT_SERIF,8))
             btn.pack(side=tk.LEFT, padx=2)
             def _pick(idx=ci, b=btn):
                 ch = colorchooser.askcolor(color=col_refs[idx], parent=dlg)
@@ -9635,16 +9939,17 @@ class StabilityWindow:
         self.gs = gs
         self._stab_fig = None
         self._build()
+        _theme_win(self.win)
 
     def _build(self):
         # ── Toolbar ──────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Аналіз", bg="#c62828", fg="white",
-                  font=("Times New Roman",13),
+                  font=(FONT_SERIF,13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
-                            font=("Times New Roman",11), relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF,11), relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=4)
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",       command=self._add_row)
@@ -9660,14 +9965,14 @@ class StabilityWindow:
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
+                  font=(FONT_SERIF,11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
         tk.Label(top,
                  text="Подвійний клік на заголовку → перейменувати середовище",
-                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+                 font=(FONT_SERIF,9), fg="#666").pack(side=tk.LEFT, padx=8)
 
         # ── Таблиця ─────────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -9687,7 +9992,7 @@ class StabilityWindow:
         # Перший заголовок — «Генотип» (фіксований)
         tk.Label(self.inner, text="Генотип", relief=tk.RIDGE, width=14,
                  bg="#444444", fg="white",
-                 font=("Times New Roman",11,"bold")
+                 font=(FONT_SERIF,11,"bold")
                  ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
 
         # Заголовки середовищ (перейменовувані)
@@ -9697,7 +10002,7 @@ class StabilityWindow:
             self.env_vars.append(var)
             lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
                            bg="#1a4b8c", fg="white", relief=tk.RIDGE,
-                           font=("Times New Roman",11,"bold"))
+                           font=(FONT_SERIF,11,"bold"))
             lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j-1: self._rename_env(idx))
             self.env_labels.append(lbl)
@@ -9707,7 +10012,7 @@ class StabilityWindow:
             row_ = []
             for j in range(self.cols_n):
                 e = tk.Entry(self.inner, width=14 if j==0 else 11,
-                             font=("Times New Roman",11))
+                             font=(FONT_SERIF,11))
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
@@ -9718,16 +10023,16 @@ class StabilityWindow:
         dlg = tk.Toplevel(self.win); dlg.title("Перейменувати середовище")
         dlg.resizable(False, False); dlg.grab_set()
         tk.Label(dlg, text=f"Назва середовища {idx+1}:",
-                 font=("Times New Roman",12)).pack(padx=16, pady=14)
+                 font=(FONT_SERIF,12)).pack(padx=16, pady=14)
         var = tk.StringVar(value=self.env_vars[idx].get())
-        e = tk.Entry(dlg, textvariable=var, font=("Times New Roman",12), width=24)
+        e = tk.Entry(dlg, textvariable=var, font=(FONT_SERIF,12), width=24)
         e.pack(padx=16, pady=4); e.select_range(0, tk.END); e.focus_set()
         def apply():
             nm = var.get().strip()
             if nm: self.env_vars[idx].set(nm)
             dlg.destroy()
         tk.Button(dlg, text="OK", bg="#c62828", fg="white",
-                  font=("Times New Roman",12), command=apply).pack(pady=(4,14))
+                  font=(FONT_SERIF,12), command=apply).pack(pady=(4,14))
         dlg.bind("<Return>", lambda ev: apply()); center_win(dlg)
 
     # ── Управління таблицею ───────────────────────────────────
@@ -9735,7 +10040,7 @@ class StabilityWindow:
         i = self.rows_n; row_ = []
         for j in range(self.cols_n):
             e = tk.Entry(self.inner, width=14 if j==0 else 11,
-                         font=("Times New Roman",11))
+                         font=(FONT_SERIF,11))
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
@@ -9752,12 +10057,12 @@ class StabilityWindow:
         self.env_vars.append(var)
         lbl = tk.Label(self.inner, textvariable=var, width=12, cursor="hand2",
                        bg="#1a4b8c", fg="white", relief=tk.RIDGE,
-                       font=("Times New Roman",11,"bold"))
+                       font=(FONT_SERIF,11,"bold"))
         lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
         lbl.bind("<Double-Button-1>", lambda e, idx=ci-1: self._rename_env(idx))
         self.env_labels.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=11, font=("Times New Roman",11))
+            e = tk.Entry(self.inner, width=11, font=(FONT_SERIF,11))
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
@@ -9831,14 +10136,14 @@ class StabilityWindow:
         win.geometry("720x680"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF,11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
         txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
         txt.bind("<MouseWheel>", lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman",11)).pack(pady=6)
+                  font=(FONT_SERIF,11)).pack(pady=6)
 
 
 
@@ -10025,18 +10330,19 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.win.geometry("980x680"); set_icon(self.win)
         self.win.configure(bg=THEME["bg"])
         self.gs = gs; self._build()
+        _theme_win(self.win)
 
     def _build(self):
         # ── Панель інструментів (наш стандарт) ──────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
+                  font=(FONT_SERIF, 13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
-                            font=("Times New Roman", 11),
-                            relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF, 11),
+                            relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=4)
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",      command=self._add_row)
@@ -10046,14 +10352,14 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(10, 2))
+        tk.Label(top, text="α:", font=(FONT_SERIF, 12)).pack(side=tk.LEFT, padx=(10, 2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._show_help).pack(side=tk.LEFT, padx=8)
 
         # ── Інформаційний рядок ──────────────────────────────
@@ -10063,7 +10369,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             "Порядок стовпців:  [Група/Фактор]  [Коваріата 1]  [Коваріата 2 ...]  [Залежна Y]\n"
             "Заголовки стовпців (блакитні) можна редагувати.  "
             "Перший стовпець — текстові мітки груп.  Решта — числа."),
-            font=("Times New Roman", 10), bg=THEME["card2"], justify="left").pack(anchor="w")
+            font=(FONT_SERIF, 10), bg=THEME["card2"], justify="left").pack(anchor="w")
 
         # ── Таблиця даних ────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -10072,7 +10378,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         sb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.configure(yscrollcommand=sb.set)
-        self.inner = tk.Frame(canvas)
+        self.inner = tk.Frame(canvas, bg=THEME["card"])
         canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: canvas.config(scrollregion=canvas.bbox("all")))
         self.win.bind("<MouseWheel>",
@@ -10082,7 +10388,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.header_entries = []
         for j in range(self.n_cols):
             e = tk.Entry(self.inner, width=14, bg="#1a4b8c", fg="white",
-                         font=("Times New Roman", 11, "bold"),
+                         font=(FONT_SERIF, 11, "bold"),
                          insertbackground="white")
             e.insert(0, col_hints[j] if j < len(col_hints) else f"Стовп{j+1}")
             e.grid(row=0, column=j, padx=1, pady=1)
@@ -10091,8 +10397,8 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         for i in range(self.n_rows):
             row_ = []
             for j in range(self.n_cols):
-                e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
-                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e = tk.Entry(self.inner, width=14, font=(FONT_SERIF, 11),
+                             highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
@@ -10104,7 +10410,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         win.geometry("700x640"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF, 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
@@ -10114,7 +10420,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman", 11)).pack(pady=6)
+                  font=(FONT_SERIF, 11)).pack(pady=6)
 
     def _help(self):
         self._show_help()   # залишаємо для сумісності
@@ -10133,8 +10439,8 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
     def _add_row(self):
         i = self.n_rows; row_ = []
         for j in range(self.n_cols):
-            e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=14, font=(FONT_SERIF, 11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.n_rows += 1
@@ -10436,10 +10742,10 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         def _head(txt):
-            tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
+            tk.Label(body, text=txt, font=(FONT_SERIF,12,"bold"),
                      anchor="w").pack(fill=tk.X, padx=10, pady=8)
         def _txt(txt, color="#000000"):
-            tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
+            tk.Label(body, text=txt, font=(FONT_SERIF,11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=10, pady=1)
         def _tbl(headers, rows):
             f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=2)
@@ -10627,18 +10933,19 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.win.geometry("1020x700"); set_icon(self.win)
         self.win.configure(bg=THEME["bg"])
         self.gs = gs; self._build()
+        _theme_win(self.win)
 
     def _build(self):
         # ── Панель інструментів (наш стандарт) ──────────────
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
+                  font=(FONT_SERIF, 13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
-                            font=("Times New Roman", 11),
-                            relief=tk.RAISED, bd=2)
+                            font=(FONT_SERIF, 11),
+                            relief=tk.FLAT, bd=1, bg=THEME["card2"], fg=THEME["text"], activebackground=THEME["card2"], activeforeground=THEME["text"])
         mb2.pack(side=tk.LEFT, padx=4)
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",      command=self._add_row)
@@ -10651,14 +10958,14 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
-        tk.Label(top, text="α:", font=("Times New Roman", 12)).pack(side=tk.LEFT, padx=(10, 2))
+        tk.Label(top, text="α:", font=(FONT_SERIF, 12)).pack(side=tk.LEFT, padx=(10, 2))
         self.alpha_var = tk.StringVar(value="0.05")
         ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman", 11),
+                  font=(FONT_SERIF, 11),
                   command=self._show_help).pack(side=tk.LEFT, padx=8)
 
         # ── Інформаційний рядок ──────────────────────────────
@@ -10668,7 +10975,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             "Порядок стовпців:  [Група/Фактор]  [Залежна змінна 1]  [Залежна змінна 2]  ...\n"
             "Заголовки (блакитні) можна редагувати.  Перший стовпець — текстові мітки груп.  "
             "Мінімум: 1 група + 2 залежних змінних.  Критично: n > p у кожній групі."),
-            font=("Times New Roman", 10), bg=THEME["card2"], justify="left").pack(anchor="w")
+            font=(FONT_SERIF, 10), bg=THEME["card2"], justify="left").pack(anchor="w")
 
         # ── Таблиця даних ────────────────────────────────────
         mid = tk.Frame(self.win); mid.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -10694,7 +11001,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             self.header_vars.append(var)
             lbl = tk.Label(self.inner, textvariable=var, width=13,
                            bg="#1a4b8c", fg="white", cursor="hand2",
-                           font=("Times New Roman",11,"bold"), relief=tk.RIDGE)
+                           font=(FONT_SERIF,11,"bold"), relief=tk.RIDGE)
             lbl.grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
             lbl.bind("<Double-Button-1>", lambda e, idx=j: self._rename_manova_col(idx))
             self.header_entries.append(lbl)   # dummy for _run compatibility
@@ -10703,8 +11010,8 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         for i in range(self.n_rows):
             row_ = []
             for j in range(self.n_cols):
-                e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
-                             highlightthickness=1, highlightbackground="#c0c0c0")
+                e = tk.Entry(self.inner, width=13, font=(FONT_SERIF, 11),
+                             highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
                 e.grid(row=i+1, column=j, padx=1, pady=1)
                 row_.append(e)
             self.entries.append(row_)
@@ -10717,7 +11024,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         win.geometry("720x660"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF, 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True)
@@ -10727,7 +11034,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman", 11)).pack(pady=6)
+                  font=(FONT_SERIF, 11)).pack(pady=6)
 
     def _help(self):
         self._show_help()
@@ -10736,8 +11043,8 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
     def _add_row(self):
         i = self.n_rows; row_ = []
         for j in range(self.n_cols):
-            e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=13, font=(FONT_SERIF, 11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=j, padx=1, pady=1)
             row_.append(e)
         self.entries.append(row_); self.n_rows += 1
@@ -10755,13 +11062,13 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.header_vars.append(var)
         lbl = tk.Label(self.inner, textvariable=var, width=13,
                        bg="#1a4b8c", fg="white", cursor="hand2",
-                       font=("Times New Roman",11,"bold"), relief=tk.RIDGE)
+                       font=(FONT_SERIF,11,"bold"), relief=tk.RIDGE)
         lbl.grid(row=0, column=ci, padx=1, pady=1, sticky="nsew")
         lbl.bind("<Double-Button-1>", lambda e, idx=ci: self._rename_manova_col(idx))
         self.header_entries.append(lbl)
         for i, row_ in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
-                         highlightthickness=1, highlightbackground="#c0c0c0")
+            e = tk.Entry(self.inner, width=13, font=(FONT_SERIF, 11),
+                         highlightthickness=1, highlightbackground=THEME["border"], bg=THEME["entry"], fg=THEME["entry_fg"], insertbackground=THEME["text"])
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
@@ -11092,13 +11399,13 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         self._manova_colors = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
 
         tb_res = tk.Frame(win, padx=6, pady=5); tb_res.pack(fill=tk.X)
-        tk.Button(tb_res, text="📋 Копіювати звіт (текст)", font=("Times New Roman",11),
+        tk.Button(tb_res, text="📋 Копіювати звіт (текст)", font=(FONT_SERIF,11),
                   command=lambda: self._copy_manova_text(win)).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb_res, text="📋 Копіювати графік 1", font=("Times New Roman",11),
+        tk.Button(tb_res, text="📋 Копіювати графік 1", font=(FONT_SERIF,11),
                   command=lambda: self._copy_manova_fig(1)).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb_res, text="📋 Копіювати графік 2", font=("Times New Roman",11),
+        tk.Button(tb_res, text="📋 Копіювати графік 2", font=(FONT_SERIF,11),
                   command=lambda: self._copy_manova_fig(2)).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb_res, text="⚙ Налаштування графіків", font=("Times New Roman",11),
+        tk.Button(tb_res, text="⚙ Налаштування графіків", font=(FONT_SERIF,11),
                   command=lambda: self._restyle_manova(win, dv_names, groups_data,
                                                         group_levels, univ_rows,
                                                         alpha, p_pillai)).pack(side=tk.LEFT, padx=4)
@@ -11115,11 +11422,11 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
         def _head(txt):
-            tk.Label(body, text=txt, font=("Times New Roman",12,"bold"),
+            tk.Label(body, text=txt, font=(FONT_SERIF,12,"bold"),
                      bg="#e8eeff", anchor="w", padx=8, pady=3
                      ).pack(fill=tk.X, padx=6, pady=10)
         def _txt(txt, color="#000000"):
-            tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
+            tk.Label(body, text=txt, font=(FONT_SERIF,11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
         def _tbl(headers, rows):
             f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=2)
@@ -11127,7 +11434,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         # ── Заголовок ────────────────────────────────────────
         tk.Label(body,
                  text=f"MANOVA — Багатовимірний дисперсійний аналіз    α = {alpha}",
-                 font=("Times New Roman",13,"bold"), anchor="w", padx=10, pady=6
+                 font=(FONT_SERIF,13,"bold"), anchor="w", padx=10, pady=6
                  ).pack(fill=tk.X)
 
         # ── sig_mark з урахуванням обраного α ─────────────────
@@ -11328,7 +11635,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         bar_alpha = self._manova_gs.get("bar_alpha", 0.85)
         lw_ = self._manova_gs.get("lw", 2.0)
         ms_ = self._manova_gs.get("ms", 7)
-        ff_ = self._manova_gs.get("font_family","Times New Roman")
+        ff_ = self._manova_gs.get("font_family",FONT_SERIF)
         fz_ = self._manova_gs.get("font_size", 9)
         n_dv = len(dv_names)
 
@@ -11416,7 +11723,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             self._manova_gs = {
                 "colors": ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"],
                 "bar_alpha": 0.85, "lw": 2.0, "ms": 7,
-                "font_family": "Times New Roman", "font_size": 9,
+                "font_family": FONT_SERIF, "font_size": 9,
             }
         dlg = tk.Toplevel(win); dlg.title("Налаштування графіків MANOVA")
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
@@ -11427,9 +11734,9 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         al_v  = tk.DoubleVar(value=gs["bar_alpha"])
         lw_v  = tk.DoubleVar(value=gs["lw"])
         ms_v  = tk.IntVar(value=gs["ms"])
-        rb_f  = ("Times New Roman",12)
+        rb_f  = (FONT_SERIF,12)
         rows_cfg = [
-            ("Шрифт:",         "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
+            ("Шрифт:",         "combo",  ff_v, [FONT_SERIF,FONT_SANS,"Calibri","Georgia"]),
             ("Розмір шрифту:", "spin",   fz_v, (7, 18)),
             ("Прозорість стовпців:", "scale", al_v, (0.3, 1.0)),
             ("Товщина ліній:", "scale",  lw_v, (0.5, 4.0)),
@@ -11456,7 +11763,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         for ci, grp in enumerate(group_levels[:6]):
             c = col_refs[ci] if ci < len(col_refs) else "#999999"
             btn = tk.Button(col_frm, width=4, relief=tk.SUNKEN, bg=c,
-                            text=str(ci+1), font=("Times New Roman",9))
+                            text=str(ci+1), font=(FONT_SERIF,9))
             btn.pack(side=tk.LEFT, padx=2)
             def _pick(idx=ci, b=btn, refs=col_refs):
                 ch = colorchooser.askcolor(color=refs[idx], parent=dlg)
@@ -12341,6 +12648,7 @@ class HelpWindow:
         self.win.configure(bg=THEME["bg"])
         self.current_topic = None
         self._build()
+        _theme_win(self.win)
         topic = start_topic or list(HELP_CONTENT.keys())[0]
         self._show_topic(topic)
 
@@ -12349,25 +12657,25 @@ class HelpWindow:
         left = tk.Frame(self.win, width=220, bg=THEME["card"], relief=tk.RIDGE, bd=1)
         left.pack(side=tk.LEFT, fill=tk.Y); left.pack_propagate(False)
         tk.Label(left, text="Зміст довідки",
-                 font=("Times New Roman",12,"bold"), bg="#1a4b8c", fg="white",
+                 font=(FONT_SERIF,12,"bold"), bg="#1a4b8c", fg="white",
                  pady=8).pack(fill=tk.X)
         # Search
         sf = tk.Frame(left, bg=THEME["card"]); sf.pack(fill=tk.X, padx=6, pady=6)
-        tk.Label(sf, text="Пошук:", bg=THEME["card"], font=("Times New Roman",11)).pack(side=tk.LEFT)
+        tk.Label(sf, text="Пошук:", bg=THEME["card"], font=(FONT_SERIF,11)).pack(side=tk.LEFT)
         self._sv = tk.StringVar(); self._sv.trace_add("write", self._on_search)
-        tk.Entry(sf, textvariable=self._sv, font=("Times New Roman",11),
+        tk.Entry(sf, textvariable=self._sv, font=(FONT_SERIF,11),
                  relief=tk.FLAT, bg=THEME["card"]).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         # Topic buttons frame (scrollable)
         self._tf = tk.Frame(left, bg=THEME["card"]); self._tf.pack(fill=tk.BOTH, expand=True)
         self._btn = {}; self._build_list(list(HELP_CONTENT.keys()))
         # Right panel
         right = tk.Frame(self.win, bg=THEME["card"]); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self._title = tk.Label(right, text="", font=("Times New Roman",14,"bold"),
+        self._title = tk.Label(right, text="", font=(FONT_SERIF,14,"bold"),
                                bg="#1a4b8c", fg="white", pady=8, padx=10, anchor="w")
         self._title.pack(fill=tk.X)
         tf2 = tk.Frame(right); tf2.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         ysb = ttk.Scrollbar(tf2); ysb.pack(side=tk.RIGHT, fill=tk.Y)
-        self._txt = tk.Text(tf2, wrap="word", font=("Times New Roman",12),
+        self._txt = tk.Text(tf2, wrap="word", font=(FONT_SERIF,12),
                             state="disabled", relief=tk.FLAT, bg=THEME["card"],
                             yscrollcommand=ysb.set, padx=10, pady=8, cursor="arrow")
         self._txt.pack(fill=tk.BOTH, expand=True)
@@ -12375,18 +12683,18 @@ class HelpWindow:
         self._txt.bind("<MouseWheel>",
                        lambda e: self._txt.yview_scroll(int(-1*(e.delta/120)),"units"))
         # Tags
-        self._txt.tag_configure("bold", font=("Times New Roman",12,"bold"))
-        self._txt.tag_configure("check", foreground="#1a6b1a", font=("Times New Roman",12))
-        self._txt.tag_configure("warn",  foreground="#c62828", font=("Times New Roman",12))
-        self._txt.tag_configure("normal",font=("Times New Roman",12))
+        self._txt.tag_configure("bold", font=(FONT_SERIF,12,"bold"))
+        self._txt.tag_configure("check", foreground="#1a6b1a", font=(FONT_SERIF,12))
+        self._txt.tag_configure("warn",  foreground="#c62828", font=(FONT_SERIF,12))
+        self._txt.tag_configure("normal",font=(FONT_SERIF,12))
         # Bottom
         bot = tk.Frame(right, bg=THEME["panel"], pady=4); bot.pack(fill=tk.X)
         tk.Button(bot, text="<- Попередня", command=self._prev,
-                  font=("Times New Roman",11)).pack(side=tk.LEFT, padx=8)
+                  font=(FONT_SERIF,11)).pack(side=tk.LEFT, padx=8)
         tk.Button(bot, text="Наступна ->", command=self._next,
-                  font=("Times New Roman",11)).pack(side=tk.LEFT, padx=4)
+                  font=(FONT_SERIF,11)).pack(side=tk.LEFT, padx=4)
         tk.Button(bot, text="Закрити", command=self.win.destroy,
-                  font=("Times New Roman",11)).pack(side=tk.RIGHT, padx=8)
+                  font=(FONT_SERIF,11)).pack(side=tk.RIGHT, padx=8)
 
     def _build_list(self, topics):
         for w in self._tf.winfo_children(): w.destroy()
@@ -12397,11 +12705,11 @@ class HelpWindow:
             frm.pack(fill=tk.X, padx=3, pady=1)
             icon = info.get("icon","•")
             lbl = tk.Label(frm, text=f"{icon}  {topic}",
-                           font=("Times New Roman",11,"bold"), bg=THEME["card"],
+                           font=(FONT_SERIF,11,"bold"), bg=THEME["card"],
                            anchor="w", padx=6, pady=2)
             lbl.pack(fill=tk.X)
             sub = tk.Label(frm, text=f"    {info.get('short','')}",
-                           font=("Times New Roman",9), fg="#666", bg=THEME["card"], anchor="w", padx=6)
+                           font=(FONT_SERIF,9), fg="#666", bg=THEME["card"], anchor="w", padx=6)
             sub.pack(fill=tk.X)
             for w in [frm, lbl, sub]:
                 w.bind("<Button-1>", lambda e, t=topic: self._show_topic(t))
@@ -12642,29 +12950,22 @@ class TrialDesignWindow:
         self.win.title("Генератор плану польового досліду — Уманський НУ")
         self.win.resizable(True, True)
         set_icon(self.win)
-        # Розгортаємо на весь екран
-        try:
-            self.win.state("zoomed")          # Windows / macOS
-        except Exception:
-            try:
-                sw = self.win.winfo_screenwidth()
-                sh = self.win.winfo_screenheight()
-                self.win.geometry(f"{sw}x{sh}+0+0")
-            except Exception:
-                self.win.geometry("1400x900")
+        self.win.configure(bg=THEME["bg"])
+        maximize_win(self.win)
         self._plan_data = None
         self._build()
+        _theme_win(self.win)
 
     # ═══════════════════════════════════════════════════════
     # _build — головний інтерфейс
     # ═══════════════════════════════════════════════════════
     def _build(self):
-        rf = ("Times New Roman", 11)
+        rf = (FONT_SERIF, 11)
 
         # ── Toolbar ────────────────────────────────────────
         top = tk.Frame(self.win, padx=8, pady=5); top.pack(fill=tk.X)
         tk.Button(top, text="▶ Згенерувати план", bg="#c62828", fg="white",
-                  font=("Times New Roman", 13),
+                  font=(FONT_SERIF, 13),
                   command=self._generate).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
                   font=rf, command=self._show_help).pack(side=tk.LEFT, padx=4)
@@ -12688,7 +12989,7 @@ class TrialDesignWindow:
 
         # ─── Тип культури ──────────────────────────────────
         cf = tk.LabelFrame(lf, text="1. Тип культури",
-                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+                           font=(FONT_SERIF, 11, "bold"), padx=8, pady=4)
         cf.pack(fill=tk.X, pady=(0, 4))
         self.culture_var = tk.StringVar(value=list(self.CULTURES.keys())[0])
         self.culture_cb = ttk.Combobox(cf, textvariable=self.culture_var,
@@ -12696,13 +12997,13 @@ class TrialDesignWindow:
                                        state="readonly", width=36, font=rf)
         self.culture_cb.pack(fill=tk.X, pady=2)
         self.culture_cb.bind("<<ComboboxSelected>>", self._on_culture)
-        self._culture_hint = tk.Label(cf, text="", font=("Times New Roman", 9),
+        self._culture_hint = tk.Label(cf, text="", font=(FONT_SERIF, 9),
                                       fg="#555", justify="left")
         self._culture_hint.pack(anchor="w")
 
         # ─── Варіанти ──────────────────────────────────────
         vf = tk.LabelFrame(lf, text="2. Варіанти досліду (один на рядок)",
-                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+                           font=(FONT_SERIF, 11, "bold"), padx=8, pady=4)
         vf.pack(fill=tk.X, pady=(0, 4))
         self.var_text = tk.Text(vf, width=38, height=6, font=rf, wrap="word")
         self.var_text.pack(fill=tk.X, pady=2)
@@ -12710,22 +13011,22 @@ class TrialDesignWindow:
 
         # ─── Дизайн ────────────────────────────────────────
         df = tk.LabelFrame(lf, text="3. Дизайн досліду",
-                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+                           font=(FONT_SERIF, 11, "bold"), padx=8, pady=4)
         df.pack(fill=tk.X, pady=(0, 4))
         self.design_var = tk.StringVar(value="rcbd")
         for val, label, desc in self.DESIGNS:
             fr = tk.Frame(df); fr.pack(fill=tk.X, pady=1)
             tk.Radiobutton(fr, text=label, variable=self.design_var, value=val,
-                           font=("Times New Roman", 11),
+                           font=(FONT_SERIF, 11),
                            command=self._on_design).pack(side=tk.LEFT)
-        self._design_hint = tk.Label(df, text="", font=("Times New Roman", 9),
+        self._design_hint = tk.Label(df, text="", font=(FONT_SERIF, 9),
                                      fg="#1a4b8c", bg=THEME["card2"],
                                      justify="left", wraplength=320, padx=4, pady=3)
         self._design_hint.pack(fill=tk.X, pady=4)
 
         # Split-plot додатковий фактор
         self.sp_frame = tk.LabelFrame(lf, text="Sub-plot варіанти",
-                                      font=("Times New Roman", 11, "bold"),
+                                      font=(FONT_SERIF, 11, "bold"),
                                       padx=8, pady=4)
         self.sp_text = tk.Text(self.sp_frame, width=38, height=3, font=rf)
         self.sp_text.pack(fill=tk.X)
@@ -12734,7 +13035,7 @@ class TrialDesignWindow:
 
         # ─── Параметри ─────────────────────────────────────
         pf = tk.LabelFrame(lf, text="4. Параметри",
-                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+                           font=(FONT_SERIF, 11, "bold"), padx=8, pady=4)
         pf.pack(fill=tk.X, pady=(0, 4))
         self._pv = {}
         for ri, (lbl, key, default, hint) in enumerate([
@@ -12747,12 +13048,12 @@ class TrialDesignWindow:
             v = tk.StringVar(value=default); self._pv[key] = v
             tk.Entry(pf, textvariable=v, width=9, font=rf
                      ).grid(row=ri, column=1, sticky="w", padx=6)
-            tk.Label(pf, text=hint, font=("Times New Roman", 9), fg="#666"
+            tk.Label(pf, text=hint, font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]
                      ).grid(row=ri, column=2, sticky="w")
 
         # ─── Польові параметри (для зернових/овочів) ────────
         self._field_frame = tk.LabelFrame(lf, text="Розміри ділянки",
-                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+                           font=(FONT_SERIF, 11, "bold"), padx=8, pady=4)
         self._field_frame.pack(fill=tk.X, pady=(0, 4))
         for ri, (lbl, key, default, hint) in enumerate([
             ("Ширина, м:", "pw", "5", "Ширина ділянки"),
@@ -12764,12 +13065,12 @@ class TrialDesignWindow:
             tk.Entry(self._field_frame, textvariable=v, width=9, font=rf
                      ).grid(row=ri, column=1, sticky="w", padx=6)
             tk.Label(self._field_frame, text=hint,
-                     font=("Times New Roman", 9), fg="#666"
+                     font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]
                      ).grid(row=ri, column=2, sticky="w")
 
         # ─── Садівничі параметри ─────────────────────────────
         self._garden_frame = tk.LabelFrame(lf, text="Параметри садіння",
-                            font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+                            font=(FONT_SERIF, 11, "bold"), padx=8, pady=4)
         self._gv = {}
 
         # Схема садіння — два поля + автоматична мітка
@@ -12783,7 +13084,7 @@ class TrialDesignWindow:
         tk.Entry(scheme_row, textvariable=self._gv["plant_sp"],
                  width=6, font=rf).pack(side=tk.LEFT, padx=(1,2))
         tk.Label(scheme_row, text="м (між рядами × в ряду)",
-                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
+                 font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]).pack(side=tk.LEFT)
 
         # Облікових рослин на ділянку
         pp_row = tk.Frame(self._garden_frame); pp_row.pack(fill=tk.X, pady=2)
@@ -12791,7 +13092,7 @@ class TrialDesignWindow:
         self._gv["plants_plot"] = tk.StringVar(value="5")
         tk.Entry(pp_row, textvariable=self._gv["plants_plot"],
                  width=6, font=rf).pack(side=tk.LEFT, padx=6)
-        tk.Label(pp_row, text="(без захисних)", font=("Times New Roman", 9), fg="#666"
+        tk.Label(pp_row, text="(без захисних)", font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]
                  ).pack(side=tk.LEFT)
 
         # Захисні рослини (поч./кін.) — з чекбоксом
@@ -12805,7 +13106,7 @@ class TrialDesignWindow:
                                           width=4, font=rf)
         self._guard_ends_entry.pack(side=tk.LEFT, padx=4)
         tk.Label(ge_outer, text="з кожного боку ряду",
-                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
+                 font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]).pack(side=tk.LEFT)
 
         # Захисні ряди між повторностями — з чекбоксом
         gr_outer = tk.Frame(self._garden_frame); gr_outer.pack(fill=tk.X, pady=2)
@@ -12818,11 +13119,11 @@ class TrialDesignWindow:
                                           width=4, font=rf)
         self._guard_rows_entry.pack(side=tk.LEFT, padx=4)
         tk.Label(gr_outer, text="рядів-буферів між повторностями",
-                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
+                 font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]).pack(side=tk.LEFT)
 
         # ─── Паспорт ───────────────────────────────────────
         nf = tk.LabelFrame(lf, text="5. Паспорт досліду",
-                           font=("Times New Roman", 11, "bold"), padx=8, pady=4)
+                           font=(FONT_SERIF, 11, "bold"), padx=8, pady=4)
         nf.pack(fill=tk.X, pady=(0, 4))
         self._nv = {}
         for ri, (lbl, key) in enumerate([
@@ -12844,8 +13145,8 @@ class TrialDesignWindow:
         t1_tb = tk.Frame(t1); t1_tb.pack(fill=tk.X, padx=4, pady=3)
         tk.Label(t1_tb,
                  text="Клітинки = ділянки/рослини. Кольори = варіанти.",
-                 font=("Times New Roman", 9), fg="#666").pack(side=tk.LEFT)
-        tk.Button(t1_tb, text="💾 Зберегти PNG", font=("Times New Roman",10),
+                 font=(FONT_SERIF, 9), fg=THEME["sub"], bg=THEME["panel"]).pack(side=tk.LEFT)
+        tk.Button(t1_tb, text="💾 Зберегти PNG", font=(FONT_SERIF,10),
                   command=self._save_png).pack(side=tk.RIGHT, padx=4)
         self._scheme_cv = tk.Canvas(t1, bg=THEME["card"])
         s_vsb = ttk.Scrollbar(t1, orient="vertical",
@@ -12863,7 +13164,7 @@ class TrialDesignWindow:
         tb2 = tk.Frame(t2); tb2.pack(fill=tk.X, padx=4, pady=3)
         tk.Label(tb2, text="Порядок закладки ділянок:",
                  font=rf).pack(side=tk.LEFT)
-        tk.Button(tb2, text="💾 Зберегти TXT", font=("Times New Roman",10),
+        tk.Button(tb2, text="💾 Зберегти TXT", font=(FONT_SERIF,10),
                   command=self._save_rand_txt).pack(side=tk.RIGHT, padx=4)
         r_vsb = ttk.Scrollbar(t2, orient="vertical")
         r_vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -12876,17 +13177,17 @@ class TrialDesignWindow:
         # Вкладка 3: Журнал
         t3 = tk.Frame(self.nb); self.nb.add(t3, text="📓 Польовий журнал")
         tb3 = tk.Frame(t3); tb3.pack(fill=tk.X, padx=4, pady=3)
-        tk.Button(tb3, text="💾 Зберегти Excel", font=("Times New Roman",10),
+        tk.Button(tb3, text="💾 Зберегти Excel", font=(FONT_SERIF,10),
                   command=self._save_excel).pack(side=tk.RIGHT, padx=4)
         tk.Label(tb3, text="Показники:", font=rf).pack(side=tk.LEFT, padx=(0,4))
         self.ind_var = tk.StringVar()
         tk.Entry(tb3, textvariable=self.ind_var, width=55,
-                 font=("Times New Roman", 10)).pack(side=tk.LEFT, padx=2)
+                 font=(FONT_SERIF, 10)).pack(side=tk.LEFT, padx=2)
         tk.Button(tb3, text="▶ Оновити", bg="#c62828", fg="white",
-                  font=("Times New Roman", 10),
+                  font=(FONT_SERIF, 10),
                   command=self._refresh_journal).pack(side=tk.LEFT, padx=4)
         tk.Label(tb3, text="(через крапку з комою)",
-                 font=("Times New Roman", 9), fg="#888").pack(side=tk.LEFT)
+                 font=(FONT_SERIF, 9), fg="#888").pack(side=tk.LEFT)
 
         j_frame = tk.Frame(t3); j_frame.pack(fill=tk.BOTH, expand=True)
         j_vsb = ttk.Scrollbar(j_frame, orient="vertical")
@@ -12995,7 +13296,7 @@ class TrialDesignWindow:
         win.geometry("700x660"); set_icon(win)
         frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        txt = tk.Text(frm, wrap="word", font=("Times New Roman", 11),
+        txt = tk.Text(frm, wrap="word", font=(FONT_SERIF, 11),
                       yscrollcommand=vsb.set, relief=tk.FLAT,
                       bg=THEME["card"], padx=10, pady=8, cursor="arrow")
         txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
@@ -13003,7 +13304,7 @@ class TrialDesignWindow:
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
         tk.Button(win, text="Закрити", command=win.destroy,
-                  font=("Times New Roman", 11)).pack(pady=6)
+                  font=(FONT_SERIF, 11)).pack(pady=6)
 
     # ═══════════════════════════════════════════════════════
     # Генерація плану
@@ -13179,20 +13480,20 @@ class TrialDesignWindow:
         title = d.get("name") or "План досліду"
         sub   = f"{d.get('culture','')}  |  {d['design_name']}  |  Seed={d['seed']}  |  {d.get('year','')}"
         cv.create_text(x0+nc*cw//2, 16, text=title,
-                       font=("Times New Roman",12,"bold"), fill="#000")
+                       font=(FONT_SERIF,12,"bold"), fill="#000")
         cv.create_text(x0+nc*cw//2, 34, text=sub,
-                       font=("Times New Roman",9), fill="#555")
+                       font=(FONT_SERIF,9), fill="#555")
 
         rep_map = {}
         for p in plan: rep_map[p["row"]] = p["rep"]
         for i, r in enumerate(rows_set):
             cv.create_text(x0-6, y0+i*ch+ch//2,
                            text=rep_map.get(r, f"Ряд {r}"),
-                           anchor="e", font=("Times New Roman",9,"bold"), fill="#333")
+                           anchor="e", font=(FONT_SERIF,9,"bold"), fill="#333")
         for j, c in enumerate(cols_set):
             lbl = next((p for p in plan if p["col"]==c), {}).get("col_label", f"#{c}")
             cv.create_text(x0+j*cw+cw//2, y0-14,
-                           text=lbl, font=("Times New Roman",8), fill="#555")
+                           text=lbl, font=(FONT_SERIF,8), fill="#555")
         for p in plan:
             ci = cols_set.index(p["col"]); ri = rows_set.index(p["row"])
             x1,y1 = x0+ci*cw, y0+ri*ch; x2,y2 = x1+cw-pad, y1+ch-pad
@@ -13203,16 +13504,16 @@ class TrialDesignWindow:
                            anchor="nw", font=("Courier New",7), fill="#555")
             short = p["variant"][:14]+"…" if len(p["variant"])>14 else p["variant"]
             cv.create_text((x1+x2)//2,(y1+y2)//2, text=short,
-                           font=("Times New Roman",8), fill="#000", width=cw-10)
+                           font=(FONT_SERIF,8), fill="#000", width=cw-10)
 
         leg_y = y0+nr*ch+16
         cv.create_text(x0, leg_y, text="Легенда:",
-                       anchor="w", font=("Times New Roman",10,"bold"))
+                       anchor="w", font=(FONT_SERIF,10,"bold"))
         cpr = 3
         for i,v in enumerate(all_v):
             lx = x0+(i%cpr)*240; ly = leg_y+18+(i//cpr)*20
             cv.create_rectangle(lx,ly,lx+13,ly+13, fill=cmap[v], outline="#888")
-            cv.create_text(lx+17,ly+7, text=v, anchor="w", font=("Times New Roman",9))
+            cv.create_text(lx+17,ly+7, text=v, anchor="w", font=(FONT_SERIF,9))
 
         tot_w = x0+nc*cw+20
         tot_h = leg_y+22*(len(all_v)//cpr+2)+10
@@ -13261,9 +13562,9 @@ class TrialDesignWindow:
                  f"Схема: {row_sp}×{plant_sp} м  |  "
                  f"Рослин/ділянку: {n_plot}  |  Seed={d['seed']}")
         cv.create_text(x0 + total_plants_row*cw//2, 18,
-                       text=title, font=("Times New Roman",12,"bold"), fill="#000")
+                       text=title, font=(FONT_SERIF,12,"bold"), fill="#000")
         cv.create_text(x0 + total_plants_row*cw//2, 36,
-                       text=sub, font=("Times New Roman",9), fill="#555")
+                       text=sub, font=(FONT_SERIF,9), fill="#555")
 
         # Мітки колонок (позиції рослин)
         for ci in range(total_plants_row):
@@ -13275,7 +13576,7 @@ class TrialDesignWindow:
                 plant_in_var = pos % n_plot + 1
                 lbl = f"#{plant_in_var}"
             cv.create_text(x0+ci*cw+cw//2, y0-14,
-                           text=lbl, font=("Times New Roman",7), fill="#777")
+                           text=lbl, font=(FONT_SERIF,7), fill="#777")
 
         # Рядки (повторності + захисні ряди)
         row_screen = 0   # лічильник рядків на екрані
@@ -13284,7 +13585,7 @@ class TrialDesignWindow:
             row_y = y0 + row_screen * ch
             cv.create_text(x0-6, row_y+ch//2,
                            text=f"Повт.{rep_idx+1}",
-                           anchor="e", font=("Times New Roman",8,"bold"), fill="#333")
+                           anchor="e", font=(FONT_SERIF,8,"bold"), fill="#333")
 
             # Беремо план для цієї повторності
             rep_plan = [p for p in plan if p["row"] == rep_idx+1]
@@ -13301,7 +13602,7 @@ class TrialDesignWindow:
                     cv.create_oval(x1+2, y1+2, x2-2, y2-2,
                                    fill=GUARD_COLOR, outline="#999", width=1)
                     cv.create_text((x1+x2)//2, (y1+y2)//2,
-                                   text="З", font=("Times New Roman",7), fill="#888")
+                                   text="З", font=(FONT_SERIF,7), fill="#888")
                 else:
                     pos = ci - g_ends
                     var_col = pos // n_plot + 1  # номер варіанту (стовпець)
@@ -13313,7 +13614,7 @@ class TrialDesignWindow:
                     plant_in_var = pos % n_plot + 1
                     cv.create_text((x1+x2)//2, (y1+y2)//2,
                                    text=str(plant_in_var),
-                                   font=("Times New Roman",7), fill="#000")
+                                   font=(FONT_SERIF,7), fill="#000")
 
             row_screen += 1
 
@@ -13323,7 +13624,7 @@ class TrialDesignWindow:
                     gy = y0 + row_screen * ch
                     cv.create_text(x0-6, gy+ch//2,
                                    text="Захисний", anchor="e",
-                                   font=("Times New Roman",7,"italic"), fill="#aaa")
+                                   font=(FONT_SERIF,7,"italic"), fill="#aaa")
                     for ci in range(total_plants_row):
                         x1 = x0+ci*cw; y1 = gy
                         x2 = x1+cw-pad; y2 = y1+ch-pad
@@ -13342,13 +13643,13 @@ class TrialDesignWindow:
         # Легенда варіантів
         leg_y = y0 + total_rows * ch + 20
         cv.create_text(x0, leg_y, text="Легенда (варіанти):",
-                       anchor="w", font=("Times New Roman",10,"bold"))
+                       anchor="w", font=(FONT_SERIF,10,"bold"))
         cpr = 3
         for i, v in enumerate(all_v):
             lx = x0 + (i%cpr)*260; ly = leg_y+18+(i//cpr)*22
             cv.create_oval(lx, ly, lx+14, ly+14, fill=cmap[v], outline="#666")
             cv.create_text(lx+18, ly+7, text=v, anchor="w",
-                           font=("Times New Roman",9))
+                           font=(FONT_SERIF,9))
 
         leg_y2 = leg_y + 18 + ((len(all_v)-1)//cpr+1)*22 + 8
         # Пояснення символів
@@ -13356,18 +13657,18 @@ class TrialDesignWindow:
                        fill=GUARD_COLOR, outline="#999")
         cv.create_text(x0+18, leg_y2+7,
                        text="З — захисна рослина (не обліковується)",
-                       anchor="w", font=("Times New Roman",9), fill="#666")
+                       anchor="w", font=(FONT_SERIF,9), fill="#666")
         cv.create_oval(x0, leg_y2+20, x0+14, leg_y2+34,
                        fill="#e8e8e8", outline="#bbb")
         cv.create_text(x0+18, leg_y2+27,
                        text="Захисний ряд між повторностями",
-                       anchor="w", font=("Times New Roman",9), fill="#666")
+                       anchor="w", font=(FONT_SERIF,9), fill="#666")
         # Схема садіння
         cv.create_text(x0, leg_y2+50,
                        text=f"Схема садіння: {row_sp} м × {plant_sp} м  |  "
                             f"Облікових {unit}/ділянку: {n_plot}  |  "
                             f"Захисних з кожного боку: {g_ends}",
-                       anchor="w", font=("Times New Roman",9), fill="#333")
+                       anchor="w", font=(FONT_SERIF,9), fill="#333")
 
         tot_w = x0 + total_plants_row*cw + 20
         tot_h = leg_y2 + 70
@@ -13439,10 +13740,10 @@ class TrialDesignWindow:
         style = ttk.Style()
         style.configure("Journal.Treeview",
                         rowheight=22,
-                        font=("Times New Roman",10),
+                        font=(FONT_SERIF,10),
                         borderwidth=1)
         style.configure("Journal.Treeview.Heading",
-                        font=("Times New Roman",10,"bold"),
+                        font=(FONT_SERIF,10,"bold"),
                         background="#1a4b8c",
                         foreground="#ffffff",
                         relief="raised",
@@ -13488,10 +13789,10 @@ class TrialDesignWindow:
             dlg = tk.Toplevel(self.win); dlg.title("Перейменувати показник")
             dlg.resizable(False,False); dlg.grab_set(); set_icon(dlg)
             tk.Label(dlg, text="Нова назва показника:",
-                     font=("Times New Roman",12)).pack(padx=16, pady=(14,4))
+                     font=(FONT_SERIF,12)).pack(padx=16, pady=(14,4))
             tv2 = tk.StringVar(value=cur_name)
             e = tk.Entry(dlg, textvariable=tv2,
-                         font=("Times New Roman",12), width=28)
+                         font=(FONT_SERIF,12), width=28)
             e.pack(padx=16, pady=4)
             e.select_range(0, tk.END); e.focus_set()
             def _ok():
@@ -13503,7 +13804,7 @@ class TrialDesignWindow:
                     dlg.destroy()
                     self._fill_journal()
             tk.Button(dlg, text="ОК", bg="#c62828", fg="white",
-                      font=("Times New Roman",12), command=_ok
+                      font=(FONT_SERIF,12), command=_ok
                       ).pack(pady=(4,14))
             dlg.bind("<Return>", lambda e2: _ok())
             center_win(dlg)
@@ -13579,9 +13880,9 @@ class TrialDesignWindow:
             wb  = openpyxl.Workbook()
             hfill = PatternFill("solid", fgColor="1A4B8C")
             hfont = Font(color="FFFFFF", bold=True,
-                         name="Times New Roman", size=11)
-            nfont = Font(name="Times New Roman", size=11)
-            bfont = Font(name="Times New Roman", size=11, bold=True)
+                         name=FONT_SERIF, size=11)
+            nfont = Font(name=FONT_SERIF, size=11)
+            bfont = Font(name=FONT_SERIF, size=11, bold=True)
             ca    = Alignment(horizontal="center", vertical="center",
                               wrap_text=True)
             la    = Alignment(horizontal="left", vertical="center",
@@ -13777,7 +14078,7 @@ class TrialDesignWindow:
             short = (p["variant"][:13]+"…"
                      if len(p["variant"]) > 13 else p["variant"])
             ax.text(ci+0.5, nr-ri-0.5, short, ha="center", va="center",
-                    fontsize=6.5, fontfamily="Times New Roman")
+                    fontsize=6.5, fontfamily=FONT_SERIF)
             ax.text(ci+0.07, nr-ri-0.1, f"#{p['plot']}",
                     ha="left", va="top", fontsize=5.5, color="#555",
                     fontfamily="Courier New")
@@ -13786,23 +14087,23 @@ class TrialDesignWindow:
         for i,r in enumerate(rows_set):
             ax.text(-0.08, nr-i-0.5, rep_map.get(i,""),
                     ha="right", va="center", fontsize=7,
-                    fontfamily="Times New Roman")
+                    fontfamily=FONT_SERIF)
         for j,c in enumerate(cols_set):
             p_ = next(p for p in plan if p["col"]==c)
             lbl = p_.get("col_label", f"#{c}")
             ax.text(j+0.5, nr+0.08, lbl, ha="center", va="bottom",
-                    fontsize=7, fontfamily="Times New Roman")
+                    fontsize=7, fontfamily=FONT_SERIF)
 
         # Заголовок
         name = d.get("name") or "План досліду"
         fig.suptitle(
             f"{name}  |  {d.get('year','')}",
-            fontsize=11, fontfamily="Times New Roman", fontweight="bold", y=0.98)
+            fontsize=11, fontfamily=FONT_SERIF, fontweight="bold", y=0.98)
         ax.set_title(
             f"Культура: {d.get('culture','')}  |  Дизайн: {d['design_name']}  "
             f"|  Варіантів: {d['k']}  |  Повторностей: {d['reps']}  "
             f"|  Seed: {d['seed']}",
-            fontsize=8, fontfamily="Times New Roman")
+            fontsize=8, fontfamily=FONT_SERIF)
 
         # Легенда
         from matplotlib.patches import Patch
@@ -13814,8 +14115,7 @@ class TrialDesignWindow:
         try:
             fig.savefig(path, dpi=150, bbox_inches="tight")
             messagebox.showinfo("Збережено", f"PNG збережено:\n{path}")
-            import sys, os
-            if sys.platform == "win32": os.startfile(path)
+            open_file_cross(path)
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
 
@@ -13976,14 +14276,14 @@ def _SADTk_new_init(self, root):
         fb.pack(side=tk.LEFT, padx=(0, 10))
         fb.pack_propagate(False)
         tk.Label(fb, text="S", bg="#1a4b8c", fg="#ffffff",
-                 font=("Arial", 22, "bold")).place(relx=0.5, rely=0.5, anchor="center")
+                 font=(FONT_SANS, 22, "bold")).place(relx=0.5, rely=0.5, anchor="center")
 
     # Назва
     name_f = tk.Frame(logo_frm, bg="#0d1020"); name_f.pack(side=tk.LEFT)
     tk.Label(name_f, text="S.A.D.", bg="#0d1020", fg=C["text"],
-             font=("Arial", 18, "bold")).pack(anchor="w")
+             font=(FONT_SANS, 18, "bold")).pack(anchor="w")
     tk.Label(name_f, text="Статистичний аналіз даних", bg="#0d1020",
-             fg=C["sub"], font=("Arial", 9)).pack(anchor="w")
+             fg=C["sub"], font=(FONT_SANS, 9)).pack(anchor="w")
 
     # Права частина header — версія, розробник, підтримка
     hr = tk.Frame(header, bg="#0d1020"); hr.pack(side=tk.RIGHT, padx=16)
@@ -14003,12 +14303,12 @@ def _SADTk_new_init(self, root):
             fb2.pack(pady=(20, 4))
             fb2.pack_propagate(False)
             tk.Label(fb2, text="S", bg="#1a4b8c", fg="#ffffff",
-                     font=("Arial", 36, "bold")).place(relx=0.5, rely=0.5, anchor="center")
+                     font=(FONT_SANS, 36, "bold")).place(relx=0.5, rely=0.5, anchor="center")
 
         tk.Label(dlg, text="S.A.D.", bg=C["card"], fg=C["text"],
-                 font=("Arial", 22, "bold")).pack()
+                 font=(FONT_SANS, 22, "bold")).pack()
         tk.Label(dlg, text="Статистичний аналіз даних",
-                 bg=C["card"], fg=C["sub"], font=("Arial", 12)).pack()
+                 bg=C["card"], fg=C["sub"], font=(FONT_SANS, 12)).pack()
 
         tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=10)
 
@@ -14021,25 +14321,25 @@ def _SADTk_new_init(self, root):
         ]
         for txt, col, sz, weight in info:
             tk.Label(dlg, text=txt, bg=C["card"], fg=col,
-                     font=("Arial", sz, weight)).pack(pady=1)
+                     font=(FONT_SANS, sz, weight)).pack(pady=1)
 
         tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=10)
 
         tk.Label(dlg, text="Призначення:",
-                 bg=C["card"], fg=C["sub"], font=("Arial", 9)).pack()
+                 bg=C["card"], fg=C["sub"], font=(FONT_SANS, 9)).pack()
         tk.Label(dlg,
                  text="Програма для статистичного аналізу\n"
                       "агрономічних та біологічних дослідів.\n"
                       "ANOVA, кореляція, регресія, PCA,\n"
                       "аналіз стабільності GxE та інше.",
-                 bg=C["card"], fg=C["text"], font=("Arial", 10),
+                 bg=C["card"], fg=C["text"], font=(FONT_SANS, 10),
                  justify="center").pack(pady=4)
 
         tk.Label(dlg, text="© 2024 – 2025  Всі права захищені",
-                 bg=C["card"], fg=C["border"], font=("Arial", 8)).pack(pady=(8, 2))
+                 bg=C["card"], fg=C["border"], font=(FONT_SANS, 8)).pack(pady=(8, 2))
 
         tk.Button(dlg, text="Закрити", bg=C["accent"], fg="white",
-                  font=("Arial", 11), relief=tk.FLAT, padx=24, pady=5,
+                  font=(FONT_SANS, 11), relief=tk.FLAT, padx=24, pady=5,
                   cursor="hand2", command=dlg.destroy).pack(pady=12)
         dlg.bind("<Return>", lambda e: dlg.destroy())
         center_win(dlg)
@@ -14051,7 +14351,7 @@ def _SADTk_new_init(self, root):
 
         tk.Label(dlg, text="📞 Технічна підтримка S.A.D.",
                  bg=C["card"], fg=C["text"],
-                 font=("Arial", 13, "bold")).pack(pady=(20, 4))
+                 font=(FONT_SANS, 13, "bold")).pack(pady=(20, 4))
         tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=8)
 
         contacts = [
@@ -14062,19 +14362,19 @@ def _SADTk_new_init(self, root):
         for lbl, val in contacts:
             row = tk.Frame(dlg, bg=C["card"]); row.pack(pady=3)
             tk.Label(row, text=lbl, bg=C["card"], fg=C["sub"],
-                     font=("Arial", 10), width=16, anchor="e").pack(side=tk.LEFT)
+                     font=(FONT_SANS, 10), width=16, anchor="e").pack(side=tk.LEFT)
             tk.Label(row, text=val, bg=C["card"], fg=C["accent"],
-                     font=("Arial", 10, "bold"), anchor="w").pack(side=tk.LEFT, padx=8)
+                     font=(FONT_SANS, 10, "bold"), anchor="w").pack(side=tk.LEFT, padx=8)
 
         tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=30, pady=8)
         tk.Label(dlg,
                  text="Ми відповімо протягом 1 робочого дня.\n"
                       "При зверненні вкажіть версію програми\n"
                       f"та опис проблеми. (Версія {APP_VER})",
-                 bg=C["card"], fg=C["sub"], font=("Arial", 9),
+                 bg=C["card"], fg=C["sub"], font=(FONT_SANS, 9),
                  justify="center").pack()
         tk.Button(dlg, text="Закрити", bg=C["accent"], fg="white",
-                  font=("Arial", 11), relief=tk.FLAT, padx=24, pady=5,
+                  font=(FONT_SANS, 11), relief=tk.FLAT, padx=24, pady=5,
                   cursor="hand2", command=dlg.destroy).pack(pady=12)
         dlg.bind("<Return>", lambda e: dlg.destroy())
         center_win(dlg)
@@ -14117,7 +14417,7 @@ def _SADTk_new_init(self, root):
         dlg.configure(bg=C["card"]); set_icon(dlg); dlg.grab_set()
 
         tk.Label(dlg, text="📋  Зміни версій", bg=C["card"], fg=C["text"],
-                 font=("Arial", 14, "bold")).pack(pady=(16, 4))
+                 font=(FONT_SANS, 14, "bold")).pack(pady=(16, 4))
         tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=20, pady=6)
 
         # Прокручуваний список
@@ -14138,20 +14438,20 @@ def _SADTk_new_init(self, root):
             # Версія — заголовок
             vh = tk.Frame(inner, bg=C["card"]); vh.pack(fill=tk.X, pady=(10,2))
             tk.Label(vh, text=ver, bg=C["accent"], fg="white",
-                     font=("Arial",11,"bold"), padx=10, pady=3
+                     font=(FONT_SANS,11,"bold"), padx=10, pady=3
                      ).pack(side=tk.LEFT)
             tk.Label(vh, text=tag, bg=C["card"], fg=C["sub"],
-                     font=("Arial",9), padx=8
+                     font=(FONT_SANS,9), padx=8
                      ).pack(side=tk.LEFT, pady=3)
             # Пункти
             for item in items:
                 tk.Label(inner, text=f"  ✓  {item}", bg=C["card"], fg=C["text"],
-                         font=("Arial",9), anchor="w", justify="left"
+                         font=(FONT_SANS,9), anchor="w", justify="left"
                          ).pack(fill=tk.X, padx=8, pady=1)
             tk.Frame(inner, bg=C["border"], height=1).pack(fill=tk.X, padx=8, pady=4)
 
         tk.Button(dlg, text="Закрити", bg=C["accent"], fg="white",
-                  font=("Arial",11), relief=tk.FLAT, padx=24, pady=5,
+                  font=(FONT_SANS,11), relief=tk.FLAT, padx=24, pady=5,
                   cursor="hand2", command=dlg.destroy).pack(pady=10)
         dlg.bind("<Return>", lambda e: dlg.destroy())
         center_win(dlg)
@@ -14163,9 +14463,9 @@ def _SADTk_new_init(self, root):
 
         tk.Label(dlg, text="📄  Ліцензійна угода кінцевого користувача",
                  bg=C["card"], fg=C["text"],
-                 font=("Arial", 12, "bold")).pack(pady=(16,4))
+                 font=(FONT_SANS, 12, "bold")).pack(pady=(16,4))
         tk.Label(dlg, text=f"S.A.D. — Статистичний аналіз даних  |  Версія {APP_VER}",
-                 bg=C["card"], fg=C["sub"], font=("Arial",9)).pack()
+                 bg=C["card"], fg=C["sub"], font=(FONT_SANS,9)).pack()
         tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=20, pady=8)
 
         lic_text = f"""ЛІЦЕНЗІЙНА УГОДА КІНЦЕВОГО КОРИСТУВАЧА (EULA)
@@ -14249,10 +14549,10 @@ Email: sad.stat.support@gmail.com
 
         btn_f = tk.Frame(dlg, bg=C["card"]); btn_f.pack(pady=10)
         tk.Button(btn_f, text="✓ Погоджуюсь", bg=C["green"], fg="white",
-                  font=("Arial",11), relief=tk.FLAT, padx=20, pady=5,
+                  font=(FONT_SANS,11), relief=tk.FLAT, padx=20, pady=5,
                   cursor="hand2", command=dlg.destroy).pack(side=tk.LEFT, padx=8)
         tk.Button(btn_f, text="Закрити", bg=C["card"], fg=C["sub"],
-                  font=("Arial",11), relief=tk.FLAT, padx=20, pady=5,
+                  font=(FONT_SANS,11), relief=tk.FLAT, padx=20, pady=5,
                   cursor="hand2", command=dlg.destroy).pack(side=tk.LEFT)
         center_win(dlg)
 
@@ -14260,7 +14560,7 @@ Email: sad.stat.support@gmail.com
     # Роздільник
     tk.Frame(hr, bg=C["border"], width=1).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=8)
 
-    btn_style = dict(bg="#0d1020", fg=C["sub"], font=("Arial",9),
+    btn_style = dict(bg="#0d1020", fg=C["sub"], font=(FONT_SANS,9),
                      relief=tk.FLAT, cursor="hand2",
                      activebackground="#161b27", activeforeground=C["text"],
                      padx=8, pady=4)
@@ -14275,7 +14575,7 @@ Email: sad.stat.support@gmail.com
     # Роздільник + версія
     tk.Frame(hr, bg=C["border"], width=1).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=8)
     tk.Label(hr, text=f"v{APP_VER}", bg="#0d1020",
-             fg=C["accent"], font=("Arial",9,"bold")).pack(side=tk.LEFT, padx=4)
+             fg=C["accent"], font=(FONT_SANS,9,"bold")).pack(side=tk.LEFT, padx=4)
 
     # ── MAIN AREA ────────────────────────────────────────────
     body = tk.Frame(root, bg=C["bg"]); body.pack(fill=tk.BOTH, expand=True)
@@ -14292,7 +14592,7 @@ Email: sad.stat.support@gmail.com
     search_var = tk.StringVar()
     search_entry = tk.Entry(sf, textvariable=search_var,
                             bg=C["card"], fg=C["text"], insertbackground=C["text"],
-                            relief=tk.FLAT, font=("Arial",10),
+                            relief=tk.FLAT, font=(FONT_SANS,10),
                             highlightthickness=1, highlightbackground=C["border"])
     search_entry.pack(fill=tk.X, ipady=5)
     search_entry.insert(0, "🔍  Пошук аналізу...")
@@ -14358,7 +14658,7 @@ Email: sad.stat.support@gmail.com
             filtered = [k for k in keys if _matches(k)]
             if not filtered: continue
             tk.Label(sb_inner, text=cat_name.upper(), bg=C["sidebar"],
-                     fg=C["sub"], font=("Arial",8,"bold"),
+                     fg=C["sub"], font=(FONT_SANS,8,"bold"),
                      anchor="w", padx=12, pady=8
                      ).pack(fill=tk.X)
             for k in filtered:
@@ -14368,12 +14668,12 @@ Email: sad.stat.support@gmail.com
                 cnt = usage.get(k,0)
                 lbl_txt = f"  {a[1]}"
                 b = tk.Label(btn_f, text=lbl_txt, bg=C["sidebar"], fg=C["text"],
-                             font=("Arial",10), anchor="w", padx=10, pady=5,
+                             font=(FONT_SANS,10), anchor="w", padx=10, pady=5,
                              cursor="hand2")
                 b.pack(side=tk.LEFT, fill=tk.X, expand=True)
                 if cnt > 0:
                     tk.Label(btn_f, text=str(cnt), bg=C["sidebar"],
-                             fg=C["sub"], font=("Arial",8),
+                             fg=C["sub"], font=(FONT_SANS,8),
                              padx=6).pack(side=tk.RIGHT)
                 # Кольоровий лівий бордер
                 border = tk.Frame(btn_f, bg=col, width=3)
@@ -14406,7 +14706,7 @@ Email: sad.stat.support@gmail.com
     top_r = tk.Frame(right, bg=C["bg"], padx=24, pady=16)
     top_r.pack(fill=tk.X)
     tk.Label(top_r, text="Оберіть тип аналізу", bg=C["bg"],
-             fg=C["text"], font=("Arial",18,"bold")).pack(side=tk.LEFT)
+             fg=C["text"], font=(FONT_SANS,18,"bold")).pack(side=tk.LEFT)
 
     # Кнопки проекту справа
     proj_f = tk.Frame(top_r, bg=C["bg"]); proj_f.pack(side=tk.RIGHT)
@@ -14470,7 +14770,7 @@ Email: sad.stat.support@gmail.com
             "скористайтесь «📂 Відкрити проект» у тому вікні.")
 
     tk.Button(proj_f, text="📂 Відкрити проект", bg=C["card"], fg=C["text"],
-              font=("Arial",10), relief=tk.FLAT, padx=12, pady=6,
+              font=(FONT_SANS,10), relief=tk.FLAT, padx=12, pady=6,
               cursor="hand2", activebackground=C["card_hov"],
               command=_load_proj_home).pack(side=tk.LEFT, padx=4)
 
@@ -14569,11 +14869,11 @@ Email: sad.stat.support@gmail.com
         inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         tk.Label(inner, text=name, bg=color, fg="white",
-                 font=("Arial", name_sz, "bold"),
+                 font=(FONT_SANS, name_sz, "bold"),
                  wraplength=w-pad*2, justify="left", anchor="w"
                  ).pack(anchor="w")
         tk.Label(inner, text=desc, bg=color,
-                 font=("Arial", desc_sz),
+                 font=(FONT_SANS, desc_sz),
                  wraplength=w-pad*2, justify="left", anchor="w",
                  fg="#cccccc"
                  ).pack(anchor="w", pady=(3,0))
@@ -14582,7 +14882,7 @@ Email: sad.stat.support@gmail.com
         if cnt > 0 and large:
             tk.Label(inner, text=f"↳ використовували {cnt}×",
                      bg=color, fg="#aaaaaa",
-                     font=("Arial",7)).pack(anchor="w", pady=(4,0))
+                     font=(FONT_SANS,7)).pack(anchor="w", pady=(4,0))
 
         # Hover
         def _e(e):
@@ -14636,7 +14936,7 @@ Email: sad.stat.support@gmail.com
         if recent_keys:
             sec1 = tk.Frame(cf, bg=C["bg"]); sec1.pack(fill=tk.X, padx=padx, pady=(8,4))
             tk.Label(sec1, text="Нещодавні та часті", bg=C["bg"],
-                     fg=C["sub"], font=("Arial",10,"bold")).pack(anchor="w")
+                     fg=C["sub"], font=(FONT_SANS,10,"bold")).pack(anchor="w")
             cards_f1 = tk.Frame(cf, bg=C["bg"]); cards_f1.pack(fill=tk.X, padx=padx, pady=4)
             for k in recent_keys:
                 a = _ana_map[k]
@@ -14648,7 +14948,7 @@ Email: sad.stat.support@gmail.com
         for cat_name, keys in CATEGORIES:
             sec = tk.Frame(cf, bg=C["bg"]); sec.pack(fill=tk.X, padx=padx, pady=(12,4))
             tk.Label(sec, text=cat_name, bg=C["bg"],
-                     fg=C["text"], font=("Arial",12,"bold")).pack(anchor="w")
+                     fg=C["text"], font=(FONT_SANS,12,"bold")).pack(anchor="w")
             row_f = tk.Frame(cf, bg=C["bg"]); row_f.pack(fill=tk.X, padx=padx, pady=4)
             for k in keys:
                 a = _ana_map[k]
@@ -14665,11 +14965,11 @@ Email: sad.stat.support@gmail.com
                       "Уманський НУС, Україна  |  "
                       "Усі права захищені",
                  bg="#0d1020", fg=C["sub"],
-                 font=("Arial", 8)).pack(side=tk.LEFT)
+                 font=(FONT_SANS, 8)).pack(side=tk.LEFT)
         tk.Label(footer,
                  text=f"S.A.D.  v{APP_VER}",
                  bg="#0d1020", fg=C["border"],
-                 font=("Arial", 8)).pack(side=tk.RIGHT)
+                 font=(FONT_SANS, 8)).pack(side=tk.RIGHT)
 
     _refresh_recent()
 
@@ -14680,5 +14980,6 @@ SADTk.__init__ = _SADTk_new_init
 if __name__ == "__main__":
     root = tk.Tk()
     set_icon(root)
+    _apply_dark_ttk_style()   # темна тема ttk глобально
     app = SADTk(root)
     root.mainloop()
