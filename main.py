@@ -107,6 +107,26 @@ if HAS_MPL:
         'axes.spines.top': False, 'axes.spines.right': False,
     })
 
+    def get_cmap_safe(name, fallback="RdYlGn"):
+        """Повертає Colormap незалежно від версії matplotlib.
+
+        matplotlib.cm.get_cmap() було прибрано в 3.9, тимчасово повернено
+        в 3.9.1 і остаточно видалено в 3.11. Новий API — matplotlib.colormaps[name] —
+        доступний з 3.5, тож пробуємо його першим і падаємо назад на старий
+        виклик лише для дуже старих версій.
+        """
+        for nm in (name, fallback):
+            try:
+                return matplotlib.colormaps[nm]
+            except Exception:
+                pass
+            try:
+                return matplotlib.cm.get_cmap(nm)
+            except Exception:
+                pass
+        # Останній рубіж — вбудована палітра, яка існує завжди
+        return matplotlib.colormaps["viridis"]
+
 # ── DPI awareness ──────────────────────────────────────────────
 if IS_WIN:
     try:
@@ -2242,8 +2262,7 @@ class CorrelationWindow:
         acol      = gs.get("heatmap_annot_color","#000000")
         ff        = gs.get("font_family","Times New Roman")
 
-        try:    cmap = matplotlib.cm.get_cmap(cmap_name)
-        except: cmap = matplotlib.cm.get_cmap("RdYlGn")
+        cmap = get_cmap_safe(cmap_name)
 
         masked = np.ma.array(r_mat, mask=np.isnan(r_mat))
         im = ax.imshow(masked, cmap=cmap, vmin=-1, vmax=1, aspect="auto")
@@ -7753,14 +7772,14 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         for i, row in enumerate(raw):
             nm = row[0].strip() if has_labels else f"Об'єкт {i+1}"
             if not nm: nm = f"Об'єкт {i+1}"
-            obj_names.append(nm)
             vals = []
             for v in row[start_col:]:
                 if not v: continue
                 try: vals.append(float(v.replace(",",".")))
                 except Exception: continue
-            if vals: data_rows.append(vals)
-        obj_names = obj_names[:len(data_rows)]
+            if vals:
+                data_rows.append(vals)
+                obj_names.append(nm)
 
         if len(data_rows) < 2:
             messagebox.showwarning("Замало об'єктів",
@@ -7872,8 +7891,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         ax3 = fig.add_subplot(133)
         n_show = min(4, n_comp)
         load_mat = eigenvectors[:, :n_show]
-        try:    cmap_ = matplotlib.cm.get_cmap(gs["heatmap_cmap"])
-        except: cmap_ = matplotlib.cm.get_cmap("RdYlGn")
+        cmap_ = get_cmap_safe(gs["heatmap_cmap"])
         im = ax3.imshow(load_mat, cmap=cmap_, vmin=-1, vmax=1, aspect="auto")
         ax3.set_xticks(range(n_show))
         ax3.set_xticklabels([f"ГК{i+1}" for i in range(n_show)],
@@ -7991,8 +8009,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         ax3=fig.add_subplot(133)
         n_sh=min(4,n_comp)
         lm=eigenvectors[:,:n_sh]
-        try: cmap_=matplotlib.cm.get_cmap(gs["heatmap_cmap"])
-        except: cmap_=matplotlib.cm.get_cmap("RdYlGn")
+        cmap_ = get_cmap_safe(gs["heatmap_cmap"])
         im=ax3.imshow(lm,cmap=cmap_,vmin=-1,vmax=1,aspect="auto")
         ax3.set_xticks(range(n_sh))
         ax3.set_xticklabels([f"ГК{i+1}" for i in range(n_sh)],fontsize=fz,fontfamily=ff)
