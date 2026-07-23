@@ -12405,7 +12405,762 @@ def show_help(parent, topic=None):
 # ═══════════════════════════════════════════════════════════════
 # UPDATE MENU — add ANCOVA and MANOVA buttons
 # ═══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# ПЛАНУВАННЯ ДОСЛІДУ — Конструктор схеми за однорідністю рослин
+# (вставити ПІСЛЯ класу TrialDesignWindow, ПЕРЕД рядком
+#  "_SADTk_orig_init = SADTk.__init__")
+# ═══════════════════════════════════════════════════════════════
 
+# ── Ролі рослин після побудови схеми ──────────────────────────
+HP_ROLE_RECORDED    = "recorded"
+HP_ROLE_GUARD       = "guard"
+HP_ROLE_EXCLUDED_CV = "excluded_cv"
+HP_ROLE_DEAD        = "dead"
+HP_ROLE_POLLINIZER  = "pollinizer"
+HP_ROLE_UNASSIGNED  = "unassigned"
+
+HP_ROLE_COLORS = {
+    HP_ROLE_RECORDED:    "#4CAF50",
+    HP_ROLE_GUARD:       "#FFC107",
+    HP_ROLE_EXCLUDED_CV: "#BDBDBD",
+    HP_ROLE_DEAD:        "#424242",
+    HP_ROLE_POLLINIZER:  "#2196F3",
+    HP_ROLE_UNASSIGNED:  "#ECEFF1",
+}
+HP_ROLE_LABELS = {
+    HP_ROLE_RECORDED:    "Облікова рослина (варіант)",
+    HP_ROLE_GUARD:       "Захисна рослина",
+    HP_ROLE_EXCLUDED_CV: "Виключено за варіабельністю",
+    HP_ROLE_DEAD:        "Випад / пошкоджена (-)",
+    HP_ROLE_POLLINIZER:  "Запилювач (+)",
+    HP_ROLE_UNASSIGNED:  "Поза межами досліду",
+}
+
+
+class HPPlant:
+    """Одна рослина сітки ряд×позиція для конструктора однорідних ділянок."""
+    __slots__ = ("row","position","value","status","role","plot_id","variant","replication")
+    def __init__(self, row, position, value, status="ok"):
+        self.row = row; self.position = position
+        self.value = value            # float або None (DEAD/POLLINIZER)
+        self.status = status          # "ok" | "dead" | "pollinizer"
+        self.role = HP_ROLE_UNASSIGNED
+        self.plot_id = None
+        self.variant = None
+        self.replication = None
+
+    @property
+    def id(self):
+        return (self.row, self.position)
+
+
+def hp_cv_percent(values):
+    if len(values) < 2: return 0.0
+    m = float(np.mean(values))
+    if m == 0: return 0.0
+    sd = float(np.std(values, ddof=0))
+    return sd / m * 100.0
+
+
+def hp_load_plants(raw_rows):
+    """raw_rows: {row_num: [(position, raw_value_str), ...]}"""
+    plants = []
+    for row_num, entries in raw_rows.items():
+        for pos, raw_val in entries:
+            v = (raw_val or "").strip()
+            if v == "-":
+                plants.append(HPPlant(row_num, pos, None, "dead"))
+            elif v == "+":
+                plants.append(HPPlant(row_num, pos, None, "pollinizer"))
+            elif v:
+                try:
+                    plants.append(HPPlant(row_num, pos, float(v.replace(",", ".")), "ok"))
+                except ValueError:
+                    continue
+    plants.sort(key=lambda p: (p.row, p.position))
+    return plants
+
+
+class HPPlotBuilder:
+    """
+    Ітеративний конструктор схеми:
+      1. Формування ділянок уздовж ряду: набір plot_size облікових рослин
+         (непридатні позиції "прозоро" пропускаються) -> захисна зона
+         заданого розміру -> повторити.
+      2. CV% рахується лише за RECORDED-рослинами (захисні виключені).
+      3. Допустимий діапазон значень звужується навколо СЕРЕДНЬОГО
+         з коефіцієнтом на основі ФІКСОВАНОГО σ_start (не поточного σ) —
+         це запобігає подвійному (лінійному + природному) стисненню.
+      4. Зупинка: множина RECORDED не змінюється, або CV% <= порогу,
+         або вичерпано max_iterations (за замовчуванням 20).
+    """
+    def __init__(self, plants, plot_size, guard_size_plants, cv_threshold_pct,
+                 max_iterations=20, count_dead_as_guard=True,
+                 count_pollinizer_as_guard=False):
+        self.plants = plants
+        self.plot_size = max(1, int(plot_size))
+        self.guard_size = max(0, int(guard_size_plants))
+        self.cv_threshold_pct = float(cv_threshold_pct)
+        self.max_iterations = max(1, int(max_iterations))
+        self.count_dead_as_guard = count_dead_as_guard
+        self.count_pollinizer_as_guard = count_pollinizer_as_guard
+        self.by_row = {}
+        for p in plants:
+            self.by_row.setdefault(p.row, []).append(p)
+        for row in self.by_row:
+            self.by_row[row].sort(key=lambda p: p.position)
+
+    def _guard_eligible(self, p):
+        if p.status == "dead": return self.count_dead_as_guard
+        if p.status == "pollinizer": return self.count_pollinizer_as_guard
+        return True
+
+    def _scan_once(self, allowed_range):
+        recorded = []; plot_counter = 0
+        for row_num in sorted(self.by_row.keys()):
+            row_plants = self.by_row[row_num]
+            i = 0; n = len(row_plants)
+            while i < n:
+                plot_members = []
+                while i < n and len(plot_members) < self.plot_size:
+                    p = row_plants[i]
+                    eligible = (p.status == "ok" and
+                                (allowed_range is None or
+                                 allowed_range[0] <= p.value <= allowed_range[1]))
+                    if eligible:
+                        plot_members.append(p)
+                    elif p.status == "dead":
+                        p.role = HP_ROLE_DEAD
+                    elif p.status == "pollinizer":
+                        p.role = HP_ROLE_POLLINIZER
+                    i += 1
+                if len(plot_members) < self.plot_size:
+                    break  # ряд закінчився, неповна ділянка відкидається
+                plot_counter += 1
+                for p in plot_members:
+                    p.role = HP_ROLE_RECORDED; p.plot_id = plot_counter
+                recorded.extend(plot_members)
+
+                guard_needed = self.guard_size; guard_taken = 0
+                while i < n and guard_taken < guard_needed:
+                    gp = row_plants[i]
+                    if self._guard_eligible(gp):
+                        gp.role = HP_ROLE_GUARD; guard_taken += 1
+                    elif gp.status == "dead":
+                        gp.role = HP_ROLE_DEAD
+                    elif gp.status == "pollinizer":
+                        gp.role = HP_ROLE_POLLINIZER
+                    i += 1
+        return recorded
+
+    def build(self):
+        warnings = []; prev_ids = None; allowed_range = None
+        sigma_start = None; iterations_used = 0; converged = False; final_cv = 0.0
+
+        for it in range(1, self.max_iterations + 1):
+            iterations_used = it
+            for p in self.plants:
+                p.role = HP_ROLE_UNASSIGNED; p.plot_id = None
+
+            recorded = self._scan_once(allowed_range)
+            ids = {p.id for p in recorded}
+            values = [p.value for p in recorded]
+            final_cv = hp_cv_percent(values) if values else 0.0
+
+            for p in self.plants:
+                if p.status == "ok" and p.role == HP_ROLE_UNASSIGNED:
+                    p.role = HP_ROLE_EXCLUDED_CV
+
+            if prev_ids is not None and ids == prev_ids:
+                converged = True; break
+            prev_ids = ids
+
+            if not values:
+                warnings.append(f"Ітерація {it}: жодної ділянки не сформовано — "
+                                 "перевірте поріг CV%, розмір ділянки/захисної зони.")
+                break
+            if final_cv <= self.cv_threshold_pct:
+                converged = True; break
+
+            m = float(np.mean(values))
+            sd = float(np.std(values, ddof=0)) if len(values) > 1 else 0.0
+            if sigma_start is None: sigma_start = sd  # фіксується один раз
+
+            shrink = 1.0 - (it / (self.max_iterations * 1.5))
+            half_w = max(sigma_start * max(shrink, 0.1), 1e-6)
+            allowed_range = (m - half_w, m + half_w)
+
+        if not converged:
+            warnings.append(f"Алгоритм не досяг повної збіжності за {self.max_iterations} "
+                             f"ітерацій (зупинено на CV={final_cv:.2f}%).")
+
+        plots_formed = len({p.plot_id for p in self.plants if p.role == HP_ROLE_RECORDED})
+        return {
+            "plants": self.plants, "plots_formed": plots_formed,
+            "iterations_used": iterations_used, "converged": converged,
+            "final_cv_pct": final_cv, "warnings": warnings,
+        }
+
+
+def hp_randomize_variants(result, num_variants, seed=None):
+    """Розподіляє plot_id -> (variant, replication): кожен блок з num_variants
+    послідовно сформованих ділянок = одне повторення; мітки варіантів
+    у ньому перемішуються рандомно. Виконується ПІСЛЯ формування ділянок,
+    незалежно від порядку фізичного відбору."""
+    import random as _random
+    rng = _random.Random(seed)
+    plot_ids = sorted({p.plot_id for p in result["plants"] if p.role == HP_ROLE_RECORDED})
+    for start in range(0, len(plot_ids) - len(plot_ids) % num_variants, num_variants):
+        block = plot_ids[start:start + num_variants]
+        if len(block) < num_variants: break
+        rep_num = start // num_variants + 1
+        labels = list(range(1, num_variants + 1)); rng.shuffle(labels)
+        for plot_id, variant in zip(block, labels):
+            for p in result["plants"]:
+                if p.plot_id == plot_id:
+                    p.variant = variant; p.replication = rep_num
+
+
+class HomogeneousPlotWindow:
+    """
+    Планування досліду за однорідністю рослин.
+
+    Користувач завантажує сітку "ряд × позиція" з обраним показником
+    (діаметр штамбу, врожайність минулого року тощо), позначаючи випади
+    "-" і запилювачів "+". Програма ітеративно відбирає однорідні (за
+    заданим CV%) рослини, формує ділянки з дотриманням захисних зон,
+    рандомізує варіанти й будує кольорову карту саду з експортом
+    у Excel/Word та друком.
+    """
+
+    HELP_TEXT = """
+ПЛАНУВАННЯ ДОСЛІДУ ЗА ОДНОРІДНІСТЮ РОСЛИН — ІНСТРУКЦІЯ
+══════════════════════════════════════════════════════
+
+ДЛЯ ЧОГО ЦЕЙ МОДУЛЬ?
+  На відміну від «Генератора плану польового досліду» (де ділянки
+  умовні й рівноцінні), цей модуль будує схему на основі РЕАЛЬНОГО
+  стану наявних рослин у вже дорослому саду/насадженні — з
+  урахуванням того що дерева/кущі різняться за силою розвитку.
+
+  Це комп'ютеризована реалізація класичного агрономічного принципу
+  вирівнювання дослідної ділянки.
+
+КРОК 1. ОБРАНИЙ ПОКАЗНИК
+  Показник для оцінки однорідності — БУДЬ-ЯКИЙ кількісний (не лише
+  діаметр штамбу): об'єм крони, урожайність минулого року тощо.
+  Вкажіть його назву та одиницю виміру.
+
+КРОК 2. ТАБЛИЦЯ "РЯД × ПОЗИЦІЯ"
+  Рядки таблиці = ряди саду. Стовпці = позиції рослин уздовж ряду.
+  У кожну клітинку введіть:
+    • число — значення показника цієї рослини;
+    • "-"   — випад / пошкоджена рослина;
+    • "+"   — рослина-запилювач за схемою посадки.
+
+КРОК 3. ПАРАМЕТРИ
+  Поріг CV%: бажана однорідність облікової вибірки (напр. 8-10%).
+  Розмір ділянки: кількість облікових рослин в одній ділянці.
+  Розмір захисної зони: кількість рослин-буферів між ділянками.
+  Кількість варіантів і повторень — для перевірки чи вистачає ділянок.
+  Врахування "-"/"+"  як захисних — окремі прапорці.
+
+КРОК 4. АЛГОРИТМ (виконується автоматично)
+  1) Уздовж кожного ряду набирається задана кількість ОБЛІКОВИХ
+     рослин (непридатні позиції пропускаються "прозоро" — не
+     впливають на підрахунок);
+  2) одразу після ділянки відраховується ЗАХИСНА ЗОНА;
+  3) цикл повторюється до кінця ряду, потім для наступного ряду;
+  4) CV% рахується лише за обліковими рослинами (захисні виключені);
+  5) якщо CV% більший за поріг — допустимий діапазон значень
+     звужується навколо середнього, і схема будується заново;
+  6) зупинка — коли склад облікової вибірки перестає змінюватись,
+     CV% досягнуто, або вичерпано ліміт ітерацій (типово 20).
+
+  Мітки варіантів призначаються РАНДОМІЗОВАНО вже сформованим
+  ділянкам — окремим кроком, що не залежить від порядку сканування
+  рядів (це зберігає коректність рандомізації для ANOVA).
+
+КРОК 5. РЕЗУЛЬТАТ
+  Кольорова карта саду (зелений — обліково, жовтий — захисна зона,
+  сірий — виключено за CV, темно-сірий — випад, синій — запилювач).
+  Список облікових рослин за варіантами/повтореннями.
+  Попередження, якщо ділянок сформовано менше ніж потрібно
+  (варіантів × повторень) — послабте поріг CV% або розширте вибірку.
+
+ЕКСПОРТ
+  Excel: кольорова сітка + легенда + список облікових рослин.
+  Word: опис методики (для розділу "Матеріали і методи") + таблиця.
+  Друк: збереження карти як зображення (PNG).
+"""
+
+    def __init__(self, parent, gs=None):
+        self.win = tk.Toplevel(parent)
+        self.win.title("Планування досліду за однорідністю рослин")
+        self.win.geometry("1180x760"); set_icon(self.win)
+        self.gs = dict(gs) if gs else {}
+        self._result = None
+        self._map_fig_frame = None
+        self.rows_n = 10; self.cols_n = 16
+        self._build()
+
+    # ─────────────────────────────────────────────────────
+    def _build(self):
+        rf = ("Times New Roman", 11)
+
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Button(top, text="▶ Побудувати схему", bg="#c62828", fg="white",
+                  font=("Times New Roman", 13),
+                  command=self._run).pack(side=tk.LEFT, padx=4)
+
+        mb2 = tk.Menubutton(top, text="⚙ Таблиця ▾", font=rf, relief=tk.RAISED, bd=2)
+        mb2.pack(side=tk.LEFT, padx=4)
+        sm = tk.Menu(mb2, tearoff=0)
+        sm.add_command(label="Додати ряд",     command=self._add_row)
+        sm.add_command(label="Видалити ряд",   command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="Додати позицію",   command=self._add_col)
+        sm.add_command(label="Видалити позицію", command=self._del_col)
+        sm.add_separator()
+        sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        mb2["menu"] = sm
+
+        tk.Button(top, text="Вставити з буфера", font=rf,
+                  command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white", font=rf,
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+
+        # ── параметри ────────────────────────────────────
+        pf = tk.LabelFrame(self.win, text="Параметри", font=("Times New Roman",11,"bold"),
+                           padx=8, pady=6)
+        pf.pack(fill=tk.X, padx=8, pady=(0,4))
+
+        self._v = {}
+        row_defs = [
+            ("Показник:",              "trait_name", "діаметр штамбу", 16),
+            ("Одиниця:",               "trait_unit", "см", 6),
+            ("Поріг CV, %:",            "cv_thr",     "10", 6),
+            ("Ділянка, рослин:",       "plot_size",  "5", 6),
+            ("Захисна зона, рослин:",  "guard_size", "1", 6),
+            ("Варіантів:",              "n_var",      "5", 6),
+            ("Повторень:",              "n_rep",      "4", 6),
+            ("Макс. ітерацій:",         "max_it",     "20", 6),
+        ]
+        for ci, (lbl, key, default, w) in enumerate(row_defs):
+            tk.Label(pf, text=lbl, font=rf).grid(row=0, column=ci*2, sticky="w", padx=(8 if ci else 0,2))
+            v = tk.StringVar(value=default); self._v[key] = v
+            tk.Entry(pf, textvariable=v, width=w, font=rf).grid(row=0, column=ci*2+1, sticky="w")
+
+        self._dead_guard = tk.BooleanVar(value=True)
+        self._poll_guard = tk.BooleanVar(value=False)
+        tk.Checkbutton(pf, text='Враховувати "-" (випади) як захисні',
+                       variable=self._dead_guard, font=rf
+                       ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(4,0))
+        tk.Checkbutton(pf, text='Враховувати "+" (запилювачі) як захисні',
+                       variable=self._poll_guard, font=rf
+                       ).grid(row=1, column=4, columnspan=4, sticky="w", pady=(4,0))
+        tk.Label(pf, text="Seed рандомізації:", font=rf
+                 ).grid(row=1, column=8, sticky="w", padx=(8,2))
+        self._v["seed"] = tk.StringVar(value="1")
+        tk.Entry(pf, textvariable=self._v["seed"], width=6, font=rf
+                 ).grid(row=1, column=9, sticky="w")
+
+        # ── основна область: таблиця зліва, вкладки результатів справа ──
+        main = tk.Frame(self.win); main.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+
+        left = tk.Frame(main, width=430); left.pack(side=tk.LEFT, fill=tk.Y, padx=(0,8))
+        left.pack_propagate(False)
+        tk.Label(left, text='Таблиця "ряд × позиція"  (число / "-" / "+")',
+                 font=("Times New Roman",10,"bold")).pack(anchor="w")
+        tbl_area = tk.Frame(left); tbl_area.pack(fill=tk.BOTH, expand=True)
+        self._canvas = tk.Canvas(tbl_area)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_v = ttk.Scrollbar(tbl_area, orient="vertical", command=self._canvas.yview)
+        sb_v.pack(side=tk.RIGHT, fill=tk.Y)
+        sb_h = ttk.Scrollbar(left, orient="horizontal", command=self._canvas.xview)
+        sb_h.pack(fill=tk.X)
+        self._canvas.configure(yscrollcommand=sb_v.set, xscrollcommand=sb_h.set)
+        self.inner = tk.Frame(self._canvas)
+        self._canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>",
+                        lambda e: self._canvas.config(scrollregion=self._canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        tk.Label(self.inner, text="Ряд \\ Поз.", width=9, relief=tk.RIDGE,
+                 bg="#444444", fg="white", font=("Times New Roman",10,"bold")
+                 ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+        self.pos_labels = []
+        for j in range(self.cols_n):
+            lbl = tk.Label(self.inner, text=str(j+1), width=6, relief=tk.RIDGE,
+                           bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
+            lbl.grid(row=0, column=j+1, padx=1, pady=1, sticky="nsew")
+            self.pos_labels.append(lbl)
+
+        self.row_labels = []
+        self.entries = []
+        for i in range(self.rows_n):
+            rl = tk.Label(self.inner, text=f"Ряд {i+1}", width=9, relief=tk.RIDGE,
+                         bg="#444444", fg="white", font=("Times New Roman",9,"bold"))
+            rl.grid(row=i+1, column=0, padx=1, pady=1, sticky="nsew")
+            self.row_labels.append(rl)
+            row_e = []
+            for j in range(self.cols_n):
+                e = tk.Entry(self.inner, width=6, font=("Times New Roman",10))
+                e.grid(row=i+1, column=j+1, padx=1, pady=1)
+                row_e.append(e)
+            self.entries.append(row_e)
+        _bind_nav(self.entries, self.win)
+
+        # ── права частина — вкладки результатів ────────────
+        right = tk.Frame(main); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.nb = ttk.Notebook(right); self.nb.pack(fill=tk.BOTH, expand=True)
+
+        t1 = tk.Frame(self.nb); self.nb.add(t1, text="🗺 Карта саду")
+        tb1 = tk.Frame(t1); tb1.pack(fill=tk.X, padx=4, pady=3)
+        tk.Button(tb1, text="💾 PNG (друк)", font=("Times New Roman",10),
+                  command=self._save_png).pack(side=tk.RIGHT, padx=2)
+        tk.Button(tb1, text="💾 Excel", font=("Times New Roman",10),
+                  command=self._save_excel).pack(side=tk.RIGHT, padx=2)
+        tk.Button(tb1, text="💾 Word", font=("Times New Roman",10),
+                  command=self._save_word).pack(side=tk.RIGHT, padx=2)
+        self._map_outer = tk.Frame(t1); self._map_outer.pack(fill=tk.BOTH, expand=True)
+
+        t2 = tk.Frame(self.nb); self.nb.add(t2, text="📋 Список облікових рослин")
+        r_vsb = ttk.Scrollbar(t2, orient="vertical"); r_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.list_txt = tk.Text(t2, font=("Courier New",10),
+                                yscrollcommand=r_vsb.set, state="disabled", wrap="none")
+        self.list_txt.pack(fill=tk.BOTH, expand=True)
+        r_vsb.config(command=self.list_txt.yview)
+
+        self._status_lbl = tk.Label(self.win, text="", fg="#B71C1C",
+                                    font=("Times New Roman",10), wraplength=1140,
+                                    justify="left", anchor="w")
+        self._status_lbl.pack(fill=tk.X, padx=8, pady=(0,4))
+
+    # ─────────────────────────────────────────────────────
+    def _show_help(self):
+        win = tk.Toplevel(self.win); win.title("Довідка — Планування досліду")
+        win.geometry("720x680"); set_icon(win)
+        frm = tk.Frame(win); frm.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        vsb = ttk.Scrollbar(frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        txt = tk.Text(frm, wrap="word", font=("Times New Roman",11),
+                      yscrollcommand=vsb.set, relief=tk.FLAT, bg="#fafafa",
+                      padx=10, pady=8, cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True); vsb.config(command=txt.yview)
+        txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
+        txt.bind("<MouseWheel>", lambda e: txt.yview_scroll(int(-1*(e.delta/120)),"units"))
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
+    # ── управління таблицею ──────────────────────────────
+    def _add_row(self):
+        i = self.rows_n
+        rl = tk.Label(self.inner, text=f"Ряд {i+1}", width=9, relief=tk.RIDGE,
+                     bg="#444444", fg="white", font=("Times New Roman",9,"bold"))
+        rl.grid(row=i+1, column=0, padx=1, pady=1, sticky="nsew")
+        self.row_labels.append(rl)
+        row_e = []
+        for j in range(self.cols_n):
+            e = tk.Entry(self.inner, width=6, font=("Times New Roman",10))
+            e.grid(row=i+1, column=j+1, padx=1, pady=1)
+            row_e.append(e)
+        self.entries.append(row_e); self.rows_n += 1
+        _bind_nav(self.entries, self.win)
+
+    def _del_row(self):
+        if not self.entries: return
+        for e in self.entries.pop(): e.destroy()
+        self.row_labels.pop().destroy()
+        self.rows_n -= 1
+
+    def _add_col(self):
+        ci = self.cols_n
+        lbl = tk.Label(self.inner, text=str(ci+1), width=6, relief=tk.RIDGE,
+                       bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
+        lbl.grid(row=0, column=ci+1, padx=1, pady=1, sticky="nsew")
+        self.pos_labels.append(lbl)
+        for i, row_e in enumerate(self.entries):
+            e = tk.Entry(self.inner, width=6, font=("Times New Roman",10))
+            e.grid(row=i+1, column=ci+1, padx=1, pady=1)
+            row_e.append(e)
+        self.cols_n += 1
+
+    def _del_col(self):
+        if self.cols_n <= 2: return
+        self.pos_labels.pop().destroy()
+        for row_e in self.entries: row_e.pop().destroy()
+        self.cols_n -= 1
+
+    def _clear_table(self):
+        if not messagebox.askyesno("Очистити", "Видалити всі дані таблиці?"): return
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+    def _paste(self):
+        try: data = self.win.clipboard_get()
+        except Exception:
+            messagebox.showwarning("Буфер порожній",
+                "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
+        pos = (0,0); w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: pos=(i,j); break
+        r0, c0 = pos
+        for ir, line in enumerate(data.splitlines()):
+            if line == "" and not line.strip(): continue
+            while r0+ir >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                cc = c0+jc
+                while cc >= self.cols_n: self._add_col()
+                self.entries[r0+ir][cc].delete(0, tk.END)
+                self.entries[r0+ir][cc].insert(0, val.strip())
+
+    # ── побудова схеми ────────────────────────────────────
+    def _run(self):
+        try:
+            trait_name = self._v["trait_name"].get().strip() or "показник"
+            trait_unit = self._v["trait_unit"].get().strip()
+            cv_thr     = float(self._v["cv_thr"].get())
+            plot_size  = int(self._v["plot_size"].get())
+            guard_size = int(self._v["guard_size"].get())
+            n_var      = int(self._v["n_var"].get())
+            n_rep      = int(self._v["n_rep"].get())
+            max_it     = int(self._v["max_it"].get())
+            seed       = int(self._v["seed"].get())
+        except ValueError:
+            messagebox.showwarning("", "Перевірте числові параметри."); return
+
+        raw_rows = {}
+        for i, row_e in enumerate(self.entries):
+            entries = [(j+1, e.get()) for j, e in enumerate(row_e) if e.get().strip()]
+            if entries: raw_rows[i+1] = entries
+        plants = hp_load_plants(raw_rows)
+        if not plants:
+            messagebox.showwarning("Немає даних", "Заповніть таблицю значеннями."); return
+
+        builder = HPPlotBuilder(
+            plants, plot_size, guard_size, cv_thr, max_it,
+            count_dead_as_guard=self._dead_guard.get(),
+            count_pollinizer_as_guard=self._poll_guard.get())
+        result = builder.build()
+        hp_randomize_variants(result, n_var, seed=seed)
+        self._result = result
+        self._cfg = {"trait_name": trait_name, "trait_unit": trait_unit,
+                     "cv_thr": cv_thr, "plot_size": plot_size,
+                     "guard_size": guard_size, "n_var": n_var, "n_rep": n_rep}
+
+        needed = n_var * n_rep
+        msgs = list(result["warnings"])
+        if result["plots_formed"] < needed:
+            msgs.append(f"Сформовано {result['plots_formed']} ділянок, потрібно {needed} "
+                        f"({n_var} варіантів × {n_rep} повторень). Послабте поріг CV%, "
+                        "зменшіть розмір ділянки/захисної зони, або розширте вибірку рядів.")
+        self._status_lbl.configure(text=("⚠ " + " | ".join(msgs)) if msgs else "")
+
+        self._draw_map()
+        self._fill_list()
+        self.nb.select(0)
+
+    # ── карта саду ────────────────────────────────────────
+    def _draw_map(self):
+        for w in self._map_outer.winfo_children(): w.destroy()
+        if not HAS_MPL or self._result is None: return
+        result = self._result; cfg = self._cfg
+        rows = sorted({p.row for p in result["plants"]})
+        max_pos = max((p.position for p in result["plants"]), default=1)
+
+        fig = Figure(figsize=(max(8, max_pos*0.5), max(4, len(rows)*0.55)), dpi=100)
+        ax = fig.add_subplot(111)
+        by_row = {}
+        for p in result["plants"]:
+            by_row.setdefault(p.row, {})[p.position] = p
+
+        for ri, row_num in enumerate(rows):
+            ax.text(-0.6, len(rows)-ri-0.5, f"Ряд {row_num}",
+                    ha="right", va="center", fontsize=8, fontfamily="Times New Roman")
+            for pos in range(1, max_pos+1):
+                p = by_row.get(row_num, {}).get(pos)
+                if p is None: continue
+                color = HP_ROLE_COLORS.get(p.role, "#FFFFFF")
+                rect = matplotlib.patches.FancyBboxPatch(
+                    (pos-0.95, len(rows)-ri-0.95), 0.9, 0.9,
+                    boxstyle="round,pad=0.02", facecolor=color, edgecolor="#666", linewidth=0.6)
+                ax.add_patch(rect)
+                label = ""
+                if p.role == HP_ROLE_RECORDED: label = f"V{p.variant}"
+                elif p.role == HP_ROLE_GUARD: label = "З"
+                elif p.role == HP_ROLE_DEAD: label = "-"
+                elif p.role == HP_ROLE_POLLINIZER: label = "+"
+                if label:
+                    ax.text(pos-0.5, len(rows)-ri-0.5, label, ha="center", va="center",
+                            fontsize=7, fontfamily="Times New Roman")
+        ax.set_xlim(-1.2, max_pos+0.5); ax.set_ylim(-0.5, len(rows)+0.5)
+        ax.axis("off")
+        ax.set_title(
+            f"{cfg['trait_name']} ({cfg['trait_unit'] or '—'})  |  "
+            f"CV%={result['final_cv_pct']:.2f}  |  Ділянок: {result['plots_formed']}  |  "
+            f"Ітерацій: {result['iterations_used']} "
+            f"({'збіжність' if result['converged'] else 'без збіжності'})",
+            fontsize=9, fontfamily="Times New Roman")
+
+        from matplotlib.patches import Patch
+        handles = [Patch(facecolor=c, edgecolor="#666", label=HP_ROLE_LABELS[k])
+                   for k, c in HP_ROLE_COLORS.items()]
+        fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=7,
+                  bbox_to_anchor=(0.5, -0.02))
+        fig.tight_layout()
+        self._map_fig = fig
+        embed_figure(fig, self._map_outer)
+
+    def _fill_list(self):
+        if self._result is None: return
+        recorded = sorted(
+            [p for p in self._result["plants"] if p.role == HP_ROLE_RECORDED],
+            key=lambda p: (p.variant or 0, p.replication or 0, p.row, p.position))
+        cfg = self._cfg
+        lines = [
+            f"Показник: {cfg['trait_name']} ({cfg['trait_unit'] or '—'})",
+            f"CV% фінальний: {self._result['final_cv_pct']:.2f}   "
+            f"Ділянок: {self._result['plots_formed']}   "
+            f"Ітерацій: {self._result['iterations_used']}",
+            "-"*70,
+            f"{'Варіант':<8}{'Повт.':<8}{'Ряд':<6}{'Позиція':<9}{cfg['trait_name']}",
+            "-"*70,
+        ]
+        for p in recorded:
+            lines.append(f"{p.variant or '-':<8}{p.replication or '-':<8}"
+                        f"{p.row:<6}{p.position:<9}{p.value:.2f}" if p.value is not None
+                        else f"{p.variant or '-':<8}{p.replication or '-':<8}{p.row:<6}{p.position:<9}—")
+        self.list_txt.configure(state="normal")
+        self.list_txt.delete("1.0", tk.END)
+        self.list_txt.insert("1.0", "\n".join(lines))
+        self.list_txt.configure(state="disabled")
+
+    # ── експорт ───────────────────────────────────────────
+    def _save_png(self):
+        if self._result is None:
+            messagebox.showwarning("","Спочатку побудуйте схему."); return
+        path = filedialog.asksaveasfilename(defaultextension=".png",
+                    filetypes=[("PNG зображення","*.png")], title="Зберегти карту")
+        if not path: return
+        try:
+            self._map_fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
+
+    def _save_excel(self):
+        if self._result is None:
+            messagebox.showwarning("","Спочатку побудуйте схему."); return
+        if not HAS_OPENPYXL:
+            messagebox.showerror("","Потрібен openpyxl: pip install openpyxl"); return
+        path = filedialog.asksaveasfilename(defaultextension=".xlsx",
+                    filetypes=[("Excel","*.xlsx")], title="Зберегти схему")
+        if not path: return
+        try:
+            import openpyxl
+            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+            wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Схема"
+            cfg = self._cfg; result = self._result
+            ws.cell(1,1, f"Показник: {cfg['trait_name']} ({cfg['trait_unit'] or '—'})")
+            ws.cell(2,1, f"CV%={result['final_cv_pct']:.2f}  Ділянок={result['plots_formed']}  "
+                        f"Ітерацій={result['iterations_used']}")
+            hr = 4
+            rows = sorted({p.row for p in result["plants"]})
+            max_pos = max((p.position for p in result["plants"]), default=1)
+            ws.cell(hr,1,"Ряд \\ Поз.").font = Font(bold=True)
+            for pos in range(1, max_pos+1):
+                ws.cell(hr, pos+1, pos).font = Font(bold=True)
+            by_row = {}
+            for p in result["plants"]: by_row.setdefault(p.row, {})[p.position] = p
+            thin = Side(style="thin", color="AAAAAA")
+            border = Border(thin,thin,thin,thin)
+            for ri, row_num in enumerate(rows):
+                er = hr+1+ri
+                ws.cell(er,1, f"Ряд {row_num}").font = Font(bold=True)
+                for pos in range(1, max_pos+1):
+                    p = by_row.get(row_num, {}).get(pos)
+                    cell = ws.cell(er, pos+1); cell.border = border
+                    cell.alignment = Alignment(horizontal="center")
+                    if p is None: continue
+                    color = HP_ROLE_COLORS.get(p.role, "#FFFFFF").lstrip("#")
+                    cell.fill = PatternFill(start_color="FF"+color, end_color="FF"+color, fill_type="solid")
+                    if p.role == HP_ROLE_RECORDED: cell.value = f"V{p.variant}/П{p.replication}"
+                    elif p.role == HP_ROLE_GUARD: cell.value = "Захист"
+                    elif p.role == HP_ROLE_DEAD: cell.value = "-"
+                    elif p.role == HP_ROLE_POLLINIZER: cell.value = "+"
+                    elif p.role == HP_ROLE_EXCLUDED_CV: cell.value = "✕"
+            legend_ws = wb.create_sheet("Легенда")
+            for i, (k, c) in enumerate(HP_ROLE_COLORS.items(), start=1):
+                cc = legend_ws.cell(i,1); color = c.lstrip("#")
+                cc.fill = PatternFill(start_color="FF"+color, end_color="FF"+color, fill_type="solid")
+                legend_ws.cell(i,2, HP_ROLE_LABELS[k])
+            list_ws = wb.create_sheet("Список облікових рослин")
+            for j,h in enumerate(["Варіант","Повторення","Ряд","Позиція",cfg["trait_name"]],1):
+                list_ws.cell(1,j,h).font = Font(bold=True)
+            recorded = sorted([p for p in result["plants"] if p.role==HP_ROLE_RECORDED],
+                              key=lambda p:(p.variant or 0, p.replication or 0, p.row, p.position))
+            for i,p in enumerate(recorded, start=2):
+                list_ws.cell(i,1,p.variant); list_ws.cell(i,2,p.replication)
+                list_ws.cell(i,3,p.row); list_ws.cell(i,4,p.position); list_ws.cell(i,5,p.value)
+            wb.save(path)
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка збереження", str(ex))
+
+    def _save_word(self):
+        if self._result is None:
+            messagebox.showwarning("","Спочатку побудуйте схему."); return
+        try:
+            from docx import Document
+            from docx.shared import Inches
+        except ImportError:
+            messagebox.showerror("", "Встановіть python-docx:\n  pip install python-docx"); return
+        path = filedialog.asksaveasfilename(defaultextension=".docx",
+                    filetypes=[("Word","*.docx")], title="Зберегти опис методики")
+        if not path: return
+        try:
+            cfg = self._cfg; result = self._result
+            doc = Document()
+            doc.add_heading("Схема польового досліду", level=1)
+            doc.add_paragraph(
+                f"Показник відбору однорідності: {cfg['trait_name']} ({cfg['trait_unit'] or '—'}). "
+                f"Заданий поріг варіабельності: {cfg['cv_thr']:.1f}%. "
+                f"Фінальний CV фактично сформованої вибірки: {result['final_cv_pct']:.2f}%. "
+                f"Розмір облікової ділянки: {cfg['plot_size']} рослин. "
+                f"Розмір захисної зони: {cfg['guard_size']} рослин. "
+                f"Схема сформована за {result['iterations_used']} ітерацій "
+                f"({'збіжність досягнута' if result['converged'] else 'без повної збіжності'})."
+            )
+            if result["warnings"]:
+                p = doc.add_paragraph(); p.add_run("Попередження: " + " ".join(result["warnings"])).italic = True
+
+            tmp_png = path + "._map_tmp.png"
+            try:
+                self._map_fig.savefig(tmp_png, dpi=150, bbox_inches="tight")
+                doc.add_picture(tmp_png, width=Inches(6.3))
+            finally:
+                if os.path.exists(tmp_png): os.remove(tmp_png)
+
+            doc.add_heading("Список облікових рослин за варіантами й повтореннями", level=2)
+            recorded = sorted([p for p in result["plants"] if p.role==HP_ROLE_RECORDED],
+                              key=lambda p:(p.variant or 0, p.replication or 0, p.row, p.position))
+            table = doc.add_table(rows=1, cols=5); table.style = "Light Grid Accent 1"
+            hdr = table.rows[0].cells
+            for j,h in enumerate(["Варіант","Повторення","Ряд","Позиція",cfg["trait_name"]]):
+                hdr[j].text = h
+            for p in recorded:
+                cells = table.add_row().cells
+                cells[0].text = str(p.variant); cells[1].text = str(p.replication)
+                cells[2].text = str(p.row); cells[3].text = str(p.position)
+                cells[4].text = f"{p.value:.2f}" if p.value is not None else "—"
+            doc.save(path)
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка збереження", str(ex))
 _SADTk_orig_init = SADTk.__init__
 
 
