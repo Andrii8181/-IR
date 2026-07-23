@@ -138,17 +138,38 @@ if IS_WIN:
     except Exception: pass
 
 # ── Icon ──────────────────────────────────────────────────────
-def _find_icon():
+def _app_dirs():
+    """Кандидати папок, де шукати icon.ico / Logo.png: поруч зі скриптом,
+    поточна робоча папка, папка самого exe (після встановлення на ПК —
+    саме там реально лежать файли користувача), і тимчасова папка
+    розпакування PyInstaller (де самих файлів користувача, як правило,
+    немає, але лишаємо про всяк випадок)."""
     dirs = [os.getcwd()]
     try: dirs.insert(0, os.path.dirname(os.path.abspath(__file__)))
     except Exception: pass
     try:
+        if getattr(sys, "frozen", False):
+            dirs.insert(0, os.path.dirname(os.path.abspath(sys.executable)))
+    except Exception: pass
+    try:
         if hasattr(sys, "_MEIPASS"): dirs.append(sys._MEIPASS)
     except Exception: pass
+    # унікалізуємо, зберігаючи порядок
+    seen = set(); out = []
     for d in dirs:
-        p = os.path.join(d, "icon.ico")
-        if os.path.exists(p): return p
+        if d and d not in seen:
+            seen.add(d); out.append(d)
+    return out
+
+def _find_file(*names):
+    for d in _app_dirs():
+        for nm in names:
+            p = os.path.join(d, nm)
+            if os.path.exists(p): return p
     return None
+
+def _find_icon():
+    return _find_file("icon.ico")
 
 def set_icon(win):
     ico = _find_icon()
@@ -14628,14 +14649,14 @@ def _SADTk_new_init(self, root):
             w = cls(root)
 
     # ── HEADER ──────────────────────────────────────────────
-    header = tk.Frame(root, bg="#0d1020", height=52)
+    header = tk.Frame(root, bg="#0d1020", height=64)
     header.pack(fill=tk.X, side=tk.TOP)
     header.pack_propagate(False)
 
 
     # ── Логотип і назва ───────────────────────────────────
     logo_frm = tk.Frame(header, bg="#0d1020")
-    logo_frm.pack(side=tk.LEFT, padx=12, pady=4)
+    logo_frm.pack(side=tk.LEFT, padx=12, pady=6)
 
     # Завантажуємо Logo.png → icon.ico → текстовий fallback
     def _load_logo(size):
@@ -14643,12 +14664,10 @@ def _SADTk_new_init(self, root):
             return None
         try:
             from PIL import Image, ImageTk
-            base = os.path.dirname(os.path.abspath(__file__))
-            for fname in ("Logo.png", "logo.png", "SAD_logo.png", "icon.ico"):
-                p = os.path.join(base, fname)
-                if os.path.exists(p):
-                    img = Image.open(p).convert("RGBA").resize(size, Image.LANCZOS)
-                    return ImageTk.PhotoImage(img)
+            p = _find_file("Logo.png", "logo.png", "SAD_logo.png", "icon.ico")
+            if p:
+                img = Image.open(p).convert("RGBA").resize(size, Image.LANCZOS)
+                return ImageTk.PhotoImage(img)
         except Exception:
             pass
         return None
