@@ -4479,7 +4479,7 @@ class SADTk:
                                 self.graph_settings, gw)
         def _settings():
             self._settings_dialog(gw, "bar", _rebuild, extra_params=[
-                ("Колір стовпців:", "bar_color", "#4c72b0", "color", None),
+                ("Колір стовпців (усі стовпці):", "bar_color", "#4c72b0", "color", None),
                 ("Показати сітку:", "show_grid", True, "check", None),
             ])
         self._tab_toolbar(frame, "bar", _rebuild, _settings)
@@ -4487,8 +4487,7 @@ class SADTk:
 
         fp = {"fontsize": gs["font_size"], "fontfamily": gs["font_family"]}
         ff = gs["font_family"]; fz = gs["font_size"]
-        colors_list = ["#4c72b0","#dd8452","#55a868","#c44e52",
-                       "#8172b2","#937860","#da8bc3","#8c8c8c"]
+        user_bar_color = gs.get("bar_color", "#4c72b0")
         title = self._gs_titles.get("bar", f"{indicator}, {units}")
         fig = Figure(figsize=(10, 6), dpi=100); ax = fig.add_subplot(111)
         positions=[]; means=[]; ses=[]; xlbls=[]; let_list=[]; fcentres=[]
@@ -4505,7 +4504,7 @@ class SADTk:
                 se=float(np.std(arr,ddof=1)/math.sqrt(n)) if n>1 else 0.
                 means.append(m); ses.append(se); positions.append(x)
                 xlbls.append(str(lv)); let_list.append((f,lv))
-                bar_colors.append(colors_list[ci%len(colors_list)])
+                bar_colors.append(user_bar_color)
                 x+=1.; ci+=1
             fcentres.append(((sx+x-1)/2., self.ftitle(f))); x+=gap
         if means:
