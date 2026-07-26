@@ -14606,6 +14606,8 @@ def _SADTk_new_init(self, root):
         "purple":   "#8e44ad",
         "orange":   "#d35400",
         "teal":     "#16a085",
+        "brown":    "#6d4c2a",
+        "olive":    "#5a7d3a",
     }
 
     # ── Статистика використання (зберігається між сесіями) ──
@@ -14673,6 +14675,12 @@ def _SADTk_new_init(self, root):
         ("stab","Аналіз стабільності","Eberhart-Russell · GGE",
          "#8c1a1a",StabilityWindow,True,None,
          "gxe стабільність адаптація сортовипробування eberhart gge"),
+        ("trialdesign","Генератор плану досліду","Поле · Сад · Ягідники",
+         C["brown"],TrialDesignWindow,False,None,
+         "план дослід поле сад ягідник захисна зона рандомізація повторення схема генератор"),
+        ("homogplot","Однорідні ділянки саду","За CV% наявних рослин",
+         C["olive"],HomogeneousPlotWindow,True,None,
+         "однорідні ділянки cv діаметр штамб сад дерева вирівнювання рандомізація ітеративний"),
     ]
 
     def _open(key, cls, needs_gs, custom_fn=None):
@@ -15085,7 +15093,7 @@ Email: sad.stat.support@gmail.com
         ("Зв'язок змінних",  ["corr","reg","ancova"]),
         ("Багатовимірні",     ["manova","rm","mix"]),
         ("Багатовимірний ML", ["cluster","pca"]),
-        ("Спеціальні",        ["stab"]),
+        ("Спеціальні",        ["stab","trialdesign","homogplot"]),
     ]
     _ana_map = {a[0]: a for a in ANALYSES}
     _sb_btns = {}
