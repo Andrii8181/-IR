@@ -3327,9 +3327,48 @@ class SADTk:
         if not options:
             tk.Button(frm, text="OK", width=10, command=dlg.destroy).pack(pady=(10, 0))
             dlg.update_idletasks(); center_win(dlg); dlg.grab_set(); parent.wait_window(dlg); return out
+
         var = tk.StringVar(value=options[0][1])
         for txt, val in options:
             tk.Radiobutton(frm, text=txt, variable=var, value=val, font=rb_f).pack(anchor="w", pady=2)
+
+        # ── Пояснення: яка трансформація для якої ситуації ─────
+        transform_keys = {"arcsin_param", "log_param", "sqrt_param", "log10_param"}
+        if any(val in transform_keys for _, val in options):
+            help_frm = tk.Frame(frm, bg="#eef3f8", padx=10, pady=8)
+            help_frm.pack(fill=tk.X, pady=(10, 0))
+            tk.Label(help_frm, text="ⓘ Яку трансформацію обрати:",
+                     bg="#eef3f8", fg="#1a4b8c",
+                     font=("Times New Roman", 11, "bold"), anchor="w"
+                     ).pack(fill=tk.X)
+            transform_help = [
+                ("arcsin(√p)", "відсотки, частки, частоти (% ураження, схожості, "
+                                "загибелі) — особливо якщо є значення поза 20–80%"),
+                ("ln(x)",      "дані з мультиплікативною мінливістю: розкид зростає "
+                                "пропорційно значенню (маса, урожайність, сильна "
+                                "правостороння скошеність)"),
+                ("√x",         "лічильні дані: кількість комах, шкідників, колосків, "
+                                "уражених рослин, дефектів (розподіл, близький до "
+                                "Пуассонівського)"),
+                ("log₁₀(x)",  "те саме, що ln(x), але коли зручніше читати результат "
+                                "у порядках величини (напр., концентрації, титри)"),
+            ]
+            for name, desc in transform_help:
+                row = tk.Frame(help_frm, bg="#eef3f8"); row.pack(fill=tk.X, pady=1)
+                tk.Label(row, text=name, bg="#eef3f8", fg="#1a4b8c",
+                         font=("Times New Roman", 10, "bold"), width=11, anchor="w"
+                         ).pack(side=tk.LEFT)
+                tk.Label(row, text="— " + desc, bg="#eef3f8", fg="#333",
+                         font=("Times New Roman", 10), anchor="w",
+                         justify="left", wraplength=340
+                         ).pack(side=tk.LEFT, fill=tk.X)
+            tk.Label(help_frm,
+                     text="Після трансформації середні у звіті повертаються у "
+                          "вихідні одиниці; групування (літери) — за трансформованими даними.",
+                     bg="#eef3f8", fg="#666", font=("Times New Roman", 9, "italic"),
+                     anchor="w", justify="left", wraplength=380
+                     ).pack(fill=tk.X, pady=(6, 0))
+
         def ok():
             out.update({"ok": True, "method": var.get()}); dlg.destroy()
         bf = tk.Frame(frm); bf.pack(pady=(12, 0))
