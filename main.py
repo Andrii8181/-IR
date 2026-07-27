@@ -12993,42 +12993,49 @@ class HomogeneousPlotWindow:
 
         self._v = {}
         row_defs = [
-            ("Показник:",                       "trait_name", "діаметр штамбу", 14),
+            ("Показник:",                       "trait_name", "діаметр штамбу", 12),
             ("Одиниця:",                        "trait_unit", "см", 5),
             ("Поріг CV, %:",                     "cv_thr",     "10", 5),
             ("Повторність, рослин:",             "plot_size",  "5", 5),
-            ("Захисна край ряду, рослин (1-3):", "edge_guard", "2", 4),
-            ("Захисна між повтор., рослин:",    "rep_guard",  "1", 4),
+            ("Захисна край ряду (1-3):",         "edge_guard", "2", 4),
+            ("Захисна між повтор.:",             "rep_guard",  "1", 4),
             ("Варіантів:",                       "n_var",      "5", 4),
             ("Повторень:",                       "n_rep",      "4", 4),
             ("Макс. ітерацій:",                  "max_it",     "20", 5),
         ]
-        for ci, (lbl, key, default, w) in enumerate(row_defs):
-            tk.Label(pf, text=lbl, font=rf).grid(row=0, column=ci*2, sticky="w", padx=(8 if ci else 0,2))
+        PER_ROW = 4   # скільки пар "підпис+поле" вміщується в один рядок без переповнення
+        for idx, (lbl, key, default, w) in enumerate(row_defs):
+            r, c = divmod(idx, PER_ROW)
+            tk.Label(pf, text=lbl, font=rf).grid(
+                row=r, column=c*2, sticky="w", padx=(0 if c==0 else 14, 2), pady=3)
             v = tk.StringVar(value=default); self._v[key] = v
-            tk.Entry(pf, textvariable=v, width=w, font=rf).grid(row=0, column=ci*2+1, sticky="w")
+            tk.Entry(pf, textvariable=v, width=w, font=rf).grid(
+                row=r, column=c*2+1, sticky="w", pady=3)
 
+        next_row = (len(row_defs) - 1) // PER_ROW + 1
+
+        tk.Label(pf, text="Дизайн експерименту:", font=rf).grid(
+            row=next_row, column=0, sticky="w", padx=(0,2), pady=(6,3))
+        self._design_v = tk.StringVar(value=HP_DESIGNS[1][0])  # RCBD за замовчуванням
+        ttk.Combobox(pf, textvariable=self._design_v, state="readonly", width=26,
+                     values=[lbl for lbl,_ in HP_DESIGNS]
+                     ).grid(row=next_row, column=1, columnspan=3, sticky="w", pady=(6,3))
+
+        tk.Label(pf, text="Seed рандомізації:", font=rf).grid(
+            row=next_row, column=4, sticky="w", padx=(14,2), pady=(6,3))
+        self._v["seed"] = tk.StringVar(value="1")
+        tk.Entry(pf, textvariable=self._v["seed"], width=6, font=rf).grid(
+            row=next_row, column=5, sticky="w", pady=(6,3))
+
+        next_row += 1
         self._dead_guard = tk.BooleanVar(value=True)
         self._poll_guard = tk.BooleanVar(value=False)
         tk.Checkbutton(pf, text='Враховувати "-" (випади) як захисні',
                        variable=self._dead_guard, font=rf
-                       ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(4,0))
+                       ).grid(row=next_row, column=0, columnspan=4, sticky="w", pady=(3,0))
         tk.Checkbutton(pf, text='Враховувати "+" (запилювачі) як захисні',
                        variable=self._poll_guard, font=rf
-                       ).grid(row=1, column=4, columnspan=4, sticky="w", pady=(4,0))
-
-        tk.Label(pf, text="Дизайн експерименту:", font=rf
-                 ).grid(row=2, column=0, sticky="w", padx=(0,2), pady=(4,0))
-        self._design_v = tk.StringVar(value=HP_DESIGNS[1][0])  # RCBD за замовчуванням
-        ttk.Combobox(pf, textvariable=self._design_v, state="readonly", width=28,
-                     values=[lbl for lbl,_ in HP_DESIGNS]
-                     ).grid(row=2, column=1, columnspan=3, sticky="w", pady=(4,0))
-
-        tk.Label(pf, text="Seed рандомізації:", font=rf
-                 ).grid(row=2, column=4, sticky="w", padx=(8,2), pady=(4,0))
-        self._v["seed"] = tk.StringVar(value="1")
-        tk.Entry(pf, textvariable=self._v["seed"], width=6, font=rf
-                 ).grid(row=2, column=5, sticky="w", pady=(4,0))
+                       ).grid(row=next_row, column=4, columnspan=4, sticky="w", pady=(3,0))
 
         # ── таблиця даних — на всю ширину вікна ────────────
         tbl_lbl_frm = tk.Frame(self.win); tbl_lbl_frm.pack(fill=tk.X, padx=8)
@@ -13191,6 +13198,13 @@ class HomogeneousPlotWindow:
             count_dead_as_guard=self._dead_guard.get(),
             count_pollinizer_as_guard=self._poll_guard.get())
         result = builder.build()
+
+        needed = n_var * n_rep
+        if result["plots_formed"] < needed:
+            self._status_lbl.configure(text="")
+            self._show_insufficient_dialog(result["plots_formed"], needed, n_var, n_rep)
+            return
+
         design_used, fell_back = hp_apply_design(result, design_key, n_var, n_rep, seed=seed)
         self._result = result
         self._cfg = {"trait_name": trait_name, "trait_unit": trait_unit,
@@ -13200,18 +13214,49 @@ class HomogeneousPlotWindow:
                      "design_requested": design_key, "design_used": design_used,
                      "design_fell_back": fell_back}
 
-        needed = n_var * n_rep
         msgs = list(result["warnings"])
-        if result["plots_formed"] < needed:
-            msgs.append(f"Сформовано {result['plots_formed']} повторностей, потрібно {needed} "
-                        f"({n_var} варіантів × {n_rep} повторень). Послабте поріг CV%, "
-                        "зменшіть розмір повторності/захисних зон, або розширте вибірку рядів.")
         if fell_back:
             msgs.append("Латинський квадрат потребує рівно n_var блоків (повторень) — "
                         "сформована кількість не збігається, застосовано RCBD замість нього.")
         self._status_lbl.configure(text=("⚠ " + " | ".join(msgs)) if msgs else "")
 
         self._show_results()
+
+    def _show_insufficient_dialog(self, formed, needed, n_var, n_rep):
+        """Блокуюче пояснювальне вікно (за зразком діалогу ненормальності в ANOVA):
+        показується ЗАМІСТЬ звіту, коли неможливо сформувати потрібну кількість
+        повторностей — карта й список у такому разі НЕ відкриваються."""
+        dlg = tk.Toplevel(self.win)
+        dlg.title("Недостатньо рослин для дизайну досліду")
+        dlg.resizable(False, False); set_icon(dlg)
+        frm = tk.Frame(dlg, padx=18, pady=16); frm.pack()
+
+        tk.Label(frm, text="🚫 Неможливо спланувати дослід із поточними даними",
+                 font=("Times New Roman",13,"bold"), fg="#B71C1C"
+                 ).pack(anchor="w", pady=(0,8))
+        tk.Label(frm,
+                 text=f"Сформовано лише {formed} повторностей із {needed} потрібних "
+                      f"({n_var} варіантів × {n_rep} повторень).",
+                 font=("Times New Roman",11), justify="left", wraplength=440
+                 ).pack(anchor="w", pady=(0,10))
+
+        tk.Label(frm, text="Що можна зробити:",
+                 font=("Times New Roman",11,"bold")).pack(anchor="w")
+        for line in [
+            "• Збільшити кількість рослин для аналізу — додати ряди/позиції в таблицю;",
+            "• Послабити (збільшити) заплановане порогове значення варіації (CV%) — "
+            "менш жорсткий відбір дасть більше придатних рослин;",
+            "• Зменшити розмір повторності або захисних зон;",
+            "• Зменшити кількість варіантів чи повторень.",
+        ]:
+            tk.Label(frm, text=line, font=("Times New Roman",11),
+                     justify="left", wraplength=440, anchor="w"
+                     ).pack(anchor="w", padx=(6,0))
+
+        tk.Button(frm, text="Зрозуміло", bg="#c62828", fg="white",
+                  font=("Times New Roman",12), width=14,
+                  command=dlg.destroy).pack(pady=(14,0))
+        dlg.update_idletasks(); center_win(dlg); dlg.grab_set()
 
     # ── вікно результатів (як і в усіх інших видах аналізу) ─
     def _show_results(self):
@@ -13250,15 +13295,19 @@ class HomogeneousPlotWindow:
 
         map_frame  = tk.Frame(content)
         list_frame = tk.Frame(content)
+        form_frame = tk.Frame(content)
 
         b_map  = _sidebar_btn("🗺 Карта саду",              "Кольорова схема ділянок")
         b_list = _sidebar_btn("📋 Список облікових рослин", "За варіантами й повтореннями")
+        b_form = _sidebar_btn("🖨 Бланк обліку",            "Друкована форма для запису в полі")
 
         b_map.configure( command=lambda: _show_panel(map_frame, b_map))
         b_list.configure(command=lambda: _show_panel(list_frame, b_list))
+        b_form.configure(command=lambda: _show_panel(form_frame, b_form))
 
         self._build_map_panel(map_frame)
         self._build_list_panel(list_frame)
+        self._build_form_panel(form_frame)
 
         _show_panel(map_frame, b_map)
 
@@ -13267,11 +13316,29 @@ class HomogeneousPlotWindow:
         for w in frame.winfo_children(): w.destroy()
         tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
         tk.Button(tb, text="💾 Зберегти PNG (друк)", font=("Times New Roman",11),
-                  command=self._save_png).pack(side=tk.LEFT, padx=4)
+                  command=lambda: self._save_png(self._map_fig, "Зберегти карту")
+                  ).pack(side=tk.LEFT, padx=4)
         cfg = self._cfg
         design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
         tk.Label(tb, text=f"Дизайн: {design_txt}", font=("Times New Roman",11),
                  fg="#1a4b8c").pack(side=tk.LEFT, padx=12)
+
+        # ── Легенда кольорів + пояснення позначень (завжди повністю видимі) ──
+        legend_f = tk.Frame(frame, bg="#f7f7f7", padx=8, pady=6)
+        legend_f.pack(fill=tk.X)
+        row1 = tk.Frame(legend_f, bg="#f7f7f7"); row1.pack(fill=tk.X)
+        for role, color in HP_ROLE_COLORS.items():
+            sw = tk.Frame(row1, bg=color, width=16, height=16, relief=tk.RIDGE, bd=1)
+            sw.pack(side=tk.LEFT, padx=(0,4), pady=2); sw.pack_propagate(False)
+            tk.Label(row1, text=HP_ROLE_LABELS[role], bg="#f7f7f7",
+                     font=("Times New Roman",9)).pack(side=tk.LEFT, padx=(0,14))
+        tk.Label(legend_f,
+                 text='Позначення на клітинках:  "V1", "V2"…  — номер ВАРІАНТУ (облікова рослина)  •  '
+                      '"К" — захисна зона, край ряду  •  "П" — захисна зона між повтореннями  •  '
+                      '"-" — випад/пошкоджена рослина  •  "+" — запилювач',
+                 bg="#f7f7f7", fg="#444", font=("Times New Roman",9),
+                 anchor="w", justify="left", wraplength=1360
+                 ).pack(fill=tk.X, pady=(4,0))
 
         map_outer = tk.Frame(frame); map_outer.pack(fill=tk.BOTH, expand=True)
         self._map_outer = map_outer
@@ -13343,11 +13410,6 @@ class HomogeneousPlotWindow:
             f"({'збіжність' if result['converged'] else 'без збіжності'})",
             fontsize=9, fontfamily="Times New Roman")
 
-        from matplotlib.patches import Patch
-        handles = [Patch(facecolor=c, edgecolor="#666", label=HP_ROLE_LABELS[k])
-                   for k, c in HP_ROLE_COLORS.items()]
-        fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=7,
-                  bbox_to_anchor=(0.5, -0.02))
         fig.tight_layout()
         self._map_fig = fig
         embed_figure(fig, self._map_outer)
@@ -13378,15 +13440,82 @@ class HomogeneousPlotWindow:
         self.list_txt.insert("1.0", "\n".join(lines))
         self.list_txt.configure(state="disabled")
 
+    # ── панель: бланк обліку (для друку й заповнення в полі) ──
+    def _build_form_panel(self, frame):
+        for w in frame.winfo_children(): w.destroy()
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="💾 Зберегти PNG (друк)", font=("Times New Roman",11),
+                  command=lambda: self._save_png(self._form_fig, "Зберегти бланк обліку")
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb, text="Роздрукуйте цю форму й носіть із собою в сад — "
+                          "впишіть виміряні значення прямо на бланк.",
+                 font=("Times New Roman",10), fg="#555").pack(side=tk.LEFT, padx=12)
+
+        form_outer = tk.Frame(frame); form_outer.pack(fill=tk.BOTH, expand=True)
+        self._form_outer = form_outer
+        self._draw_blank_form()
+
+    def _draw_blank_form(self):
+        for w in self._form_outer.winfo_children(): w.destroy()
+        if not HAS_MPL or self._result is None: return
+        result = self._result; cfg = self._cfg
+        rows = sorted({p.row for p in result["plants"]})
+        max_pos = max((p.position for p in result["plants"]), default=1)
+
+        fig = Figure(figsize=(max(10, max_pos*0.45), max(5, len(rows)*0.85)), dpi=100)
+        ax = fig.add_subplot(111)
+        by_row = {}
+        for p in result["plants"]:
+            by_row.setdefault(p.row, {})[p.position] = p
+
+        for ri, row_num in enumerate(rows):
+            ax.text(-0.6, len(rows)-ri-0.5, f"Ряд {row_num}",
+                    ha="right", va="center", fontsize=9, fontfamily="Times New Roman",
+                    fontweight="bold")
+            for pos in range(1, max_pos+1):
+                p = by_row.get(row_num, {}).get(pos)
+                if p is None: continue
+                if p.role == HP_ROLE_RECORDED:
+                    rect = matplotlib.patches.Rectangle(
+                        (pos-0.95, len(rows)-ri-0.95), 0.9, 0.9,
+                        facecolor="white", edgecolor="#333", linewidth=1.0)
+                    ax.add_patch(rect)
+                    ax.text(pos-0.5, len(rows)-ri-0.22, f"В{p.variant}·П{p.replication}",
+                            ha="center", va="center", fontsize=6.5,
+                            fontfamily="Times New Roman", color="#1a4b8c", fontweight="bold")
+                    # порожня лінія для запису виміряного значення від руки
+                    ax.plot([pos-0.82, pos-0.08], [len(rows)-ri-0.68]*2,
+                            color="#999", lw=0.6)
+                else:
+                    label = {HP_ROLE_GUARD_EDGE:"К", HP_ROLE_GUARD_REP:"П",
+                             HP_ROLE_DEAD:"–", HP_ROLE_POLLINIZER:"+"}.get(p.role, "")
+                    rect = matplotlib.patches.Rectangle(
+                        (pos-0.85, len(rows)-ri-0.85), 0.7, 0.7,
+                        facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
+                    ax.add_patch(rect)
+                    if label:
+                        ax.text(pos-0.5, len(rows)-ri-0.5, label, ha="center", va="center",
+                                fontsize=6, color="#999", fontfamily="Times New Roman")
+        ax.set_xlim(-1.2, max_pos+0.5); ax.set_ylim(-0.5, len(rows)+0.5)
+        ax.axis("off")
+        ax.set_title(
+            f"БЛАНК ОБЛІКУ  —  {cfg['trait_name']} ({cfg['trait_unit'] or '—'})\n"
+            f"Дата: _______________          Виконав: _______________________________",
+            fontsize=10, fontfamily="Times New Roman", loc="left")
+        fig.subplots_adjust(top=0.90, bottom=0.04, left=0.06, right=0.98)
+        self._form_fig = fig
+        embed_figure(fig, self._form_outer)
+
     # ── збереження ────────────────────────────────────────
-    def _save_png(self):
-        if self._result is None or self._map_fig is None:
+    def _save_png(self, fig=None, title="Зберегти зображення"):
+        fig = fig if fig is not None else self._map_fig
+        if self._result is None or fig is None:
             messagebox.showwarning("","Спочатку згенеруйте план."); return
         path = filedialog.asksaveasfilename(defaultextension=".png",
-                    filetypes=[("PNG зображення","*.png")], title="Зберегти карту")
+                    filetypes=[("PNG зображення","*.png")], title=title)
         if not path: return
         try:
-            self._map_fig.savefig(path, dpi=150, bbox_inches="tight")
+            fig.savefig(path, dpi=150, bbox_inches="tight")
             messagebox.showinfo("Збережено", f"Збережено:\n{path}")
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
