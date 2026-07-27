@@ -3280,8 +3280,7 @@ class SADTk:
             options = [("НІР₀₅ (LSD)", "lsd"),
                        ("Тест Тьюкі", "tukey"),
                        ("Тест Дункана", "duncan"),
-                       ("Бонферроні", "bonferroni"),
-                       ("🔁 arcsin(√p) + параметричний", "arcsin_param")]
+                       ("Бонферроні", "bonferroni")]
         else:
             if design == "split":
                 tk.Label(frm,
@@ -12559,16 +12558,18 @@ def show_help(parent, topic=None):
 # ═══════════════════════════════════════════════════════════════
 
 # ── Ролі рослин після побудови схеми ──────────────────────────
-HP_ROLE_RECORDED    = "recorded"
-HP_ROLE_GUARD       = "guard"
-HP_ROLE_EXCLUDED_CV = "excluded_cv"
-HP_ROLE_DEAD        = "dead"
-HP_ROLE_POLLINIZER  = "pollinizer"
-HP_ROLE_UNASSIGNED  = "unassigned"
+HP_ROLE_RECORDED     = "recorded"
+HP_ROLE_GUARD_EDGE    = "guard_edge"    # захисна зона: край ряду (тип 1)
+HP_ROLE_GUARD_REP     = "guard_rep"     # захисна зона: між повтореннями (тип 2)
+HP_ROLE_EXCLUDED_CV  = "excluded_cv"
+HP_ROLE_DEAD         = "dead"
+HP_ROLE_POLLINIZER   = "pollinizer"
+HP_ROLE_UNASSIGNED   = "unassigned"
 
 HP_ROLE_COLORS = {
     HP_ROLE_RECORDED:    "#4CAF50",
-    HP_ROLE_GUARD:       "#FFC107",
+    HP_ROLE_GUARD_EDGE:  "#FFC107",
+    HP_ROLE_GUARD_REP:   "#FF8A65",
     HP_ROLE_EXCLUDED_CV: "#BDBDBD",
     HP_ROLE_DEAD:        "#424242",
     HP_ROLE_POLLINIZER:  "#2196F3",
@@ -12576,12 +12577,22 @@ HP_ROLE_COLORS = {
 }
 HP_ROLE_LABELS = {
     HP_ROLE_RECORDED:    "Облікова рослина (варіант)",
-    HP_ROLE_GUARD:       "Захисна рослина",
+    HP_ROLE_GUARD_EDGE:  "Захисна — край ряду",
+    HP_ROLE_GUARD_REP:   "Захисна — між повтореннями",
     HP_ROLE_EXCLUDED_CV: "Виключено за варіабельністю",
     HP_ROLE_DEAD:        "Випад / пошкоджена (-)",
     HP_ROLE_POLLINIZER:  "Запилювач (+)",
     HP_ROLE_UNASSIGNED:  "Поза межами досліду",
 }
+
+HP_DESIGNS = [
+    ("Повна рандомізація (CRD)",         "crd"),
+    ("Рандомізовані повні блоки (RCBD)", "rcbd"),
+    ("Латинський квадрат",               "latin"),
+]
+HP_DESIGN_LABELS = dict(HP_DESIGNS)
+HP_DESIGN_LABELS_REV = {v: k for k, v in HP_DESIGNS}
+HP_DESIGN_LABELS_REV.update({lbl: key for lbl, key in HP_DESIGNS})
 
 
 class HPPlant:
@@ -12630,23 +12641,36 @@ def hp_load_plants(raw_rows):
 
 class HPPlotBuilder:
     """
-    Ітеративний конструктор схеми:
-      1. Формування ділянок уздовж ряду: набір plot_size облікових рослин
-         (непридатні позиції "прозоро" пропускаються) -> захисна зона
-         заданого розміру -> повторити.
-      2. CV% рахується лише за RECORDED-рослинами (захисні виключені).
-      3. Допустимий діапазон значень звужується навколо СЕРЕДНЬОГО
+    Ітеративний конструктор схеми.
+
+    Термінологія: одна ПОВТОРНІСТЬ = одна група з plot_size облікових
+    рослин ОДНОГО варіанту (те, що раніше в коментарях називалось
+    "ділянкою"). Варіант складається з кількох повторностей (n_rep),
+    розкиданих рандомізовано по полю/саду (див. hp_apply_design) —
+    саме тому захист потрібен між БУДЬ-ЯКИМИ двома сусідніми
+    повторностями, а не лише на межі "блоку з n_var штук".
+
+      1. Формування повторностей уздовж ряду: набір plot_size
+         облікових рослин (непридатні позиції "прозоро" пропускаються)
+         -> повторити.
+      2. Захисні рослини — ДВА окремих типи:
+           • edge_guard_size — на початку і в кінці КОЖНОГО ряду (тип 1);
+           • rep_guard_size  — після КОЖНОЇ сформованої повторності,
+             тобто між будь-якими двома сусідніми повторностями (тип 2).
+      3. CV% рахується лише за RECORDED-рослинами (захисні виключені).
+      4. Допустимий діапазон значень звужується навколо СЕРЕДНЬОГО
          з коефіцієнтом на основі ФІКСОВАНОГО σ_start (не поточного σ) —
          це запобігає подвійному (лінійному + природному) стисненню.
-      4. Зупинка: множина RECORDED не змінюється, або CV% <= порогу,
+      5. Зупинка: множина RECORDED не змінюється, або CV% <= порогу,
          або вичерпано max_iterations (за замовчуванням 20).
     """
-    def __init__(self, plants, plot_size, guard_size_plants, cv_threshold_pct,
-                 max_iterations=20, count_dead_as_guard=True,
-                 count_pollinizer_as_guard=False):
+    def __init__(self, plants, plot_size, edge_guard_size, rep_guard_size,
+                 cv_threshold_pct, max_iterations=20,
+                 count_dead_as_guard=True, count_pollinizer_as_guard=False):
         self.plants = plants
         self.plot_size = max(1, int(plot_size))
-        self.guard_size = max(0, int(guard_size_plants))
+        self.edge_guard_size = max(0, int(edge_guard_size))
+        self.rep_guard_size  = max(0, int(rep_guard_size))
         self.cv_threshold_pct = float(cv_threshold_pct)
         self.max_iterations = max(1, int(max_iterations))
         self.count_dead_as_guard = count_dead_as_guard
@@ -12662,11 +12686,28 @@ class HPPlotBuilder:
         if p.status == "pollinizer": return self.count_pollinizer_as_guard
         return True
 
+    def _take_guard(self, row_plants, i, n, needed, role):
+        taken = 0
+        while i < n and taken < needed:
+            gp = row_plants[i]
+            if self._guard_eligible(gp):
+                gp.role = role; taken += 1
+            elif gp.status == "dead":
+                gp.role = HP_ROLE_DEAD
+            elif gp.status == "pollinizer":
+                gp.role = HP_ROLE_POLLINIZER
+            i += 1
+        return i
+
     def _scan_once(self, allowed_range):
         recorded = []; plot_counter = 0
         for row_num in sorted(self.by_row.keys()):
             row_plants = self.by_row[row_num]
             i = 0; n = len(row_plants)
+
+            # Захисна зона типу 1 — початок ряду
+            i = self._take_guard(row_plants, i, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
+
             while i < n:
                 plot_members = []
                 while i < n and len(plot_members) < self.plot_size:
@@ -12682,22 +12723,19 @@ class HPPlotBuilder:
                         p.role = HP_ROLE_POLLINIZER
                     i += 1
                 if len(plot_members) < self.plot_size:
-                    break  # ряд закінчився, неповна ділянка відкидається
+                    break  # ряд закінчився, неповна повторність відкидається
                 plot_counter += 1
                 for p in plot_members:
                     p.role = HP_ROLE_RECORDED; p.plot_id = plot_counter
                 recorded.extend(plot_members)
 
-                guard_needed = self.guard_size; guard_taken = 0
-                while i < n and guard_taken < guard_needed:
-                    gp = row_plants[i]
-                    if self._guard_eligible(gp):
-                        gp.role = HP_ROLE_GUARD; guard_taken += 1
-                    elif gp.status == "dead":
-                        gp.role = HP_ROLE_DEAD
-                    elif gp.status == "pollinizer":
-                        gp.role = HP_ROLE_POLLINIZER
-                    i += 1
+                # Захисна зона типу 2 — після КОЖНОЇ сформованої повторності
+                # (повторності розкидаються рандомізовано по варіантах пізніше,
+                # тож будь-які дві сусідні повторності потребують захисту між ними)
+                i = self._take_guard(row_plants, i, n, self.rep_guard_size, HP_ROLE_GUARD_REP)
+
+            # Захисна зона типу 1 — кінець ряду
+            i = self._take_guard(row_plants, i, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
         return recorded
 
     def build(self):
@@ -12724,7 +12762,7 @@ class HPPlotBuilder:
 
             if not values:
                 warnings.append(f"Ітерація {it}: жодної ділянки не сформовано — "
-                                 "перевірте поріг CV%, розмір ділянки/захисної зони.")
+                                 "перевірте поріг CV%, розмір ділянки/захисних зон.")
                 break
             if final_cv <= self.cv_threshold_pct:
                 converged = True; break
@@ -12749,23 +12787,72 @@ class HPPlotBuilder:
         }
 
 
-def hp_randomize_variants(result, num_variants, seed=None):
-    """Розподіляє plot_id -> (variant, replication): кожен блок з num_variants
-    послідовно сформованих ділянок = одне повторення; мітки варіантів
-    у ньому перемішуються рандомно. Виконується ПІСЛЯ формування ділянок,
-    незалежно від порядку фізичного відбору."""
+def hp_apply_design(result, design, num_variants, num_reps, seed=None):
+    """Розподіляє plot_id -> (variant, replication) ЗГІДНО ОБРАНОГО ДИЗАЙНУ
+    ЕКСПЕРИМЕНТУ. Виконується ПІСЛЯ формування ділянок за CV%, незалежно
+    від порядку їх фізичного відбору.
+
+      • CRD   — повна рандомізація: варіанти розкидані повністю випадково
+                по всіх сформованих ділянках, без блокової структури.
+      • RCBD  — кожні n_var послідовно сформованих ділянок = одне повне
+                повторення; мітки варіантів перемішуються в межах блоку.
+      • Latin — латинський квадрат порядку n_var (потрібно рівно n_var
+                блоків); якщо блоків не вистачає — програма попереджає
+                і автоматично переходить на RCBD.
+
+    Повертає (реально_застосований_дизайн, чи_був_відкат_на_RCBD)."""
     import random as _random
     rng = _random.Random(seed)
     plot_ids = sorted({p.plot_id for p in result["plants"] if p.role == HP_ROLE_RECORDED})
-    for start in range(0, len(plot_ids) - len(plot_ids) % num_variants, num_variants):
-        block = plot_ids[start:start + num_variants]
-        if len(block) < num_variants: break
-        rep_num = start // num_variants + 1
-        labels = list(range(1, num_variants + 1)); rng.shuffle(labels)
-        for plot_id, variant in zip(block, labels):
-            for p in result["plants"]:
-                if p.plot_id == plot_id:
-                    p.variant = variant; p.replication = rep_num
+    plants_by_plot = {}
+    for p in result["plants"]:
+        if p.plot_id is not None:
+            plants_by_plot.setdefault(p.plot_id, []).append(p)
+
+    k = max(1, int(num_variants))
+    n_blocks = len(plot_ids) // k
+    used_ids = plot_ids[:n_blocks * k]
+    fell_back = False
+
+    if design == "latin" and n_blocks != k:
+        design = "rcbd"; fell_back = True
+
+    if design == "crd":
+        pool = []
+        for v in range(1, k + 1):
+            pool.extend([v] * max(1, int(num_reps)))
+        rng.shuffle(pool)
+        assign_ids = list(plot_ids); rng.shuffle(assign_ids)
+        n_assign = min(len(assign_ids), len(pool))
+        for idx in range(n_assign):
+            plot_id = assign_ids[idx]; variant = pool[idx]
+            rep_num = (idx // k) + 1
+            for p in plants_by_plot[plot_id]:
+                p.variant = variant; p.replication = rep_num
+
+    elif design == "rcbd":
+        for b in range(n_blocks):
+            block = used_ids[b*k:(b+1)*k]
+            labels = list(range(1, k+1)); rng.shuffle(labels)
+            for plot_id, variant in zip(block, labels):
+                for p in plants_by_plot[plot_id]:
+                    p.variant = variant; p.replication = b+1
+
+    elif design == "latin":
+        base = [[(c + r) % k for c in range(k)] for r in range(k)]
+        row_perm = list(range(k)); rng.shuffle(row_perm)
+        col_perm = list(range(k)); rng.shuffle(col_perm)
+        sym_perm = list(range(1, k+1)); rng.shuffle(sym_perm)
+        square = [[sym_perm[base[row_perm[r]][col_perm[c]]] for c in range(k)]
+                  for r in range(k)]
+        for b in range(n_blocks):
+            block = used_ids[b*k:(b+1)*k]
+            for c, plot_id in enumerate(block):
+                variant = square[b][c]
+                for p in plants_by_plot[plot_id]:
+                    p.variant = variant; p.replication = b+1
+
+    return design, fell_back
 
 
 class HomogeneousPlotWindow:
@@ -12775,9 +12862,9 @@ class HomogeneousPlotWindow:
     Користувач завантажує сітку "ряд × позиція" з обраним показником
     (діаметр штамбу, врожайність минулого року тощо), позначаючи випади
     "-" і запилювачів "+". Програма ітеративно відбирає однорідні (за
-    заданим CV%) рослини, формує ділянки з дотриманням захисних зон,
-    рандомізує варіанти й будує кольорову карту саду з експортом
-    у Excel/Word та друком.
+    заданим CV%) рослини, формує ділянки з дотриманням ДВОХ типів
+    захисних зон, застосовує обраний дизайн експерименту (CRD/RCBD/
+    латинський квадрат) і будує кольорову карту саду з друком у PNG.
     """
 
     HELP_TEXT = """
@@ -12798,57 +12885,79 @@ class HomogeneousPlotWindow:
   діаметр штамбу): об'єм крони, урожайність минулого року тощо.
   Вкажіть його назву та одиницю виміру.
 
-КРОК 2. ТАБЛИЦЯ "РЯД × ПОЗИЦІЯ"
+КРОК 2. ТАБЛИЦЯ "РЯД × ПОЗИЦІЯ" (до 100 позицій у ряду)
   Рядки таблиці = ряди саду. Стовпці = позиції рослин уздовж ряду.
   У кожну клітинку введіть:
     • число — значення показника цієї рослини;
     • "-"   — випад / пошкоджена рослина;
     • "+"   — рослина-запилювач за схемою посадки.
 
-КРОК 3. ПАРАМЕТРИ
-  Поріг CV%: бажана однорідність облікової вибірки (напр. 8-10%).
-  Розмір ділянки: кількість облікових рослин в одній ділянці.
-  Розмір захисної зони: кількість рослин-буферів між ділянками.
-  Кількість варіантів і повторень — для перевірки чи вистачає ділянок.
-  Врахування "-"/"+"  як захисних — окремі прапорці.
+КРОК 3. ДВА ТИПИ ЗАХИСНИХ РОСЛИН
+  Повторність = група з "Повторність, рослин" облікових рослин ОДНОГО
+  варіанту. Варіант складається з кількох таких повторностей (задається
+  полем "Повторень"), розкиданих рандомізовано по саду.
+  Тип 1 — «Захисна зона краю ряду»: 1–3 рослини на самому початку і в
+          самому кінці КОЖНОГО ряду (ізолює дослід від сусідніх посадок).
+  Тип 2 — «Захисна зона між повтореннями»: рослини, що вставляються
+          ПІСЛЯ КОЖНОЇ сформованої повторності — тобто між будь-якими
+          двома сусідніми повторностями в ряду. Оскільки повторності
+          розкидаються рандомізовано (сусідами можуть опинитись як дві
+          повторності одного варіанту, так і різних), захист потрібен
+          між кожною парою, без винятку.
+  Кількість рослин для кожного типу задає користувач окремо.
 
-КРОК 4. АЛГОРИТМ (виконується автоматично)
-  1) Уздовж кожного ряду набирається задана кількість ОБЛІКОВИХ
-     рослин (непридатні позиції пропускаються "прозоро" — не
-     впливають на підрахунок);
-  2) одразу після ділянки відраховується ЗАХИСНА ЗОНА;
-  3) цикл повторюється до кінця ряду, потім для наступного ряду;
-  4) CV% рахується лише за обліковими рослинами (захисні виключені);
-  5) якщо CV% більший за поріг — допустимий діапазон значень
+КРОК 4. АЛГОРИТМ ФОРМУВАННЯ ПОВТОРНОСТЕЙ (виконується автоматично)
+  1) Пропускається захисна зона краю ряду (тип 1);
+  2) уздовж ряду набирається задана кількість ОБЛІКОВИХ рослин —
+     одна повторність (непридатні позиції пропускаються "прозоро");
+  3) одразу після неї вставляється захисна зона між повтореннями (тип 2);
+  4) цикл повторюється до кінця ряду, потім захисна зона краю ряду
+     (тип 1) в кінці, далі — наступний ряд;
+  5) CV% рахується лише за обліковими рослинами (захисні виключені);
+  6) якщо CV% більший за поріг — допустимий діапазон значень
      звужується навколо середнього, і схема будується заново;
-  6) зупинка — коли склад облікової вибірки перестає змінюватись,
+  7) зупинка — коли склад облікової вибірки перестає змінюватись,
      CV% досягнуто, або вичерпано ліміт ітерацій (типово 20).
 
-  Мітки варіантів призначаються РАНДОМІЗОВАНО вже сформованим
-  ділянкам — окремим кроком, що не залежить від порядку сканування
-  рядів (це зберігає коректність рандомізації для ANOVA).
+КРОК 5. ДИЗАЙН ЕКСПЕРИМЕНТУ (застосовується ПІСЛЯ формування повторностей)
+  Коли облікові повторності й рослини вже визначені за варіабельністю,
+  програма САМА розкидає мітки варіантів по повторностях згідно обраного
+  дизайну — готова польова карта формується автоматично:
+    • CRD (повна рандомізація) — варіанти розкидані цілком випадково
+      по всіх повторностях, без блокової структури;
+    • RCBD (рандомізовані повні блоки) — кожні n_var послідовно
+      сформованих повторностей групуються в один блок, і в межах
+      кожного блоку варіанти рандомізуються (по одній повторності
+      кожного варіанту в блоці);
+    • Латинський квадрат — потребує РІВНО n_var таких блоків;
+      якщо їх сформовано більше або менше — програма попередить і
+      автоматично використає RCBD замість нього.
+  Seed рандомізації — див. окрему довідку: однакове число = однакова
+  схема (для відтворюваності), зберігайте його в документації.
 
-КРОК 5. РЕЗУЛЬТАТ
-  Кольорова карта саду (зелений — обліково, жовтий — захисна зона,
-  сірий — виключено за CV, темно-сірий — випад, синій — запилювач).
+КРОК 6. РЕЗУЛЬТАТ
+  Натисніть «▶ Згенерувати план» — карта й список відкриються в
+  окремому вікні (як і в усіх інших видах аналізу).
+  Кольорова карта саду (зелений — обліково, жовтий — захисна зона
+  краю ряду, помаранчевий — захисна зона між повтореннями, сірий —
+  виключено за CV, темно-сірий — випад, синій — запилювач).
   Список облікових рослин за варіантами/повтореннями.
-  Попередження, якщо ділянок сформовано менше ніж потрібно
+  Попередження, якщо повторностей сформовано менше ніж потрібно
   (варіантів × повторень) — послабте поріг CV% або розширте вибірку.
 
-ЕКСПОРТ
-  Excel: кольорова сітка + легенда + список облікових рослин.
-  Word: опис методики (для розділу "Матеріали і методи") + таблиця.
-  Друк: збереження карти як зображення (PNG).
+ЗБЕРЕЖЕННЯ
+  Карту можна зберегти як зображення (PNG) — для друку чи вставки в
+  звіт. Список облікових рослин можна скопіювати в буфер обміну.
 """
 
     def __init__(self, parent, gs=None):
         self.win = tk.Toplevel(parent)
         self.win.title("Планування досліду за однорідністю рослин")
-        self.win.geometry("1180x760"); set_icon(self.win)
+        self.win.geometry("1400x820"); set_icon(self.win)
         self.gs = dict(gs) if gs else {}
         self._result = None
-        self._map_fig_frame = None
-        self.rows_n = 10; self.cols_n = 16
+        self._map_fig = None
+        self.rows_n = 10; self.cols_n = 100
         self._build()
 
     # ─────────────────────────────────────────────────────
@@ -12856,7 +12965,7 @@ class HomogeneousPlotWindow:
         rf = ("Times New Roman", 11)
 
         top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="▶ Побудувати схему", bg="#c62828", fg="white",
+        tk.Button(top, text="▶ Згенерувати план", bg="#c62828", fg="white",
                   font=("Times New Roman", 13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
@@ -12884,14 +12993,15 @@ class HomogeneousPlotWindow:
 
         self._v = {}
         row_defs = [
-            ("Показник:",              "trait_name", "діаметр штамбу", 16),
-            ("Одиниця:",               "trait_unit", "см", 6),
-            ("Поріг CV, %:",            "cv_thr",     "10", 6),
-            ("Ділянка, рослин:",       "plot_size",  "5", 6),
-            ("Захисна зона, рослин:",  "guard_size", "1", 6),
-            ("Варіантів:",              "n_var",      "5", 6),
-            ("Повторень:",              "n_rep",      "4", 6),
-            ("Макс. ітерацій:",         "max_it",     "20", 6),
+            ("Показник:",                       "trait_name", "діаметр штамбу", 14),
+            ("Одиниця:",                        "trait_unit", "см", 5),
+            ("Поріг CV, %:",                     "cv_thr",     "10", 5),
+            ("Повторність, рослин:",             "plot_size",  "5", 5),
+            ("Захисна край ряду, рослин (1-3):", "edge_guard", "2", 4),
+            ("Захисна між повтор., рослин:",    "rep_guard",  "1", 4),
+            ("Варіантів:",                       "n_var",      "5", 4),
+            ("Повторень:",                       "n_rep",      "4", 4),
+            ("Макс. ітерацій:",                  "max_it",     "20", 5),
         ]
         for ci, (lbl, key, default, w) in enumerate(row_defs):
             tk.Label(pf, text=lbl, font=rf).grid(row=0, column=ci*2, sticky="w", padx=(8 if ci else 0,2))
@@ -12906,26 +13016,32 @@ class HomogeneousPlotWindow:
         tk.Checkbutton(pf, text='Враховувати "+" (запилювачі) як захисні',
                        variable=self._poll_guard, font=rf
                        ).grid(row=1, column=4, columnspan=4, sticky="w", pady=(4,0))
+
+        tk.Label(pf, text="Дизайн експерименту:", font=rf
+                 ).grid(row=2, column=0, sticky="w", padx=(0,2), pady=(4,0))
+        self._design_v = tk.StringVar(value=HP_DESIGNS[1][0])  # RCBD за замовчуванням
+        ttk.Combobox(pf, textvariable=self._design_v, state="readonly", width=28,
+                     values=[lbl for lbl,_ in HP_DESIGNS]
+                     ).grid(row=2, column=1, columnspan=3, sticky="w", pady=(4,0))
+
         tk.Label(pf, text="Seed рандомізації:", font=rf
-                 ).grid(row=1, column=8, sticky="w", padx=(8,2))
+                 ).grid(row=2, column=4, sticky="w", padx=(8,2), pady=(4,0))
         self._v["seed"] = tk.StringVar(value="1")
         tk.Entry(pf, textvariable=self._v["seed"], width=6, font=rf
-                 ).grid(row=1, column=9, sticky="w")
+                 ).grid(row=2, column=5, sticky="w", pady=(4,0))
 
-        # ── основна область: таблиця зліва, вкладки результатів справа ──
-        main = tk.Frame(self.win); main.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
-
-        left = tk.Frame(main, width=430); left.pack(side=tk.LEFT, fill=tk.Y, padx=(0,8))
-        left.pack_propagate(False)
-        tk.Label(left, text='Таблиця "ряд × позиція"  (число / "-" / "+")',
+        # ── таблиця даних — на всю ширину вікна ────────────
+        tbl_lbl_frm = tk.Frame(self.win); tbl_lbl_frm.pack(fill=tk.X, padx=8)
+        tk.Label(tbl_lbl_frm, text='Таблиця "ряд × позиція"  (число / "-" / "+")',
                  font=("Times New Roman",10,"bold")).pack(anchor="w")
-        tbl_area = tk.Frame(left); tbl_area.pack(fill=tk.BOTH, expand=True)
+
+        tbl_area = tk.Frame(self.win); tbl_area.pack(fill=tk.BOTH, expand=True, padx=8, pady=(2,4))
         self._canvas = tk.Canvas(tbl_area)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb_v = ttk.Scrollbar(tbl_area, orient="vertical", command=self._canvas.yview)
         sb_v.pack(side=tk.RIGHT, fill=tk.Y)
-        sb_h = ttk.Scrollbar(left, orient="horizontal", command=self._canvas.xview)
-        sb_h.pack(fill=tk.X)
+        sb_h = ttk.Scrollbar(self.win, orient="horizontal", command=self._canvas.xview)
+        sb_h.pack(fill=tk.X, padx=8)
         self._canvas.configure(yscrollcommand=sb_v.set, xscrollcommand=sb_h.set)
         self.inner = tk.Frame(self._canvas)
         self._canvas.create_window((0,0), window=self.inner, anchor="nw")
@@ -12939,7 +13055,7 @@ class HomogeneousPlotWindow:
                  ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
         self.pos_labels = []
         for j in range(self.cols_n):
-            lbl = tk.Label(self.inner, text=str(j+1), width=6, relief=tk.RIDGE,
+            lbl = tk.Label(self.inner, text=str(j+1), width=5, relief=tk.RIDGE,
                            bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
             lbl.grid(row=0, column=j+1, padx=1, pady=1, sticky="nsew")
             self.pos_labels.append(lbl)
@@ -12953,35 +13069,14 @@ class HomogeneousPlotWindow:
             self.row_labels.append(rl)
             row_e = []
             for j in range(self.cols_n):
-                e = tk.Entry(self.inner, width=6, font=("Times New Roman",10))
+                e = tk.Entry(self.inner, width=5, font=("Times New Roman",10))
                 e.grid(row=i+1, column=j+1, padx=1, pady=1)
                 row_e.append(e)
             self.entries.append(row_e)
         _bind_nav(self.entries, self.win)
 
-        # ── права частина — вкладки результатів ────────────
-        right = tk.Frame(main); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.nb = ttk.Notebook(right); self.nb.pack(fill=tk.BOTH, expand=True)
-
-        t1 = tk.Frame(self.nb); self.nb.add(t1, text="🗺 Карта саду")
-        tb1 = tk.Frame(t1); tb1.pack(fill=tk.X, padx=4, pady=3)
-        tk.Button(tb1, text="💾 PNG (друк)", font=("Times New Roman",10),
-                  command=self._save_png).pack(side=tk.RIGHT, padx=2)
-        tk.Button(tb1, text="💾 Excel", font=("Times New Roman",10),
-                  command=self._save_excel).pack(side=tk.RIGHT, padx=2)
-        tk.Button(tb1, text="💾 Word", font=("Times New Roman",10),
-                  command=self._save_word).pack(side=tk.RIGHT, padx=2)
-        self._map_outer = tk.Frame(t1); self._map_outer.pack(fill=tk.BOTH, expand=True)
-
-        t2 = tk.Frame(self.nb); self.nb.add(t2, text="📋 Список облікових рослин")
-        r_vsb = ttk.Scrollbar(t2, orient="vertical"); r_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.list_txt = tk.Text(t2, font=("Courier New",10),
-                                yscrollcommand=r_vsb.set, state="disabled", wrap="none")
-        self.list_txt.pack(fill=tk.BOTH, expand=True)
-        r_vsb.config(command=self.list_txt.yview)
-
         self._status_lbl = tk.Label(self.win, text="", fg="#B71C1C",
-                                    font=("Times New Roman",10), wraplength=1140,
+                                    font=("Times New Roman",10), wraplength=1360,
                                     justify="left", anchor="w")
         self._status_lbl.pack(fill=tk.X, padx=8, pady=(0,4))
 
@@ -13009,7 +13104,7 @@ class HomogeneousPlotWindow:
         self.row_labels.append(rl)
         row_e = []
         for j in range(self.cols_n):
-            e = tk.Entry(self.inner, width=6, font=("Times New Roman",10))
+            e = tk.Entry(self.inner, width=5, font=("Times New Roman",10))
             e.grid(row=i+1, column=j+1, padx=1, pady=1)
             row_e.append(e)
         self.entries.append(row_e); self.rows_n += 1
@@ -13023,12 +13118,12 @@ class HomogeneousPlotWindow:
 
     def _add_col(self):
         ci = self.cols_n
-        lbl = tk.Label(self.inner, text=str(ci+1), width=6, relief=tk.RIDGE,
+        lbl = tk.Label(self.inner, text=str(ci+1), width=5, relief=tk.RIDGE,
                        bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
         lbl.grid(row=0, column=ci+1, padx=1, pady=1, sticky="nsew")
         self.pos_labels.append(lbl)
         for i, row_e in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=6, font=("Times New Roman",10))
+            e = tk.Entry(self.inner, width=5, font=("Times New Roman",10))
             e.grid(row=i+1, column=ci+1, padx=1, pady=1)
             row_e.append(e)
         self.cols_n += 1
@@ -13068,17 +13163,20 @@ class HomogeneousPlotWindow:
     # ── побудова схеми ────────────────────────────────────
     def _run(self):
         try:
-            trait_name = self._v["trait_name"].get().strip() or "показник"
-            trait_unit = self._v["trait_unit"].get().strip()
-            cv_thr     = float(self._v["cv_thr"].get())
-            plot_size  = int(self._v["plot_size"].get())
-            guard_size = int(self._v["guard_size"].get())
-            n_var      = int(self._v["n_var"].get())
-            n_rep      = int(self._v["n_rep"].get())
-            max_it     = int(self._v["max_it"].get())
-            seed       = int(self._v["seed"].get())
+            trait_name  = self._v["trait_name"].get().strip() or "показник"
+            trait_unit  = self._v["trait_unit"].get().strip()
+            cv_thr      = float(self._v["cv_thr"].get())
+            plot_size   = int(self._v["plot_size"].get())
+            edge_guard  = int(self._v["edge_guard"].get())
+            rep_guard   = int(self._v["rep_guard"].get())
+            n_var       = int(self._v["n_var"].get())
+            n_rep       = int(self._v["n_rep"].get())
+            max_it      = int(self._v["max_it"].get())
+            seed        = int(self._v["seed"].get())
         except ValueError:
             messagebox.showwarning("", "Перевірте числові параметри."); return
+
+        design_key = HP_DESIGN_LABELS_REV.get(self._design_v.get(), "rcbd")
 
         raw_rows = {}
         for i, row_e in enumerate(self.entries):
@@ -13089,27 +13187,116 @@ class HomogeneousPlotWindow:
             messagebox.showwarning("Немає даних", "Заповніть таблицю значеннями."); return
 
         builder = HPPlotBuilder(
-            plants, plot_size, guard_size, cv_thr, max_it,
+            plants, plot_size, edge_guard, rep_guard, cv_thr, max_it,
             count_dead_as_guard=self._dead_guard.get(),
             count_pollinizer_as_guard=self._poll_guard.get())
         result = builder.build()
-        hp_randomize_variants(result, n_var, seed=seed)
+        design_used, fell_back = hp_apply_design(result, design_key, n_var, n_rep, seed=seed)
         self._result = result
         self._cfg = {"trait_name": trait_name, "trait_unit": trait_unit,
                      "cv_thr": cv_thr, "plot_size": plot_size,
-                     "guard_size": guard_size, "n_var": n_var, "n_rep": n_rep}
+                     "edge_guard": edge_guard, "rep_guard": rep_guard,
+                     "n_var": n_var, "n_rep": n_rep,
+                     "design_requested": design_key, "design_used": design_used,
+                     "design_fell_back": fell_back}
 
         needed = n_var * n_rep
         msgs = list(result["warnings"])
         if result["plots_formed"] < needed:
-            msgs.append(f"Сформовано {result['plots_formed']} ділянок, потрібно {needed} "
+            msgs.append(f"Сформовано {result['plots_formed']} повторностей, потрібно {needed} "
                         f"({n_var} варіантів × {n_rep} повторень). Послабте поріг CV%, "
-                        "зменшіть розмір ділянки/захисної зони, або розширте вибірку рядів.")
+                        "зменшіть розмір повторності/захисних зон, або розширте вибірку рядів.")
+        if fell_back:
+            msgs.append("Латинський квадрат потребує рівно n_var блоків (повторень) — "
+                        "сформована кількість не збігається, застосовано RCBD замість нього.")
         self._status_lbl.configure(text=("⚠ " + " | ".join(msgs)) if msgs else "")
 
+        self._show_results()
+
+    # ── вікно результатів (як і в усіх інших видах аналізу) ─
+    def _show_results(self):
+        win = tk.Toplevel(self.win)
+        win.title("Планування досліду — Результати")
+        win.geometry("1300x860"); set_icon(win)
+        self._res_win = win
+
+        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        sidebar = tk.Frame(main, width=210, bg="#2c3e50")
+        sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+        content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        tk.Label(sidebar, text="ПЛАН ДОСЛІДУ", bg="#2c3e50", fg="#ecf0f1",
+                 font=("Times New Roman",12,"bold"), pady=12).pack(fill=tk.X)
+
+        active = {"panel": None, "btn": None}
+        def _show_panel(frame, btn):
+            if active["panel"] is not None: active["panel"].pack_forget()
+            if active["btn"] is not None: active["btn"].configure(bg="#2c3e50", fg="#bdc3c7")
+            frame.pack(fill=tk.BOTH, expand=True)
+            active["panel"] = frame; active["btn"] = btn
+            btn.configure(bg="#c62828", fg="white")
+
+        def _sidebar_btn(text, tooltip):
+            fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
+            b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+                          font=("Times New Roman",11), relief=tk.FLAT,
+                          anchor="w", padx=12, pady=6,
+                          activebackground="#c62828", activeforeground="white")
+            b.pack(fill=tk.X)
+            tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
+                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+            tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
+            return b
+
+        map_frame  = tk.Frame(content)
+        list_frame = tk.Frame(content)
+
+        b_map  = _sidebar_btn("🗺 Карта саду",              "Кольорова схема ділянок")
+        b_list = _sidebar_btn("📋 Список облікових рослин", "За варіантами й повтореннями")
+
+        b_map.configure( command=lambda: _show_panel(map_frame, b_map))
+        b_list.configure(command=lambda: _show_panel(list_frame, b_list))
+
+        self._build_map_panel(map_frame)
+        self._build_list_panel(list_frame)
+
+        _show_panel(map_frame, b_map)
+
+    # ── панель: карта саду ───────────────────────────────
+    def _build_map_panel(self, frame):
+        for w in frame.winfo_children(): w.destroy()
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="💾 Зберегти PNG (друк)", font=("Times New Roman",11),
+                  command=self._save_png).pack(side=tk.LEFT, padx=4)
+        cfg = self._cfg
+        design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
+        tk.Label(tb, text=f"Дизайн: {design_txt}", font=("Times New Roman",11),
+                 fg="#1a4b8c").pack(side=tk.LEFT, padx=12)
+
+        map_outer = tk.Frame(frame); map_outer.pack(fill=tk.BOTH, expand=True)
+        self._map_outer = map_outer
         self._draw_map()
+
+    # ── панель: список облікових рослин ──────────────────
+    def _build_list_panel(self, frame):
+        for w in frame.winfo_children(): w.destroy()
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати список", font=("Times New Roman",11),
+                  command=self._copy_list).pack(side=tk.LEFT, padx=4)
+
+        r_vsb = ttk.Scrollbar(frame, orient="vertical"); r_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.list_txt = tk.Text(frame, font=("Courier New",10),
+                                yscrollcommand=r_vsb.set, state="disabled", wrap="none")
+        self.list_txt.pack(fill=tk.BOTH, expand=True)
+        r_vsb.config(command=self.list_txt.yview)
         self._fill_list()
-        self.nb.select(0)
+
+    def _copy_list(self):
+        self.list_txt.configure(state="normal")
+        text = self.list_txt.get("1.0", tk.END)
+        self.list_txt.configure(state="disabled")
+        self._res_win.clipboard_clear(); self._res_win.clipboard_append(text)
+        messagebox.showinfo("", "Список скопійовано у буфер обміну.")
 
     # ── карта саду ────────────────────────────────────────
     def _draw_map(self):
@@ -13119,7 +13306,7 @@ class HomogeneousPlotWindow:
         rows = sorted({p.row for p in result["plants"]})
         max_pos = max((p.position for p in result["plants"]), default=1)
 
-        fig = Figure(figsize=(max(8, max_pos*0.5), max(4, len(rows)*0.55)), dpi=100)
+        fig = Figure(figsize=(max(8, max_pos*0.4), max(4, len(rows)*0.55)), dpi=100)
         ax = fig.add_subplot(111)
         by_row = {}
         for p in result["plants"]:
@@ -13138,7 +13325,8 @@ class HomogeneousPlotWindow:
                 ax.add_patch(rect)
                 label = ""
                 if p.role == HP_ROLE_RECORDED: label = f"V{p.variant}"
-                elif p.role == HP_ROLE_GUARD: label = "З"
+                elif p.role == HP_ROLE_GUARD_EDGE: label = "К"
+                elif p.role == HP_ROLE_GUARD_REP: label = "П"
                 elif p.role == HP_ROLE_DEAD: label = "-"
                 elif p.role == HP_ROLE_POLLINIZER: label = "+"
                 if label:
@@ -13146,9 +13334,11 @@ class HomogeneousPlotWindow:
                             fontsize=7, fontfamily="Times New Roman")
         ax.set_xlim(-1.2, max_pos+0.5); ax.set_ylim(-0.5, len(rows)+0.5)
         ax.axis("off")
+        design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
         ax.set_title(
             f"{cfg['trait_name']} ({cfg['trait_unit'] or '—'})  |  "
-            f"CV%={result['final_cv_pct']:.2f}  |  Ділянок: {result['plots_formed']}  |  "
+            f"CV%={result['final_cv_pct']:.2f}  |  Повторностей: {result['plots_formed']}  |  "
+            f"Дизайн: {design_txt}  |  "
             f"Ітерацій: {result['iterations_used']} "
             f"({'збіжність' if result['converged'] else 'без збіжності'})",
             fontsize=9, fontfamily="Times New Roman")
@@ -13168,10 +13358,12 @@ class HomogeneousPlotWindow:
             [p for p in self._result["plants"] if p.role == HP_ROLE_RECORDED],
             key=lambda p: (p.variant or 0, p.replication or 0, p.row, p.position))
         cfg = self._cfg
+        design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
         lines = [
             f"Показник: {cfg['trait_name']} ({cfg['trait_unit'] or '—'})",
+            f"Дизайн експерименту: {design_txt}",
             f"CV% фінальний: {self._result['final_cv_pct']:.2f}   "
-            f"Ділянок: {self._result['plots_formed']}   "
+            f"Повторностей: {self._result['plots_formed']}   "
             f"Ітерацій: {self._result['iterations_used']}",
             "-"*70,
             f"{'Варіант':<8}{'Повт.':<8}{'Ряд':<6}{'Позиція':<9}{cfg['trait_name']}",
@@ -13186,10 +13378,10 @@ class HomogeneousPlotWindow:
         self.list_txt.insert("1.0", "\n".join(lines))
         self.list_txt.configure(state="disabled")
 
-    # ── експорт ───────────────────────────────────────────
+    # ── збереження ────────────────────────────────────────
     def _save_png(self):
-        if self._result is None:
-            messagebox.showwarning("","Спочатку побудуйте схему."); return
+        if self._result is None or self._map_fig is None:
+            messagebox.showwarning("","Спочатку згенеруйте план."); return
         path = filedialog.asksaveasfilename(defaultextension=".png",
                     filetypes=[("PNG зображення","*.png")], title="Зберегти карту")
         if not path: return
@@ -13198,116 +13390,6 @@ class HomogeneousPlotWindow:
             messagebox.showinfo("Збережено", f"Збережено:\n{path}")
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
-
-    def _save_excel(self):
-        if self._result is None:
-            messagebox.showwarning("","Спочатку побудуйте схему."); return
-        if not HAS_OPENPYXL:
-            messagebox.showerror("","Потрібен openpyxl: pip install openpyxl"); return
-        path = filedialog.asksaveasfilename(defaultextension=".xlsx",
-                    filetypes=[("Excel","*.xlsx")], title="Зберегти схему")
-        if not path: return
-        try:
-            import openpyxl
-            from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-            wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Схема"
-            cfg = self._cfg; result = self._result
-            ws.cell(1,1, f"Показник: {cfg['trait_name']} ({cfg['trait_unit'] or '—'})")
-            ws.cell(2,1, f"CV%={result['final_cv_pct']:.2f}  Ділянок={result['plots_formed']}  "
-                        f"Ітерацій={result['iterations_used']}")
-            hr = 4
-            rows = sorted({p.row for p in result["plants"]})
-            max_pos = max((p.position for p in result["plants"]), default=1)
-            ws.cell(hr,1,"Ряд \\ Поз.").font = Font(bold=True)
-            for pos in range(1, max_pos+1):
-                ws.cell(hr, pos+1, pos).font = Font(bold=True)
-            by_row = {}
-            for p in result["plants"]: by_row.setdefault(p.row, {})[p.position] = p
-            thin = Side(style="thin", color="AAAAAA")
-            border = Border(thin,thin,thin,thin)
-            for ri, row_num in enumerate(rows):
-                er = hr+1+ri
-                ws.cell(er,1, f"Ряд {row_num}").font = Font(bold=True)
-                for pos in range(1, max_pos+1):
-                    p = by_row.get(row_num, {}).get(pos)
-                    cell = ws.cell(er, pos+1); cell.border = border
-                    cell.alignment = Alignment(horizontal="center")
-                    if p is None: continue
-                    color = HP_ROLE_COLORS.get(p.role, "#FFFFFF").lstrip("#")
-                    cell.fill = PatternFill(start_color="FF"+color, end_color="FF"+color, fill_type="solid")
-                    if p.role == HP_ROLE_RECORDED: cell.value = f"V{p.variant}/П{p.replication}"
-                    elif p.role == HP_ROLE_GUARD: cell.value = "Захист"
-                    elif p.role == HP_ROLE_DEAD: cell.value = "-"
-                    elif p.role == HP_ROLE_POLLINIZER: cell.value = "+"
-                    elif p.role == HP_ROLE_EXCLUDED_CV: cell.value = "✕"
-            legend_ws = wb.create_sheet("Легенда")
-            for i, (k, c) in enumerate(HP_ROLE_COLORS.items(), start=1):
-                cc = legend_ws.cell(i,1); color = c.lstrip("#")
-                cc.fill = PatternFill(start_color="FF"+color, end_color="FF"+color, fill_type="solid")
-                legend_ws.cell(i,2, HP_ROLE_LABELS[k])
-            list_ws = wb.create_sheet("Список облікових рослин")
-            for j,h in enumerate(["Варіант","Повторення","Ряд","Позиція",cfg["trait_name"]],1):
-                list_ws.cell(1,j,h).font = Font(bold=True)
-            recorded = sorted([p for p in result["plants"] if p.role==HP_ROLE_RECORDED],
-                              key=lambda p:(p.variant or 0, p.replication or 0, p.row, p.position))
-            for i,p in enumerate(recorded, start=2):
-                list_ws.cell(i,1,p.variant); list_ws.cell(i,2,p.replication)
-                list_ws.cell(i,3,p.row); list_ws.cell(i,4,p.position); list_ws.cell(i,5,p.value)
-            wb.save(path)
-            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
-        except Exception as ex:
-            messagebox.showerror("Помилка збереження", str(ex))
-
-    def _save_word(self):
-        if self._result is None:
-            messagebox.showwarning("","Спочатку побудуйте схему."); return
-        try:
-            from docx import Document
-            from docx.shared import Inches
-        except ImportError:
-            messagebox.showerror("", "Встановіть python-docx:\n  pip install python-docx"); return
-        path = filedialog.asksaveasfilename(defaultextension=".docx",
-                    filetypes=[("Word","*.docx")], title="Зберегти опис методики")
-        if not path: return
-        try:
-            cfg = self._cfg; result = self._result
-            doc = Document()
-            doc.add_heading("Схема польового досліду", level=1)
-            doc.add_paragraph(
-                f"Показник відбору однорідності: {cfg['trait_name']} ({cfg['trait_unit'] or '—'}). "
-                f"Заданий поріг варіабельності: {cfg['cv_thr']:.1f}%. "
-                f"Фінальний CV фактично сформованої вибірки: {result['final_cv_pct']:.2f}%. "
-                f"Розмір облікової ділянки: {cfg['plot_size']} рослин. "
-                f"Розмір захисної зони: {cfg['guard_size']} рослин. "
-                f"Схема сформована за {result['iterations_used']} ітерацій "
-                f"({'збіжність досягнута' if result['converged'] else 'без повної збіжності'})."
-            )
-            if result["warnings"]:
-                p = doc.add_paragraph(); p.add_run("Попередження: " + " ".join(result["warnings"])).italic = True
-
-            tmp_png = path + "._map_tmp.png"
-            try:
-                self._map_fig.savefig(tmp_png, dpi=150, bbox_inches="tight")
-                doc.add_picture(tmp_png, width=Inches(6.3))
-            finally:
-                if os.path.exists(tmp_png): os.remove(tmp_png)
-
-            doc.add_heading("Список облікових рослин за варіантами й повтореннями", level=2)
-            recorded = sorted([p for p in result["plants"] if p.role==HP_ROLE_RECORDED],
-                              key=lambda p:(p.variant or 0, p.replication or 0, p.row, p.position))
-            table = doc.add_table(rows=1, cols=5); table.style = "Light Grid Accent 1"
-            hdr = table.rows[0].cells
-            for j,h in enumerate(["Варіант","Повторення","Ряд","Позиція",cfg["trait_name"]]):
-                hdr[j].text = h
-            for p in recorded:
-                cells = table.add_row().cells
-                cells[0].text = str(p.variant); cells[1].text = str(p.replication)
-                cells[2].text = str(p.row); cells[3].text = str(p.position)
-                cells[4].text = f"{p.value:.2f}" if p.value is not None else "—"
-            doc.save(path)
-            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
-        except Exception as ex:
-            messagebox.showerror("Помилка збереження", str(ex))
 _SADTk_orig_init = SADTk.__init__
 
 
