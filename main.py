@@ -12565,6 +12565,7 @@ HP_ROLE_EXCLUDED_CV  = "excluded_cv"
 HP_ROLE_DEAD         = "dead"
 HP_ROLE_POLLINIZER   = "pollinizer"
 HP_ROLE_UNASSIGNED   = "unassigned"
+HP_ROLE_EXTRA        = "extra_unused"   # повторність поза дизайном (залишок блоку)
 
 HP_ROLE_COLORS = {
     HP_ROLE_RECORDED:    "#4CAF50",
@@ -12574,6 +12575,7 @@ HP_ROLE_COLORS = {
     HP_ROLE_DEAD:        "#424242",
     HP_ROLE_POLLINIZER:  "#2196F3",
     HP_ROLE_UNASSIGNED:  "#ECEFF1",
+    HP_ROLE_EXTRA:       "#CFD8DC",
 }
 HP_ROLE_LABELS = {
     HP_ROLE_RECORDED:    "Облікова рослина (варіант)",
@@ -12583,6 +12585,7 @@ HP_ROLE_LABELS = {
     HP_ROLE_DEAD:        "Випад / пошкоджена (-)",
     HP_ROLE_POLLINIZER:  "Запилювач (+)",
     HP_ROLE_UNASSIGNED:  "Поза межами досліду",
+    HP_ROLE_EXTRA:       "Повторність поза дизайном (залишок)",
 }
 
 HP_DESIGNS = [
@@ -12851,6 +12854,21 @@ def hp_apply_design(result, design, num_variants, num_reps, seed=None):
                 variant = square[b][c]
                 for p in plants_by_plot[plot_id]:
                     p.variant = variant; p.replication = b+1
+
+    # Повторності, що НЕ увійшли в жоден повний блок дизайну (залишок,
+    # коли кількість сформованих повторностей не кратна num_variants),
+    # переводимо в окрему роль — інакше вони лишались би RECORDED без
+    # варіанту і показувались би на карті незрозумілою міткою "VNone".
+    if design in ("rcbd", "latin"):
+        leftover_ids = set(plot_ids) - set(used_ids)
+        for plot_id in leftover_ids:
+            for p in plants_by_plot[plot_id]:
+                p.role = HP_ROLE_EXTRA
+    elif design == "crd":
+        unassigned_ids = set(plot_ids) - set(assign_ids[:n_assign])
+        for plot_id in unassigned_ids:
+            for p in plants_by_plot[plot_id]:
+                p.role = HP_ROLE_EXTRA
 
     return design, fell_back
 
@@ -13335,7 +13353,9 @@ class HomogeneousPlotWindow:
         tk.Label(legend_f,
                  text='Позначення на клітинках:  "V1", "V2"…  — номер ВАРІАНТУ (облікова рослина)  •  '
                       '"К" — захисна зона, край ряду  •  "П" — захисна зона між повтореннями  •  '
-                      '"-" — випад/пошкоджена рослина  •  "+" — запилювач',
+                      '"-" — випад/пошкоджена рослина  •  "+" — запилювач  •  '
+                      '"×" — сформована повторність поза дизайном (залишок, не увійшов у жоден '
+                      'повний блок — не бере участі в обліку)',
                  bg="#f7f7f7", fg="#444", font=("Times New Roman",9),
                  anchor="w", justify="left", wraplength=1360
                  ).pack(fill=tk.X, pady=(4,0))
@@ -13396,6 +13416,7 @@ class HomogeneousPlotWindow:
                 elif p.role == HP_ROLE_GUARD_REP: label = "П"
                 elif p.role == HP_ROLE_DEAD: label = "-"
                 elif p.role == HP_ROLE_POLLINIZER: label = "+"
+                elif p.role == HP_ROLE_EXTRA: label = "×"
                 if label:
                     ax.text(pos-0.5, len(rows)-ri-0.5, label, ha="center", va="center",
                             fontsize=7, fontfamily="Times New Roman")
@@ -13441,70 +13462,160 @@ class HomogeneousPlotWindow:
         self.list_txt.configure(state="disabled")
 
     # ── панель: бланк обліку (для друку й заповнення в полі) ──
+    # Скільки позицій ряду і скільки рядів вміщується на одній сторінці,
+    # щоб комірки лишались достатньо великими для запису значень від руки.
+    FORM_POS_PER_PAGE = 14
+    FORM_ROWS_PER_PAGE = 4
+
     def _build_form_panel(self, frame):
         for w in frame.winfo_children(): w.destroy()
         tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="💾 Зберегти PNG (друк)", font=("Times New Roman",11),
-                  command=lambda: self._save_png(self._form_fig, "Зберегти бланк обліку")
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb, text="Роздрукуйте цю форму й носіть із собою в сад — "
+        tk.Button(tb, text="💾 Зберегти сторінку PNG (друк)", font=("Times New Roman",11),
+                  command=self._save_form_page).pack(side=tk.LEFT, padx=4)
+
+        nav = tk.Frame(tb); nav.pack(side=tk.LEFT, padx=16)
+        tk.Button(nav, text="◀ Попередня", font=("Times New Roman",10),
+                  command=lambda: self._form_page_step(-1)).pack(side=tk.LEFT, padx=2)
+        self._form_page_lbl = tk.Label(nav, text="", font=("Times New Roman",11,"bold"))
+        self._form_page_lbl.pack(side=tk.LEFT, padx=8)
+        tk.Button(nav, text="Наступна ▶", font=("Times New Roman",10),
+                  command=lambda: self._form_page_step(1)).pack(side=tk.LEFT, padx=2)
+
+        tk.Label(tb, text="Роздрукуйте потрібні сторінки й носіть із собою в сад — "
                           "впишіть виміряні значення прямо на бланк.",
                  font=("Times New Roman",10), fg="#555").pack(side=tk.LEFT, padx=12)
 
         form_outer = tk.Frame(frame); form_outer.pack(fill=tk.BOTH, expand=True)
         self._form_outer = form_outer
+        self._form_pages = self._build_form_pages()
+        self._form_page_idx = 0
+        self._form_figs_cache = {}
+        self._draw_blank_form()
+
+    def _build_form_pages(self):
+        """Розбиває фізичну карту саду на сторінки: кожен ряд ділиться на
+        сегменти позицій довжиною не більше FORM_POS_PER_PAGE, а сегменти
+        групуються по FORM_ROWS_PER_PAGE на одну сторінку — так комірки
+        завжди лишаються великими й розбірливими для запису вручну."""
+        result = self._result
+        by_row = {}
+        for p in result["plants"]:
+            by_row.setdefault(p.row, {})[p.position] = p
+
+        segments = []  # (row_num, [positions...])
+        for row_num in sorted(by_row.keys()):
+            positions = sorted(by_row[row_num].keys())
+            for i in range(0, len(positions), self.FORM_POS_PER_PAGE):
+                segments.append((row_num, positions[i:i+self.FORM_POS_PER_PAGE]))
+
+        pages = []
+        for i in range(0, len(segments), self.FORM_ROWS_PER_PAGE):
+            pages.append(segments[i:i+self.FORM_ROWS_PER_PAGE])
+        return pages or [[]]
+
+    def _form_page_step(self, delta):
+        n = len(self._form_pages)
+        self._form_page_idx = max(0, min(n-1, self._form_page_idx + delta))
         self._draw_blank_form()
 
     def _draw_blank_form(self):
         for w in self._form_outer.winfo_children(): w.destroy()
         if not HAS_MPL or self._result is None: return
-        result = self._result; cfg = self._cfg
-        rows = sorted({p.row for p in result["plants"]})
-        max_pos = max((p.position for p in result["plants"]), default=1)
+        if self._form_page_idx in self._form_figs_cache:
+            fig = self._form_figs_cache[self._form_page_idx]
+        else:
+            fig = self._render_form_page(self._form_pages[self._form_page_idx])
+            self._form_figs_cache[self._form_page_idx] = fig
+        self._form_fig = fig
+        n = len(self._form_pages)
+        self._form_page_lbl.configure(text=f"Сторінка {self._form_page_idx+1} / {n}")
+        embed_figure(fig, self._form_outer)
 
-        fig = Figure(figsize=(max(10, max_pos*0.45), max(5, len(rows)*0.85)), dpi=100)
-        ax = fig.add_subplot(111)
+    def _render_form_page(self, segments):
+        result = self._result
         by_row = {}
         for p in result["plants"]:
             by_row.setdefault(p.row, {})[p.position] = p
 
-        for ri, row_num in enumerate(rows):
-            ax.text(-0.6, len(rows)-ri-0.5, f"Ряд {row_num}",
+        n_seg = max(1, len(segments))
+        max_len = max((len(pos_list) for _, pos_list in segments), default=1)
+        fig = Figure(figsize=(max(9, max_len*0.85), max(4.5, n_seg*2.3+1.2)), dpi=100)
+        ax = fig.add_subplot(111)
+
+        ROW_H = 2.1  # висота одного сегмента ряду (мітка+значення+відступ)
+        for si, (row_num, pos_list) in enumerate(segments):
+            y_top = n_seg*ROW_H - si*ROW_H
+            first_pos, last_pos = pos_list[0], pos_list[-1]
+            ax.text(-0.7, y_top-1.0,
+                    f"Ряд {row_num}\n(поз. {first_pos}-{last_pos})",
                     ha="right", va="center", fontsize=9, fontfamily="Times New Roman",
                     fontweight="bold")
-            for pos in range(1, max_pos+1):
+            for ci, pos in enumerate(pos_list):
                 p = by_row.get(row_num, {}).get(pos)
                 if p is None: continue
+                x = ci
+                # ── порядкова нумерація позицій (для орієнтації в саду) ──
+                ax.text(x+0.5, y_top+0.15, str(pos), ha="center", va="center",
+                        fontsize=8, fontfamily="Times New Roman", color="#555")
                 if p.role == HP_ROLE_RECORDED:
-                    rect = matplotlib.patches.Rectangle(
-                        (pos-0.95, len(rows)-ri-0.95), 0.9, 0.9,
-                        facecolor="white", edgecolor="#333", linewidth=1.0)
-                    ax.add_patch(rect)
-                    ax.text(pos-0.5, len(rows)-ri-0.22, f"В{p.variant}·П{p.replication}",
-                            ha="center", va="center", fontsize=6.5,
+                    # верхній квадрат — мітка варіанту й повторення
+                    top_r = matplotlib.patches.Rectangle(
+                        (x+0.03, y_top-0.72), 0.94, 0.55,
+                        facecolor="#EAF2FB", edgecolor="#333", linewidth=1.0)
+                    ax.add_patch(top_r)
+                    ax.text(x+0.5, y_top-0.44, f"В{p.variant}-П{p.replication}",
+                            ha="center", va="center", fontsize=8,
                             fontfamily="Times New Roman", color="#1a4b8c", fontweight="bold")
-                    # порожня лінія для запису виміряного значення від руки
-                    ax.plot([pos-0.82, pos-0.08], [len(rows)-ri-0.68]*2,
-                            color="#999", lw=0.6)
-                else:
-                    label = {HP_ROLE_GUARD_EDGE:"К", HP_ROLE_GUARD_REP:"П",
-                             HP_ROLE_DEAD:"–", HP_ROLE_POLLINIZER:"+"}.get(p.role, "")
+                    # нижній квадрат — порожній, для запису значення
+                    bot_r = matplotlib.patches.Rectangle(
+                        (x+0.03, y_top-1.55), 0.94, 0.78,
+                        facecolor="white", edgecolor="#333", linewidth=1.2)
+                    ax.add_patch(bot_r)
+                elif p.role == HP_ROLE_EXTRA:
                     rect = matplotlib.patches.Rectangle(
-                        (pos-0.85, len(rows)-ri-0.85), 0.7, 0.7,
+                        (x+0.12, y_top-1.2), 0.76, 1.0,
+                        facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
+                    ax.add_patch(rect)
+                    ax.text(x+0.5, y_top-0.7, "x", ha="center", va="center",
+                            fontsize=9, color="#999")
+                else:
+                    label = {HP_ROLE_GUARD_EDGE:"K", HP_ROLE_GUARD_REP:"P",
+                             HP_ROLE_DEAD:"-", HP_ROLE_POLLINIZER:"+"}.get(p.role, "")
+                    rect = matplotlib.patches.Rectangle(
+                        (x+0.12, y_top-1.2), 0.76, 1.0,
                         facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
                     ax.add_patch(rect)
                     if label:
-                        ax.text(pos-0.5, len(rows)-ri-0.5, label, ha="center", va="center",
-                                fontsize=6, color="#999", fontfamily="Times New Roman")
-        ax.set_xlim(-1.2, max_pos+0.5); ax.set_ylim(-0.5, len(rows)+0.5)
+                        ax.text(x+0.5, y_top-0.7, label, ha="center", va="center",
+                                fontsize=8, color="#999", fontfamily="Times New Roman")
+
+        ax.set_xlim(-1.6, max_len+0.5); ax.set_ylim(0, n_seg*ROW_H+1.3)
         ax.axis("off")
+        pg_i = self._form_page_idx+1 if hasattr(self, "_form_page_idx") else 1
+        pg_n = len(self._form_pages) if hasattr(self, "_form_pages") else 1
         ax.set_title(
-            f"БЛАНК ОБЛІКУ  —  {cfg['trait_name']} ({cfg['trait_unit'] or '—'})\n"
-            f"Дата: _______________          Виконав: _______________________________",
+            "БЛАНК ОБЛІКУ\n"
+            "Показник: _______________________   Одиниця: _________\n"
+            f"Дата: _______________     Виконав: _______________________     "
+            f"Сторінка {pg_i}/{pg_n}",
             fontsize=10, fontfamily="Times New Roman", loc="left")
-        fig.subplots_adjust(top=0.90, bottom=0.04, left=0.06, right=0.98)
-        self._form_fig = fig
-        embed_figure(fig, self._form_outer)
+        fig.subplots_adjust(top=0.82, bottom=0.03, left=0.1, right=0.98)
+        return fig
+
+    def _save_form_page(self):
+        if getattr(self, "_form_fig", None) is None:
+            messagebox.showwarning("","Спочатку згенеруйте план."); return
+        default_name = f"blank_form_page_{self._form_page_idx+1}.png"
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png", initialfile=default_name,
+            filetypes=[("PNG зображення","*.png")],
+            title=f"Зберегти сторінку {self._form_page_idx+1}")
+        if not path: return
+        try:
+            self._form_fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
 
     # ── збереження ────────────────────────────────────────
     def _save_png(self, fig=None, title="Зберегти зображення"):
