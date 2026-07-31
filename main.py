@@ -4722,6 +4722,7 @@ class SADTk:
         def _settings():
             self._settings_dialog(gw, "hist", _rebuild, extra_params=[
                 ("Колір гістограми:", "hist_color", "#4c72b0", "color", None),
+                ("Колір точок Q-Q:", "qq_point_color", "#1a4b8c", "color", None),
             ])
         self._tab_toolbar(frame, "hist", _rebuild, _settings)
         plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
@@ -4733,9 +4734,19 @@ class SADTk:
         if residuals and len(residuals) > 2:
             res = np.array(residuals)
             ax1 = fig.add_subplot(121)
-            ax1.hist(res, bins="auto",
-                     color=gs.get("hist_color","#4c72b0"),
-                     edgecolor="white", alpha=0.85)
+            counts, bin_edges, _patches = ax1.hist(
+                res, bins="auto",
+                color=gs.get("hist_color","#4c72b0"),
+                edgecolor="white", alpha=0.85)
+            mu_ = float(np.mean(res)); sigma_ = float(np.std(res, ddof=1))
+            if sigma_ > 0:
+                from scipy.stats import norm as _norm
+                xs = np.linspace(res.min(), res.max(), 200)
+                bin_w = bin_edges[1] - bin_edges[0]
+                ax1.plot(xs, _norm.pdf(xs, mu_, sigma_) * len(res) * bin_w,
+                         color=gs.get("median_color","#c62828"), lw=1.8,
+                         label="Теоретична нормальна крива")
+                ax1.legend(fontsize=max(7, gs["font_size"]-2), frameon=False)
             ax1.set_title("Гістограма залишків", **fp)
             ax1.set_xlabel("Залишок", **fp); ax1.set_ylabel("Частота", **fp)
             ax1.yaxis.grid(True, linestyle="--", alpha=0.3)
@@ -4744,11 +4755,11 @@ class SADTk:
             ax2 = fig.add_subplot(122)
             (osm,osr),(slope,intercept,r)=probplot(res, plot=None)
             ax2.plot(osm, osr, "o",
-                     color=gs.get("box_color","#aed6f1"),
-                     markersize=5, alpha=0.8)
+                     color=gs.get("qq_point_color","#1a4b8c"),
+                     markersize=5, alpha=0.85, zorder=3)
             ax2.plot([min(osm),max(osm)],
                      [slope*min(osm)+intercept, slope*max(osm)+intercept],
-                     color=gs.get("median_color","#c62828"), lw=1.5)
+                     color=gs.get("median_color","#c62828"), lw=1.5, zorder=2)
             ax2.set_title(f"Q-Q графік (R²={r**2:.3f})", **fp)
             ax2.set_xlabel("Теоретичні квантилі", **fp)
             ax2.set_ylabel("Вибіркові квантилі", **fp)
@@ -6110,9 +6121,12 @@ class RegressionWindow:
         ttk.Combobox(top, textvariable=self.alpha_var,
                      values=["0.01","0.05","0.10"],
                      state="readonly", width=7).pack(side=tk.LEFT)
+        tk.Button(top, text="📊 Попередній аналіз", bg="#1a6b1a", fg="white",
+                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                  command=self._recommend_model).pack(side=tk.LEFT, padx=(10,4))
         tk.Button(top, text="▶ Виконати", bg="#c62828", fg="white",
                   font=("Times New Roman",13), relief=tk.FLAT, padx=14, pady=3,
-                  cursor="hand2", command=self._run).pack(side=tk.LEFT, padx=(10,4))
+                  cursor="hand2", command=self._run).pack(side=tk.LEFT, padx=(4,4))
         tk.Button(top, text="📋 Вставити",
                   font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                   command=self._paste).pack(side=tk.LEFT, padx=2)
@@ -6314,6 +6328,94 @@ class RegressionWindow:
         tk.Button(win, text="Закрити", command=win.destroy,
                   font=("Times New Roman",11)).pack(pady=6)
 
+    # ── Попередній аналіз: діаграма розсіювання + рекомендація ──
+    def _recommend_model(self):
+        x = self._parse_col(self.tx); y = self._parse_col(self.ty)
+        n = min(len(x), len(y)); x = x[:n]; y = y[:n]
+        if n < 4:
+            messagebox.showwarning("Замало даних",
+                "Потрібно ≥ 4 пари значень (x, y) для попереднього аналізу."); return
+
+        candidates = []
+        for model_full in self.MODELS:
+            name = model_full.split(":")[0].strip()
+            r = self._fit_model(name, x, y, alpha=0.05, silent=True)
+            if r is not None:
+                candidates.append((name, model_full, r))
+
+        if not candidates:
+            messagebox.showwarning("", "Жодну з моделей не вдалося підібрати до цих даних."); return
+
+        def sort_key(item):
+            _, _, r = item
+            r2a = r["R2_adj"]
+            r2a = r2a if not math.isnan(r2a) else r["R2"]
+            r2a = r2a if not math.isnan(r2a) else -1.0
+            rmse = r["RMSE"] if not math.isnan(r["RMSE"]) else float("inf")
+            return (-r2a, rmse)
+        candidates.sort(key=sort_key)
+        best_name = candidates[0][0]
+
+        self._show_recommendation(x, y, candidates, best_name)
+
+    def _show_recommendation(self, x, y, candidates, best_name):
+        win = tk.Toplevel(self.win)
+        win.title("Попередній аналіз — рекомендація моделі")
+        win.geometry("1100x760"); set_icon(win)
+        rf = ("Times New Roman", 11)
+
+        tk.Label(win, text="Діаграма розсіювання (без підгонки) — оцініть форму залежності "
+                          "на око, перш ніж обирати модель:",
+                 font=("Times New Roman",11,"bold"), anchor="w"
+                 ).pack(fill=tk.X, padx=10, pady=(10,2))
+
+        plot_f = tk.Frame(win); plot_f.pack(fill=tk.BOTH, expand=False)
+        fig = Figure(figsize=(9, 3.6), dpi=100)
+        ax = fig.add_subplot(111)
+        ax.scatter(x, y, s=28, color="#4c72b0", edgecolors="white", linewidths=0.5, zorder=3)
+        ax.set_xlabel("x"); ax.set_ylabel("y")
+        ax.yaxis.grid(True, alpha=0.3)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig.tight_layout()
+        embed_figure(fig, plot_f)
+
+        tk.Label(win, text="Порівняння моделей (відсортовано за R²adj — враховує кількість "
+                          "параметрів; проста R² завжди зростає з ускладненням моделі):",
+                 font=("Times New Roman",11,"bold"), anchor="w"
+                 ).pack(fill=tk.X, padx=10, pady=(10,2))
+
+        rows = []
+        for name, model_full, r in candidates:
+            mark = "★ " if name == best_name else "  "
+            r2a_txt = fmt(r["R2_adj"],4) if not math.isnan(r["R2_adj"]) else "—"
+            rows.append([mark+name, fmt(r["R2"],4), r2a_txt,
+                        fmt(r["RMSE"],4) if not math.isnan(r["RMSE"]) else "—",
+                        fmt(r["sw_p"],4) if not math.isnan(r["sw_p"]) else "—"])
+        tbl_frm, _ = make_tv(win, ["Модель","R²","R²adj","RMSE","Shapiro-Wilk p (залишків)"], rows)
+        tbl_frm.pack(fill=tk.X, padx=10, pady=(0,8))
+
+        tk.Label(win,
+                 text="⚠ Це орієнтир, а не остаточне рішення. Рекомендація ґрунтується лише на "
+                      "статистичній підгонці (R²adj/RMSE) — обов'язково враховуйте форму точок "
+                      "на діаграмі вище та практичний сенс моделі для вашого явища (наприклад, "
+                      "чи логічно очікувати оптимум/насичення/S-подібність саме тут). "
+                      "Shapiro-Wilk p ≤ 0.05 у залишків — сигнал, що модель, ймовірно, не підходить, "
+                      "навіть якщо R² високий.",
+                 font=("Times New Roman",10), fg="#555", justify="left", wraplength=1060, anchor="w"
+                 ).pack(fill=tk.X, padx=10, pady=(0,8))
+
+        bf = tk.Frame(win); bf.pack(pady=(0,10))
+        def _apply():
+            for model_full in self.MODELS:
+                if model_full.split(":")[0].strip() == best_name:
+                    self.model_var.set(model_full); break
+            win.destroy()
+        tk.Button(bf, text=f"Обрати «{best_name}» і закрити", bg="#1a6b1a", fg="white",
+                  font=rf, command=_apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Закрити (оберу модель сам)", font=rf,
+                  command=win.destroy).pack(side=tk.LEFT, padx=4)
+        center_win(win)
+
     # ── Виконання аналізу ─────────────────────────────────────
     def _run(self):
         alpha = float(self.alpha_var.get())
@@ -6328,7 +6430,7 @@ class RegressionWindow:
         if result is None: return
         self._show_result(result, x, y, model_name, alpha)
 
-    def _fit_model(self, name, x, y, alpha):
+    def _fit_model(self, name, x, y, alpha, silent=False):
         from scipy.optimize import curve_fit
         n_ = name.strip().lower()
         try:
@@ -6363,8 +6465,10 @@ class RegressionWindow:
             elif "степенева" in n_ or n_ == "power":
                 # ── Степенева ────────────────────────────────
                 if np.any(x <= 0):
-                    messagebox.showwarning("Обмеження моделі",
-                        "Степенева модель вимагає x > 0 для всіх спостережень."); return None
+                    if not silent:
+                        messagebox.showwarning("Обмеження моделі",
+                            "Степенева модель вимагає x > 0 для всіх спостережень.")
+                    return None
                 lx = np.log(x); ly = np.log(np.abs(y) + 1e-12)
                 X = np.column_stack([np.ones(len(lx)), lx])
                 beta = np.linalg.lstsq(X, ly, rcond=None)[0]
@@ -6388,8 +6492,10 @@ class RegressionWindow:
             elif "логарифмічна" in n_ or n_ == "logarithmic":
                 # ── Логарифмічна ──────────────────────────────
                 if np.any(x <= 0):
-                    messagebox.showwarning("Обмеження моделі",
-                        "Логарифмічна модель вимагає x > 0 для всіх спостережень."); return None
+                    if not silent:
+                        messagebox.showwarning("Обмеження моделі",
+                            "Логарифмічна модель вимагає x > 0 для всіх спостережень.")
+                    return None
                 X = np.column_stack([np.ones(len(x)), np.log(x)])
                 beta = np.linalg.lstsq(X, y, rcond=None)[0]
                 yhat = X @ beta
@@ -6410,8 +6516,10 @@ class RegressionWindow:
                 k = 4
 
             else:
-                messagebox.showerror("Невідома модель",
-                    f"Модель '{name}' не розпізнана.\nОберіть модель зі списку."); return None
+                if not silent:
+                    messagebox.showerror("Невідома модель",
+                        f"Модель '{name}' не розпізнана.\nОберіть модель зі списку.")
+                return None
 
             # ── Загальна статистика ───────────────────────────
             residuals = y - yhat
@@ -6440,7 +6548,9 @@ class RegressionWindow:
                     "sse": sse, "sst": sst, "n": n_obs, "k": k}
 
         except Exception as ex:
-            messagebox.showerror("Помилка підгонки", str(ex)); return None
+            if not silent:
+                messagebox.showerror("Помилка підгонки", str(ex))
+            return None
 
     # ── Відображення результатів ──────────────────────────────
     def _show_result(self, r, x, y, model_name, alpha):
