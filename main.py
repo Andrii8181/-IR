@@ -189,6 +189,44 @@ def embed_figure(fig, master, dpi=96):
     return cv
 
 
+def embed_figure_scrollable(fig, master, dpi=96):
+    """Вставляє matplotlib Figure у tkinter frame ЗІ СКРОЛОМ, зберігаючи її
+    природний (фіксований) розмір у пікселях — на відміну від embed_figure,
+    яка стискає фігуру під розмір вікна. Використовується для великих
+    матриць/сіток, де кожна клітинка має лишатись читабельного розміру
+    незалежно від загальної кількості клітинок."""
+    outer = tk.Frame(master)
+    outer.pack(fill=tk.BOTH, expand=True)
+    vsb = ttk.Scrollbar(outer, orient="vertical")
+    vsb.pack(side=tk.RIGHT, fill=tk.Y)
+    hsb = ttk.Scrollbar(outer, orient="horizontal")
+    hsb.pack(side=tk.BOTTOM, fill=tk.X)
+    cv_container = tk.Canvas(outer, yscrollcommand=vsb.set, xscrollcommand=hsb.set,
+                              highlightthickness=0, bg="white")
+    cv_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    vsb.config(command=cv_container.yview)
+    hsb.config(command=cv_container.xview)
+
+    cv = FigureCanvasTkAgg(fig, master=cv_container)
+    widget = cv.get_tk_widget()
+    cv.draw()
+
+    w_px = int(fig.get_size_inches()[0] * dpi)
+    h_px = int(fig.get_size_inches()[1] * dpi)
+    cv_container.create_window((0, 0), window=widget, anchor="nw")
+    cv_container.configure(scrollregion=(0, 0, w_px, h_px))
+
+    def _on_mw(e):
+        cv_container.yview_scroll(int(-1*(e.delta/120)), "units")
+    def _on_shift_mw(e):
+        cv_container.xview_scroll(int(-1*(e.delta/120)), "units")
+    widget.bind("<MouseWheel>", _on_mw)
+    widget.bind("<Shift-MouseWheel>", _on_shift_mw)
+    cv_container.bind("<MouseWheel>", _on_mw)
+    cv_container.bind("<Shift-MouseWheel>", _on_shift_mw)
+    return cv
+
+
 def _copy_fig_to_clipboard(fig):
     if not (HAS_MPL and HAS_PIL): return False, "Потрібні matplotlib і Pillow"
     try:
@@ -2102,7 +2140,7 @@ class CorrelationWindow:
             _active_tab[0] = 0
             _btn_hm.configure(bg="white", fg="#1a4b8c", relief=tk.FLAT,
                                font=("Times New Roman",11,"bold"))
-            _btn_sc.configure(bg="#1a4b8c", fg="#d0d8e8", relief=tk.FLAT,
+            _btn_sc.configure(bg="#3d72b4", fg="white", relief=tk.FLAT,
                                font=("Times New Roman",11))
         def _show_sc():
             _hm_outer.pack_forget()
@@ -2110,7 +2148,7 @@ class CorrelationWindow:
             _active_tab[0] = 1
             _btn_sc.configure(bg="white", fg="#1a4b8c", relief=tk.FLAT,
                                font=("Times New Roman",11,"bold"))
-            _btn_hm.configure(bg="#1a4b8c", fg="#d0d8e8", relief=tk.FLAT,
+            _btn_hm.configure(bg="#3d72b4", fg="white", relief=tk.FLAT,
                                font=("Times New Roman",11))
 
         _btn_hm = tk.Button(switch_f, text="  🌡  Теплова карта  ",
@@ -2120,7 +2158,7 @@ class CorrelationWindow:
                             cursor="hand2", command=_show_hm)
         _btn_hm.pack(side=tk.LEFT)
         _btn_sc = tk.Button(switch_f, text="  ⬡  Матриця розсіювання  ",
-                            bg="#1a4b8c", fg="#d0d8e8",
+                            bg="#3d72b4", fg="white",
                             font=("Times New Roman",11),
                             relief=tk.FLAT, padx=16, pady=8,
                             cursor="hand2", command=_show_sc)
@@ -2292,7 +2330,8 @@ class CorrelationWindow:
         custom_title = getattr(self, '_hm_title', "")
         ax.set_title(
             custom_title if custom_title else
-            f"Кореляційна матриця ({meth_full}, {corr_label}, α={alpha})\nКлітинки: r / p-скор / n",
+            f"Кореляційна матриця ({meth_full}, {corr_label}, α={alpha})\n"
+            f"Клітинки: r / p-скор / n   |   * p<α   ** p<α/5",
             fontsize=fsize+1, fontfamily=ff)
         ax.set_xticks(range(n))
         ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=fsize, fontfamily=ff)
@@ -2307,7 +2346,17 @@ class CorrelationWindow:
                             fontsize=fsize,color=acol,fontfamily=ff)
                     continue
                 if math.isnan(r_): continue
-                mark   = sig_mark(p_) if not math.isnan(p_) else ""
+                # Позначка значущості рахується саме від ОБРАНОГО користувачем
+                # α (не від фіксованих 0.01/0.05) — інакше зміна α у випадаючому
+                # списку ніяк не впливала б на те, що видно на карті.
+                if math.isnan(p_):
+                    mark = ""
+                elif p_ < alpha/5:
+                    mark = "**"
+                elif p_ < alpha:
+                    mark = "*"
+                else:
+                    mark = ""
                 p_str  = fmt(p_,3) if not math.isnan(p_) else "н/д"
                 n_ij   = int(n_mat[i,j]) if n_mat is not None else 0
                 txt_   = f"{r_:.2f}{mark}\np={p_str}\nn={n_ij}"
@@ -2325,7 +2374,6 @@ class CorrelationWindow:
     def _draw_scatter(self, frame, labels, arrays, method):
         if not HAS_MPL: return
         n = len(labels)
-        if n > 8: labels = labels[:6]; arrays = arrays[:6]; n = 6
         if n < 2: return
         self._sc_gs = getattr(self, "_sc_gs", {
             "sc_point_color":  "#4c72b0",
@@ -2336,7 +2384,7 @@ class CorrelationWindow:
             "sc_show_trend":   True,
             "sc_trend_width":  0.9,
             "font_family":     "Times New Roman",
-            "sc_font_size":    6,
+            "sc_font_size":    8,
         })
         self._sc_labels = labels; self._sc_arrays = arrays; self._sc_method = method
         # Малюємо безпосередньо в переданий frame
@@ -2350,10 +2398,24 @@ class CorrelationWindow:
         show_tr  = sc.get("sc_show_trend",   True)
         tr_width = sc.get("sc_trend_width",  0.9)
         ff       = sc.get("font_family",     "Times New Roman")
-        fz       = sc.get("sc_font_size",    6)
+        fz       = sc.get("sc_font_size",    8)
 
+        # Статус-рядок над матрицею: скільки показників, підказка про скрол
+        status = tk.Frame(frame, bg="#eef3f8"); status.pack(fill=tk.X)
+        tk.Label(status,
+                 text=f"Матриця {n}×{n} — усі надані показники. "
+                      f"Прокручуйте по вертикалі/горизонталі (Shift+колесо — по горизонталі), "
+                      f"щоб знайти потрібну пару.",
+                 bg="#eef3f8", fg="#1a4b8c", font=(ff, 9), anchor="w"
+                 ).pack(fill=tk.X, padx=8, pady=4)
+        matrix_area = tk.Frame(frame); matrix_area.pack(fill=tk.BOTH, expand=True)
+
+        # Фіксований розмір клітинки (у дюймах) — читабельний незалежно від n;
+        # загальний розмір фігури росте разом з кількістю показників,
+        # а прокрутка дозволяє знайти потрібну клітинку.
+        CELL_IN = 2.1
         dpi = 96
-        fig = Figure(dpi=dpi)
+        fig = Figure(figsize=(n*CELL_IN, n*CELL_IN), dpi=dpi)
 
         for i in range(n):
             for j in range(n):
@@ -2389,12 +2451,12 @@ class CorrelationWindow:
         custom_sc = getattr(self, '_sc_title', '')
         fig.suptitle(
             custom_sc if custom_sc else f"Матриця діаграм розсіювання ({meth_full})",
-            fontsize=9, fontfamily=ff, y=1.0)
-        try: fig.tight_layout()
+            fontsize=11, fontfamily=ff, y=0.995)
+        try: fig.tight_layout(rect=[0, 0, 1, 0.98])
         except Exception: pass
         self._sc_fig = fig
 
-        embed_figure(fig, frame, dpi=dpi)
+        embed_figure_scrollable(fig, matrix_area, dpi=dpi)
 
     def _copy_scatter(self, win=None):
         if self._sc_fig is None:
