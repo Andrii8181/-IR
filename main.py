@@ -2450,8 +2450,6 @@ class CorrelationWindow:
                                     color=tr_col, lw=tr_width, alpha=0.9)
                         except Exception: pass
                 ax.tick_params(labelsize=fz)
-                if j == 0: ax.set_ylabel(labels[i], fontsize=fz, fontfamily=ff)
-                if i == n-1: ax.set_xlabel(labels[j], fontsize=fz, fontfamily=ff)
                 ax.spines["top"].set_visible(False)
                 ax.spines["right"].set_visible(False)
 
@@ -2464,7 +2462,100 @@ class CorrelationWindow:
         except Exception: pass
         self._sc_fig = fig
 
-        embed_figure_scrollable(fig, matrix_area, dpi=dpi)
+        self._embed_scatter_matrix_frozen(fig, matrix_area, labels, ff)
+
+    def _embed_scatter_matrix_frozen(self, fig, matrix_area, labels, ff):
+        """Вбудовує матрицю розсіювання із ЗАКРІПЛЕНИМИ верхнім рядком і лівим
+        стовпцем назв показників (аналог 'закріпити області' в Excel) — вони
+        лишаються видимими під час прокрутки, тож завжди зрозуміло, якій парі
+        показників відповідає клітинка, що зараз на екрані.
+        Позиції заголовків беруться з РЕАЛЬНИХ координат підграфіків matplotlib
+        (після tight_layout), а не з наближеного розрахунку — це гарантує
+        точне вирівнювання навіть коли tight_layout нерівномірно стискає краї."""
+        n = len(labels)
+        HEADER_H = 40
+        HEADER_W = 130
+
+        grid = tk.Frame(matrix_area)
+        grid.pack(fill=tk.BOTH, expand=True)
+        grid.grid_rowconfigure(1, weight=1)
+        grid.grid_columnconfigure(1, weight=1)
+
+        corner = tk.Frame(grid, width=HEADER_W, height=HEADER_H, bg="#dfe7f2")
+        corner.grid(row=0, column=0, sticky="nsew")
+
+        top_cv  = tk.Canvas(grid, height=HEADER_H, bg="#dfe7f2", highlightthickness=0)
+        top_cv.grid(row=0, column=1, sticky="ew")
+        left_cv = tk.Canvas(grid, width=HEADER_W, bg="#dfe7f2", highlightthickness=0)
+        left_cv.grid(row=1, column=0, sticky="ns")
+
+        main_outer = tk.Frame(grid)
+        main_outer.grid(row=1, column=1, sticky="nsew")
+        vsb = ttk.Scrollbar(grid, orient="vertical")
+        vsb.grid(row=1, column=2, sticky="ns")
+        hsb = ttk.Scrollbar(grid, orient="horizontal")
+        hsb.grid(row=2, column=1, sticky="ew")
+
+        main_cv = tk.Canvas(main_outer, yscrollcommand=vsb.set, xscrollcommand=hsb.set,
+                            highlightthickness=0, bg="white")
+        main_cv.pack(fill=tk.BOTH, expand=True)
+
+        # Віджет фігури створюємо одразу з master=main_cv, щоб коректно
+        # вбудувати його через create_window нижче.
+        cv = FigureCanvasTkAgg(fig, master=main_cv)
+        cv.draw()
+        widget = cv.get_tk_widget()
+        renderer = fig.canvas.get_renderer()
+        fig_w_px, fig_h_px = fig.canvas.get_width_height()
+
+        main_cv.create_window((0, 0), window=widget, anchor="nw")
+        main_cv.configure(scrollregion=(0, 0, fig_w_px, fig_h_px))
+
+        # X-межі кожного стовпця — з підграфіків першого ряду (i=0)
+        col_bounds = []
+        for j in range(n):
+            ax = fig.axes[j]
+            bb = ax.get_window_extent(renderer=renderer)
+            col_bounds.append((bb.x0, bb.x1))
+        # Y-межі кожного ряду — з підграфіків першого стовпця (j=0),
+        # переведено в координати Tkinter (відлік згори)
+        row_bounds = []
+        for i in range(n):
+            ax = fig.axes[i*n]
+            bb = ax.get_window_extent(renderer=renderer)
+            row_bounds.append((fig_h_px - bb.y1, fig_h_px - bb.y0))
+
+        for j, lbl in enumerate(labels):
+            x0, x1 = col_bounds[j]
+            top_cv.create_window((x0+x1)/2, HEADER_H/2, anchor="center",
+                window=tk.Label(top_cv, text=lbl, bg="#dfe7f2", fg="#1a4b8c",
+                                font=(ff, 9, "bold"), wraplength=max(20, int(x1-x0))))
+        top_cv.configure(scrollregion=(0, 0, fig_w_px, HEADER_H))
+
+        for i, lbl in enumerate(labels):
+            y0, y1 = row_bounds[i]
+            left_cv.create_window(HEADER_W/2, (y0+y1)/2, anchor="center",
+                window=tk.Label(left_cv, text=lbl, bg="#dfe7f2", fg="#1a4b8c",
+                                font=(ff, 9, "bold"), wraplength=HEADER_W-14,
+                                justify="center"))
+        left_cv.configure(scrollregion=(0, 0, HEADER_W, fig_h_px))
+
+        def _sync_xview(*args):
+            main_cv.xview(*args); top_cv.xview(*args)
+        def _sync_yview(*args):
+            main_cv.yview(*args); left_cv.yview(*args)
+        hsb.config(command=_sync_xview)
+        vsb.config(command=_sync_yview)
+
+        def _on_mw(e):
+            main_cv.yview_scroll(int(-1*(e.delta/120)), "units")
+            left_cv.yview_scroll(int(-1*(e.delta/120)), "units")
+        def _on_shift_mw(e):
+            main_cv.xview_scroll(int(-1*(e.delta/120)), "units")
+            top_cv.xview_scroll(int(-1*(e.delta/120)), "units")
+        for w_ in (main_cv, widget):
+            w_.bind("<MouseWheel>", _on_mw)
+            w_.bind("<Shift-MouseWheel>", _on_shift_mw)
 
     def _copy_scatter(self, win=None):
         if self._sc_fig is None:
@@ -10308,7 +10399,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
     p < 0.05 → пара груп значуще відрізняється за скоригованим середнім
 
 КРОК 6. ГРАФІКИ ЗАЛИШКІВ
-  Residuals vs Fitted: точки мають бути хаотично навколо нуля
+  Залишки vs Підігнані: точки мають бути хаотично навколо нуля
   QQ-графік залишків: точки мають лежати на прямій
   ⚠ Патерн або вигин → модель порушена
 """
@@ -10334,6 +10425,9 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         sm = tk.Menu(mb2, tearoff=0)
         sm.add_command(label="Додати рядок",      command=self._add_row)
         sm.add_command(label="Видалити рядок",    command=self._del_row)
+        sm.add_separator()
+        sm.add_command(label="➕ Додати коваріату",   command=self._add_covariate)
+        sm.add_command(label="➖ Видалити коваріату", command=self._del_covariate)
         sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
         mb2["menu"] = sm
@@ -10438,6 +10532,41 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         if not self.entries: return
         for e in self.entries.pop(): e.destroy()
         self.n_rows -= 1
+
+    def _regrid_columns(self):
+        for j, e in enumerate(self.header_entries):
+            e.grid(row=0, column=j, padx=1, pady=1)
+        for i, row_ in enumerate(self.entries):
+            for j, e in enumerate(row_):
+                e.grid(row=i+1, column=j, padx=1, pady=1)
+
+    def _add_covariate(self):
+        # Нова коваріата вставляється ПЕРЕД останнім стовпцем (Залежна Y)
+        j_new = self.n_cols - 1
+        cov_num = self.n_cols - 1  # Група + (n_cols-2) наявних коваріат → номер нової
+        e = tk.Entry(self.inner, width=14, bg="#1a4b8c", fg="white",
+                     font=("Times New Roman", 11, "bold"), insertbackground="white")
+        e.insert(0, f"Коваріата {cov_num}")
+        self.header_entries.insert(j_new, e)
+        for row_ in self.entries:
+            ne = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
+                          highlightthickness=1, highlightbackground="#c0c0c0")
+            row_.insert(j_new, ne)
+        self.n_cols += 1
+        self._regrid_columns()
+        _bind_nav(self.entries, self.win)
+
+    def _del_covariate(self):
+        n_covariates = self.n_cols - 2  # без стовпця "Група" і стовпця "Залежна Y"
+        if n_covariates <= 1:
+            messagebox.showwarning("Неможливо видалити",
+                "ANCOVA потребує щонайменше одну коваріату."); return
+        j_del = self.n_cols - 2  # остання коваріата (одразу перед Y)
+        self.header_entries[j_del].destroy(); del self.header_entries[j_del]
+        for row_ in self.entries:
+            row_[j_del].destroy(); del row_[j_del]
+        self.n_cols -= 1
+        self._regrid_columns()
 
     def _clear_table(self):
         if not messagebox.askyesno("Очистити таблицю",
@@ -10556,11 +10685,11 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         min_grp = min(grp_counts.values())
         if min_grp < 2:
             messagebox.showwarning("Занадто мала група",
-                f"Each group needs ≥ 2 observations.\n"
-                f"Smallest group has {min_grp} observation(s)."); return
+                f"У кожній групі потрібно щонайменше 2 спостереження.\n"
+                f"Найменша група має лише {min_grp} спостереження(нь)."); return
 
         # ── Guard 4: check covariates are numeric (already done in parsing) ──
-        # ── Guard 5: check for perfect multicollinearity among covariates ──
+        # ── Guard 5: перевірка на повну мультиколінеарність коваріат ──
         if len(cov_cols) > 1:
             cov_matrix = np.column_stack([np.array(cd) for cd in cov_data])
             corr_matrix = np.corrcoef(cov_matrix.T)
@@ -10568,11 +10697,11 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                 for j in range(i+1, len(cov_cols)):
                     if abs(corr_matrix[i,j]) > 0.95:
                         ans = messagebox.askyesno("Висока мультиколінеарність",
-                            f"Covariates '{cov_cols[i]}' and '{cov_cols[j]}' are highly correlated\n"
+                            f"Коваріати '{cov_cols[i]}' і '{cov_cols[j]}' сильно корелюють\n"
                             f"(r = {corr_matrix[i,j]:.3f}).\n\n"
-                            "This may cause unstable estimates (multicollinearity problem).\n"
-                            "Consider removing one of the covariates.\n\n"
-                            "Continue anyway?")
+                            "Це може спричинити нестійкі оцінки (проблема мультиколінеарності).\n"
+                            "Розгляньте можливість виключити одну з коваріат.\n\n"
+                            "Продовжити попри це?")
                         if not ans: return
 
         y = np.array(y_data, dtype=float)
@@ -10669,12 +10798,12 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         try: W_res, p_res = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
         except Exception: W_res, p_res = np.nan, np.nan
         if not math.isnan(p_res) and p_res <= alpha:
-            ans = messagebox.askyesno("Non-normal residuals",
-                f"Residuals do not follow a normal distribution\n"
-                f"(Shapiro–Wilk: W={fmt(W_res,4)}, p={fmt(p_res,4)}).\n\n"
-                "ANCOVA assumes normally distributed residuals.\n"
-                "Consider: data transformation (log/√) before running ANCOVA.\n\n"
-                "Continue anyway?")
+            ans = messagebox.askyesno("Ненормальні залишки",
+                f"Залишки не відповідають нормальному розподілу\n"
+                f"(Шапіро–Вілк: W={fmt(W_res,4)}, p={fmt(p_res,4)}).\n\n"
+                "ANCOVA передбачає нормальний розподіл залишків.\n"
+                "Варто розглянути: трансформацію даних (log/√) перед виконанням ANCOVA.\n\n"
+                "Продовжити попри це?")
             if not ans: return
 
         # ── Guard 8: Homogeneity of variances (Levene) ──
@@ -10682,12 +10811,12 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         for g, r in zip(groups, residuals): grp_residuals[g].append(r)
         lev_F, lev_p = levene_test(dict(grp_residuals))
         if not math.isnan(lev_p) and lev_p < alpha:
-            ans = messagebox.askyesno("Heterogeneous variances (Levene test)",
-                f"Levene test: F={fmt(lev_F,4)}, p={fmt(lev_p,4)}\n\n"
-                "Variances differ significantly across groups.\n"
-                "ANCOVA is somewhat robust to this violation when group sizes are equal,\n"
-                "but results may be unreliable with unequal group sizes.\n\n"
-                "Continue anyway?")
+            ans = messagebox.askyesno("Неоднорідність дисперсій (тест Лівена)",
+                f"Тест Лівена: F={fmt(lev_F,4)}, p={fmt(lev_p,4)}\n\n"
+                "Дисперсії істотно відрізняються між групами.\n"
+                "ANCOVA доволі стійка до цього порушення при рівних розмірах груп,\n"
+                "але результати можуть бути ненадійними при нерівних розмірах груп.\n\n"
+                "Продовжити попри це?")
             if not ans: return
 
         # ── Adjusted (LS) means ──
@@ -10741,35 +10870,35 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         _txt(f"R² = {fmt(R2,4)}   |   MSE = {fmt(mse,4)}   |   df_error = {dfe}")
 
         # Assumption checks
-        _head("Assumption Checks")
+        _head("Перевірка передумов")
         norm_color = "#000000" if math.isnan(p_res) or p_res > alpha else "#c62828"
         _txt(f"Нормальність залишків (Shapiro–Wilk):  W={fmt(W_res,4)},  p={fmt(p_res,4)}  "
-             f"{'✓ OK' if not math.isnan(p_res) and p_res > alpha else '⚠ VIOLATED'}",
+             f"{'✓ Гаразд' if not math.isnan(p_res) and p_res > alpha else '⚠ ПОРУШЕНО'}",
              norm_color)
         lev_color = "#000000" if math.isnan(lev_p) or lev_p >= alpha else "#c62828"
         _txt(f"Однорідність дисперсій (Левен):  F={fmt(lev_F,4)},  p={fmt(lev_p,4)}  "
-             f"{'✓ OK' if not math.isnan(lev_p) and lev_p >= alpha else '⚠ VIOLATED'}",
+             f"{'✓ Гаразд' if not math.isnan(lev_p) and lev_p >= alpha else '⚠ ПОРУШЕНО'}",
              lev_color)
         for cov_name, F_sl, p_sl in slope_details:
             sl_ok = math.isnan(p_sl) or p_sl >= alpha
             sl_color = "#000000" if sl_ok else "#c62828"
             _txt(f"Однорідність нахилів ({cov_name}):  F={fmt(F_sl,4)},  p={fmt(p_sl,4)}  "
-                 f"{'✓ OK' if sl_ok else '⚠ VIOLATED — slopes differ'}",
+                 f"{'✓ Гаразд' if sl_ok else '⚠ ПОРУШЕНО — нахили відрізняються'}",
                  sl_color)
 
         # ANOVA table
-        _head("ANCOVA Table (Type III SS)")
+        _head("Таблиця ANCOVA (Тип III SS)")
         _tbl(["Джерело","SS","df","MS","F","p","Висновок"], anova_rows)
 
         # Adjusted means
-        _head("Group Means")
+        _head("Середні за групами")
         means_rows = [[lv, fmt(raw_means[lv],4), fmt(adj_means[lv],4)]
                       for lv in group_levels]
-        _tbl(["Група","Unadjusted Mean","Adjusted Mean (LS Mean)"], means_rows)
+        _tbl(["Група","Нескориговане середнє","Скориговане середнє (LS Mean)"], means_rows)
 
         # Pairwise comparisons of adjusted means (Bonferroni t-test on LS means)
         # SE for difference between two LS means ≈ sqrt(MSE * 2/n_harm)
-        _head("Pairwise Comparisons of Adjusted Means (Bonferroni)")
+        _head("Попарні порівняння скоригованих середніх (Бонферроні)")
         ph_rows = []
         m_tests = len(group_levels) * (len(group_levels)-1) / 2
         n_per_grp = {lv: groups.count(lv) for lv in group_levels}
@@ -10793,7 +10922,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             ax1 = fig.add_subplot(121)
             ax1.scatter(yhat, residuals, s=22, color="#4c72b0", alpha=0.8)
             ax1.axhline(0, color="k", lw=0.8)
-            ax1.set_xlabel("Fitted values"); ax1.set_ylabel("Residuals")
+            ax1.set_xlabel("Підігнані значення"); ax1.set_ylabel("Залишки")
             ax1.set_title("Залишки vs Підігнані"); ax1.yaxis.grid(True, alpha=0.3)
 
             from scipy.stats import probplot
