@@ -392,39 +392,80 @@ def make_tv(parent, headers, rows, min_col=90):
 # DATA HELPERS
 # ═══════════════════════════════════════════════════════════════
 
+def _nav_on_enter(event):
+    e = event.widget
+    i, j = getattr(e, "_nav_pos", (None, None))
+    entries_2d = getattr(e, "_nav_entries", None)
+    if i is None or entries_2d is None: return "break"
+    ni = i + 1
+    if ni >= len(entries_2d) or j >= len(entries_2d[ni]): return "break"
+    target = entries_2d[ni][j]
+    target.focus_set(); target.icursor(tk.END)
+    return "break"
+
+def _nav_on_arrow(event):
+    e = event.widget
+    i, j = getattr(e, "_nav_pos", (None, None))
+    entries_2d = getattr(e, "_nav_entries", None)
+    if i is None or entries_2d is None: return "break"
+    if event.keysym == "Up":     i = max(0, i-1)
+    elif event.keysym == "Down": i = min(len(entries_2d)-1, i+1)
+    elif event.keysym == "Left": j = max(0, j-1)
+    elif event.keysym == "Right":j = min(len(entries_2d[i])-1, j+1)
+    if i >= len(entries_2d) or j >= len(entries_2d[i]): return "break"
+    target = entries_2d[i][j]
+    target.focus_set(); target.icursor(tk.END)
+    return "break"
+
+def _autofit_col(entries, col_idx, header_entries=None, min_w=8, max_w=45):
+    """Розширює один стовпець таблиці (Entry-віджети в grid) під найдовший
+    текст, що зараз у ньому є — заголовок і всі клітинки. Оскільки в
+    tkinter.grid усі віджети одного стовпця поділяють однакову ширину
+    стовпця (за найширшим серед них), достатньо виставити width всім
+    коміркам цього стовпця — вирівнюються вони автоматично.
+    Використовується для текстових стовпців (назви груп/варіантів/факторів),
+    де довжина вмісту наперед невідома і сильно різниться.
+    header_entries може містити Entry (з .get()) або Label (з .cget("text"))."""
+    def _hdr_text(w):
+        return w.get() if hasattr(w, "get") else str(w.cget("text"))
+    lengths = []
+    if header_entries is not None and col_idx < len(header_entries):
+        lengths.append(len(_hdr_text(header_entries[col_idx])))
+    for row in entries:
+        if col_idx < len(row):
+            lengths.append(len(row[col_idx].get()))
+    new_w = max([min_w] + lengths)
+    new_w = min(new_w, max_w)
+    if header_entries is not None and col_idx < len(header_entries):
+        try: header_entries[col_idx].configure(width=new_w)
+        except Exception: pass
+    for row in entries:
+        if col_idx < len(row):
+            row[col_idx].configure(width=new_w)
+
+
 def _bind_nav(entries_2d, win, factors_count=0):
-    """Прив'язати навігацію Enter/стрілки до двовимірного масиву Entry."""
-    def _pos(w):
-        for i, row in enumerate(entries_2d):
-            for j, e in enumerate(row):
-                if e is w: return i, j
-        return None, None
+    """Прив'язати навігацію Enter/стрілки до двовимірного масиву Entry.
 
-    def _on_enter(event):
-        i, j = _pos(event.widget)
-        if i is None: return "break"
-        ni = i + 1
-        if ni >= len(entries_2d): return "break"
-        entries_2d[ni][j].focus_set(); entries_2d[ni][j].icursor(tk.END)
-        return "break"
-
-    def _on_arrow(event):
-        i, j = _pos(event.widget)
-        if i is None: return "break"
-        if event.keysym == "Up":    i = max(0, i-1)
-        elif event.keysym == "Down": i = min(len(entries_2d)-1, i+1)
-        elif event.keysym == "Left": j = max(0, j-1)
-        elif event.keysym == "Right":j = min(len(entries_2d[i])-1, j+1)
-        entries_2d[i][j].focus_set(); entries_2d[i][j].icursor(tk.END)
-        return "break"
-
-    for row in entries_2d:
-        for e in row:
-            e.bind("<Return>", _on_enter)
-            e.bind("<Up>",     _on_arrow)
-            e.bind("<Down>",   _on_arrow)
-            e.bind("<Left>",   _on_arrow)
-            e.bind("<Right>",  _on_arrow)
+    Позиція кожної комірки кешується як атрибут самого віджета — пошук
+    O(1) замість лінійного сканування всієї таблиці на кожне натискання
+    Enter/стрілки (це особливо помітно на великих таблицях, на сотні
+    комірок: раніше кожен keypress пересканував ВЕСЬ масив).
+    Також уже прив'язані комірки не перебиндовуються повторно — виклик
+    цієї функції після додавання одного рядка до великої таблиці більше
+    не проходиться по ВСІХ існуючих комірках заново, а лише по нових."""
+    for i, row in enumerate(entries_2d):
+        for j, e in enumerate(row):
+            e._nav_pos = (i, j)
+            e._nav_entries = entries_2d
+            if getattr(e, "_nav_bound", False):
+                continue
+            e.bind("<Return>", _nav_on_enter)
+            e.bind("<Up>",     _nav_on_arrow)
+            e.bind("<Down>",   _nav_on_arrow)
+            e.bind("<Left>",   _nav_on_arrow)
+            e.bind("<Right>",  _nav_on_arrow)
+            e._nav_bound = True
 
 
 def _nav_move(entries_2d, ri, ci):
@@ -3047,6 +3088,8 @@ class SADTk:
                 while rr >= len(self.entries): self.add_row()
                 if cc >= self.cols: continue
                 self.entries[rr][cc].delete(0, tk.END); self.entries[rr][cc].insert(0, val)
+        for j in range(self.factors_count):
+            _autofit_col(self.entries, j, self.header_labels)
         return "break"
 
     def _pos(self, widget):
@@ -3187,7 +3230,11 @@ class SADTk:
             row_e = []
             for j in range(self.cols):
                 e = self._mk_entry(self.inner); e.grid(row=i + 1, column=j, padx=2, pady=2)
-                self.bind_cell(e); row_e.append(e)
+                self.bind_cell(e)
+                if j < fc:
+                    e.bind("<KeyRelease>",
+                           lambda ev, jj=j: _autofit_col(self.entries, jj, self.header_labels))
+                row_e.append(e)
             self.entries.append(row_e)
         self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
         self.entries[0][0].focus_set()
@@ -3198,7 +3245,11 @@ class SADTk:
         i = len(self.entries); row_e = []
         for j in range(self.cols):
             e = self._mk_entry(self.inner); e.grid(row=i + 1, column=j, padx=2, pady=2)
-            self.bind_cell(e); row_e.append(e)
+            self.bind_cell(e)
+            if j < self.factors_count:
+                e.bind("<KeyRelease>",
+                       lambda ev, jj=j: _autofit_col(self.entries, jj, self.header_labels))
+            row_e.append(e)
         self.entries.append(row_e); self.rows += 1
         self.inner.update_idletasks(); self.canvas.config(scrollregion=self.canvas.bbox("all"))
 
@@ -8654,6 +8705,9 @@ class RepeatedMeasuresWindow:
                 e = tk.Entry(self.inner, width=13 if j==0 else 12,
                              font=("Times New Roman",11))
                 e.grid(row=i+1, column=j, padx=1, pady=1)
+                if j == 0:
+                    e.bind("<KeyRelease>",
+                           lambda ev: _autofit_col(self.entries, 0))
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
@@ -8682,6 +8736,8 @@ class RepeatedMeasuresWindow:
             e = tk.Entry(self.inner, width=13 if j==0 else 12,
                          font=("Times New Roman",11))
             e.grid(row=i+1, column=j, padx=1, pady=1)
+            if j == 0:
+                e.bind("<KeyRelease>", lambda ev: _autofit_col(self.entries, 0))
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
         _bind_nav(self.entries, self.win)
@@ -8789,6 +8845,7 @@ class RepeatedMeasuresWindow:
                 if cc >= self.cols_n: continue
                 self.entries[r0+ir][cc].delete(0,tk.END)
                 self.entries[r0+ir][cc].insert(0, val.strip())
+        _autofit_col(self.entries, 0)
 
     def _show_help(self):
         win = tk.Toplevel(self.win)
@@ -9303,6 +9360,8 @@ class MixedRepeatedWindow:
                 e = tk.Entry(self.inner, width=w, font=("Times New Roman",11),
                              )
                 e.grid(row=i+1, column=j, padx=1, pady=1)
+                if j == 0:
+                    e.bind("<KeyRelease>", lambda ev: _autofit_col(self.entries, 0))
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
@@ -9331,6 +9390,8 @@ class MixedRepeatedWindow:
             e = tk.Entry(self.inner, width=13 if j<2 else 12,
                          font=("Times New Roman",11))
             e.grid(row=i+1, column=j, padx=1, pady=1)
+            if j == 0:
+                e.bind("<KeyRelease>", lambda ev: _autofit_col(self.entries, 0))
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
         _bind_nav(self.entries, self.win)
@@ -9389,26 +9450,7 @@ class MixedRepeatedWindow:
                 if cc >= self.cols_n: continue
                 self.entries[r0+ir][cc].delete(0, tk.END)
                 self.entries[r0+ir][cc].insert(0, val.strip())
-        path = filedialog.asksaveasfilename(
-            parent=self.win, defaultextension=".sadp",
-            filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
-            title="Зберегти проект Змішаного Repeated Measures")
-        if not path: return
-        d = {
-            "type": "mixed_repeated_measures",
-            "version": APP_VER,
-            "time_vars": [v.get() for v in self.time_vars],
-            "rows_data": [[e.get() for e in row] for row in self.entries],
-        }
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(d, f, ensure_ascii=False, indent=2)
-            messagebox.showinfo("Збережено",
-                f"Проект збережено:\n{path}\n\n"
-                "При наступному відкритті завантажте цей файл і\n"
-                "додайте нові стовпці (дати) через ⚙ → «Додати стовпець».")
-        except Exception as ex:
-            messagebox.showerror("Помилка збереження", str(ex))
+        _autofit_col(self.entries, 0)
 
     def _save_proj(self):
         path = filedialog.asksaveasfilename(
@@ -10094,6 +10136,8 @@ class StabilityWindow:
                 e = tk.Entry(self.inner, width=14 if j==0 else 11,
                              font=("Times New Roman",11))
                 e.grid(row=i+1, column=j, padx=1, pady=1)
+                if j == 0:
+                    e.bind("<KeyRelease>", lambda ev: _autofit_col(self.entries, 0))
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
@@ -10122,6 +10166,8 @@ class StabilityWindow:
             e = tk.Entry(self.inner, width=14 if j==0 else 11,
                          font=("Times New Roman",11))
             e.grid(row=i+1, column=j, padx=1, pady=1)
+            if j == 0:
+                e.bind("<KeyRelease>", lambda ev: _autofit_col(self.entries, 0))
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
         _bind_nav(self.entries, self.win)
@@ -10178,6 +10224,7 @@ class StabilityWindow:
                 if cc >= self.cols_n: continue
                 self.entries[r0+ir][cc].delete(0, tk.END)
                 self.entries[r0+ir][cc].insert(0, val.strip())
+        _autofit_col(self.entries, 0)
 
     def _save_proj(self):
         path = filedialog.asksaveasfilename(
@@ -10481,6 +10528,9 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                 e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
                              highlightthickness=1, highlightbackground="#c0c0c0")
                 e.grid(row=i+1, column=j, padx=1, pady=1)
+                if j == 0:
+                    e.bind("<KeyRelease>",
+                           lambda ev: _autofit_col(self.entries, 0, self.header_entries))
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
@@ -10511,11 +10561,23 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         except Exception:
             messagebox.showwarning("Буфер порожній",
                 "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
+        if not data.strip(): return
+        r0, c0 = 0, 0
+        w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: r0, c0 = i, j; break
         rows = [r for r in data.splitlines() if r.strip()]
-        for i, line in enumerate(rows[:self.n_rows]):
-            for j, val in enumerate(line.split("\t")[:self.n_cols]):
+        for ir, line in enumerate(rows):
+            i = r0 + ir
+            while i >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                j = c0 + jc
+                if j >= self.n_cols: continue
                 self.entries[i][j].delete(0, tk.END)
                 self.entries[i][j].insert(0, val.strip())
+        _autofit_col(self.entries, 0, self.header_entries)
 
     def _add_row(self):
         i = self.n_rows; row_ = []
@@ -10523,6 +10585,9 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             e = tk.Entry(self.inner, width=14, font=("Times New Roman", 11),
                          highlightthickness=1, highlightbackground="#c0c0c0")
             e.grid(row=i+1, column=j, padx=1, pady=1)
+            if j == 0:
+                e.bind("<KeyRelease>",
+                       lambda ev: _autofit_col(self.entries, 0, self.header_entries))
             row_.append(e)
         self.entries.append(row_); self.n_rows += 1
         _bind_nav(self.entries, self.win)
@@ -10577,7 +10642,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
 
 
-    def _run(self):
+    def _run(self, transform=None):
         alpha = float(self.alpha_var.get())
 
         # ── Зчитування заголовків ─────────────────────────────
@@ -10659,6 +10724,15 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         if skipped > 0:
             messagebox.showinfo("Пропущені рядки",
                 f"Пропущено {skipped} рядків (порожні або нечислові значення).")
+
+        if transform == "log":
+            if any(v <= 0 for v in y_data):
+                messagebox.showwarning("Трансформація неможлива",
+                    "У залежній змінній Y є значення ≤ 0 — логарифмічна трансформація "
+                    "неможлива. Аналіз продовжено без трансформації.")
+                transform = None
+            else:
+                y_data = [math.log(v) for v in y_data]
 
         n = len(y_data)
         # ── Guard 1: мінімум спостережень ──
@@ -10743,16 +10817,16 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                       for n, F, p in slope_details
                       if not math.isnan(p) and p < alpha]
             ans = messagebox.askyesno(
-                "ANCOVA ASSUMPTION VIOLATED — Heterogeneous regression slopes",
-                "The homogeneity of regression slopes assumption is VIOLATED for:\n"
+                "ПОРУШЕНО ПЕРЕДУМОВУ ANCOVA — неоднорідні нахили регресії",
+                "Передумова про однорідність нахилів регресії ПОРУШЕНА для:\n"
                 + "\n".join(f"  • {f}" for f in failed) + "\n\n"
-                "This means the covariate affects the DV differently in different groups.\n"
-                "Standard ANCOVA is NOT appropriate in this situation.\n\n"
-                "Options:\n"
-                "• Use Johnson-Neyman technique (regions of significance)\n"
-                "• Run separate regressions per group\n"
-                "• Use interaction ANOVA instead\n\n"
-                "Do you want to continue with ANCOVA anyway? (NOT recommended)")
+                "Це означає, що коваріата по-різному впливає на залежну змінну в різних групах.\n"
+                "Стандартна ANCOVA у цій ситуації НЕ підходить методично.\n\n"
+                "Варіанти:\n"
+                "• Використати техніку Джонсона-Неймана (зони значущості)\n"
+                "• Виконати окремі регресії для кожної групи\n"
+                "• Використати ANOVA з взаємодією замість ANCOVA\n\n"
+                "Продовжити з ANCOVA попри це? (НЕ рекомендується)")
             if not ans: return
 
         # ── Build ANCOVA model (Type III SS) ──
@@ -10765,12 +10839,12 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         for lv in group_levels[1:]:
             d = np.array([1. if g == lv else 0. for g in groups])
             X_parts.append(d); g_idx.append(idx_cur); idx_cur += 1
-        ts["Група"] = g_idx
+        ts[group_col] = g_idx
         # covariates
         for cov_name, cov_arr in zip(cov_cols, covs_arr):
             cov_norm = (cov_arr - np.mean(cov_arr)) / (np.std(cov_arr, ddof=1) + 1e-12)
             X_parts.append(cov_norm)
-            ts[f"Covariate: {cov_name}"] = [idx_cur]; idx_cur += 1
+            ts[f"Коваріата: {cov_name}"] = [idx_cur]; idx_cur += 1
 
         X = np.column_stack(X_parts)
         beta, yhat, residuals, sse, dfe, mse = _ols(y, X)
@@ -10787,8 +10861,11 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             ms = ss / df if df > 0 else np.nan
             F  = ms / mse if (not math.isnan(mse) and mse > 0) else np.nan
             p  = float(1 - f_dist.cdf(F, df, dfe)) if not math.isnan(F) else np.nan
-            mark = sig_mark(p) if not math.isnan(p) else ""
-            concl = f"significant {mark}" if mark else ("незнач." if not math.isnan(p) else "–")
+            if math.isnan(p): mark = ""
+            elif p < alpha/5: mark = "**"
+            elif p < alpha: mark = "*"
+            else: mark = ""
+            concl = f"значуще {mark}" if mark else ("незнач." if not math.isnan(p) else "–")
             anova_rows.append([term, fmt(ss,4), str(df), fmt(ms,4), fmt(F,4), fmt(p,4), concl])
 
         anova_rows.append(["Залишок", fmt(sse,4), str(dfe), fmt(mse,4), "", "", ""])
@@ -10797,14 +10874,18 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         # ── Guard 7: Normality of residuals ──
         try: W_res, p_res = shapiro(residuals) if len(residuals) >= 3 else (np.nan, np.nan)
         except Exception: W_res, p_res = np.nan, np.nan
-        if not math.isnan(p_res) and p_res <= alpha:
+        if not math.isnan(p_res) and p_res <= alpha and transform != "log":
             ans = messagebox.askyesno("Ненормальні залишки",
                 f"Залишки не відповідають нормальному розподілу\n"
                 f"(Шапіро–Вілк: W={fmt(W_res,4)}, p={fmt(p_res,4)}).\n\n"
-                "ANCOVA передбачає нормальний розподіл залишків.\n"
-                "Варто розглянути: трансформацію даних (log/√) перед виконанням ANCOVA.\n\n"
-                "Продовжити попри це?")
-            if not ans: return
+                "ANCOVA передбачає нормальний розподіл залишків.\n\n"
+                "Застосувати логарифмічну трансформацію (ln) до залежної змінної Y "
+                "і повторити аналіз автоматично?\n\n"
+                "«Так» — застосувати ln(Y) і перерахувати\n"
+                "«Ні» — продовжити без трансформації (з поточними ненормальними залишками)")
+            if ans:
+                self._run(transform="log")
+                return
 
         # ── Guard 8: Homogeneity of variances (Levene) ──
         grp_residuals = defaultdict(list)
@@ -10838,23 +10919,67 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         R2 = 1 - sse/sst if sst > 0 else np.nan
 
+        # ── Попарні порівняння скоригованих середніх ─────────────
+        # SE рахується через коваріаційну матрицю оцінок MSE·(X'X)⁻¹,
+        # а НЕ через спрощену формулу sqrt(MSE·(1/n1+1/n2)) — та формула
+        # коректна лише для порівняння НЕскоригованих середніх (звичайний
+        # ANOVA) і ігнорує додаткову невизначеність від коваріати. Для
+        # скоригованих (LS) середніх різниця = різниця коефіцієнтів при
+        # дамі-змінних групи (доданок коваріати скорочується, оскільки
+        # обидві групи прогнозуються при однаковому — середньому — рівні
+        # коваріати), а її SE — це коректний контраст c'(X'X)⁻¹c·MSE,
+        # що враховує кореляцію між оцінками коефіцієнтів.
+        try:
+            XtX_inv = np.linalg.pinv(X.T @ X)
+        except Exception:
+            XtX_inv = None
+        grp_col_idx = {group_levels[0]: None}
+        for lv, gi in zip(group_levels[1:], g_idx):
+            grp_col_idx[lv] = gi
+
+        def _contrast_se(i_pos, i_neg):
+            if XtX_inv is None: return np.nan
+            c = np.zeros(X.shape[1])
+            if i_pos is not None: c[i_pos] = 1.0
+            if i_neg is not None: c[i_neg] = -1.0
+            var = float(mse * (c @ XtX_inv @ c))
+            return math.sqrt(var) if var > 0 else np.nan
+
+        m_tests = len(group_levels) * (len(group_levels)-1) / 2
+        ph_data = []
+        for lv1, lv2 in combinations(group_levels, 2):
+            se = _contrast_se(grp_col_idx[lv1], grp_col_idx[lv2])
+            diff = adj_means[lv1] - adj_means[lv2]
+            if math.isnan(se) or se == 0:
+                ph_data.append((lv1, lv2, diff, None, None)); continue
+            t_val = abs(diff) / se
+            p_raw = 2 * (1 - float(t_dist.cdf(t_val, dfe)))
+            p_adj = min(1., p_raw * m_tests)
+            ph_data.append((lv1, lv2, diff, t_val, p_adj))
+
+        transform_label = "ln(Y)" if transform == "log" else None
         self._show_results(anova_rows, adj_means, raw_means, group_levels,
                            residuals, W_res, p_res, lev_F, lev_p,
-                           slope_details, R2, mse, dfe, alpha, y, yhat, groups)
+                           slope_details, R2, mse, dfe, alpha, y, yhat, groups,
+                           ph_data, dv_col, transform_label)
 
     def _show_results(self, anova_rows, adj_means, raw_means, group_levels,
                       residuals, W_res, p_res, lev_F, lev_p,
-                      slope_details, R2, mse, dfe, alpha, y, yhat, groups):
+                      slope_details, R2, mse, dfe, alpha, y, yhat, groups,
+                      ph_data=None, dv_col="Y", transform_label=None):
         win = tk.Toplevel(self.win); win.title("ANCOVA — Результати")
         win.geometry("1150x760"); set_icon(win)
 
-        # scrollable body
+        # scrollable body — ширина body синхронізована з canvas, тож усе
+        # всередині (зокрема таблиці) може розтягуватись на всю ширину вікна
         main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(main, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas = tk.Canvas(main, yscrollcommand=vsb.set); canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.config(command=canvas.yview)
-        body = tk.Frame(canvas); canvas.create_window((0, 0), window=body, anchor="nw")
+        body = tk.Frame(canvas)
+        body_win = canvas.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(body_win, width=e.width))
         win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         def _head(txt):
@@ -10864,10 +10989,14 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=10, pady=1)
         def _tbl(headers, rows):
-            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=2)
+            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.BOTH, expand=True, padx=10, pady=2)
 
         _head("ANCOVA — Коваріаційний аналіз")
-        _txt(f"R² = {fmt(R2,4)}   |   MSE = {fmt(mse,4)}   |   df_error = {dfe}")
+        subtitle = f"Залежна змінна: {dv_col}"
+        if transform_label:
+            subtitle += f"  (застосовано трансформацію {transform_label})"
+        _txt(subtitle, "#1a4b8c")
+        _txt(f"R² = {fmt(R2,4)}   |   MSE = {fmt(mse,4)}   |   df_error = {dfe}   |   α = {alpha}")
 
         # Assumption checks
         _head("Перевірка передумов")
@@ -10897,24 +11026,20 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         _tbl(["Група","Нескориговане середнє","Скориговане середнє (LS Mean)"], means_rows)
 
         # Pairwise comparisons of adjusted means (Bonferroni t-test on LS means)
-        # SE for difference between two LS means ≈ sqrt(MSE * 2/n_harm)
         _head("Попарні порівняння скоригованих середніх (Бонферроні)")
         ph_rows = []
-        m_tests = len(group_levels) * (len(group_levels)-1) / 2
-        n_per_grp = {lv: groups.count(lv) for lv in group_levels}
-        for lv1, lv2 in combinations(group_levels, 2):
-            n1, n2 = n_per_grp[lv1], n_per_grp[lv2]
-            se = math.sqrt(mse * (1/n1 + 1/n2)) if mse > 0 else np.nan
-            diff = adj_means[lv1] - adj_means[lv2]
-            if math.isnan(se) or se == 0:
+        for lv1, lv2, diff, t_val, p_adj in (ph_data or []):
+            if t_val is None:
                 ph_rows.append([f"{lv1} vs {lv2}", fmt(diff,4), "–", "–", "–"]); continue
-            t_val = abs(diff) / se
-            p_raw = 2 * (1 - float(t_dist.cdf(t_val, dfe)))
-            p_adj = min(1., p_raw * m_tests)
-            mark  = sig_mark(p_adj)
-            ph_rows.append([f"{lv1} vs {lv2}", fmt(diff,4), fmt(t_val,4), fmt(p_adj,4),
-                             f"significant {mark}" if mark else "незнач."])
+            if p_adj < alpha/5: mark = "**"
+            elif p_adj < alpha: mark = "*"
+            else: mark = ""
+            concl = f"значуще {mark}" if mark else "незнач."
+            ph_rows.append([f"{lv1} vs {lv2}", fmt(diff,4), fmt(t_val,4), fmt(p_adj,4), concl])
         _tbl(["Порівняння","Різниця","t","p (Bonf.)","Висновок"], ph_rows)
+        _txt(f"Позначення: * p<α  ** p<α/5  (α={alpha}, обраний вище). "
+             f"«Незнач.» — статистично значущої різниці не виявлено при цьому рівні α.",
+             "#555555")
 
         # Plots
         if HAS_MPL:
@@ -11127,6 +11252,9 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                 e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
                              highlightthickness=1, highlightbackground="#c0c0c0")
                 e.grid(row=i+1, column=j, padx=1, pady=1)
+                if j == 0:
+                    e.bind("<KeyRelease>",
+                           lambda ev: _autofit_col(self.entries, 0, self.header_entries))
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
@@ -11160,6 +11288,9 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             e = tk.Entry(self.inner, width=13, font=("Times New Roman", 11),
                          highlightthickness=1, highlightbackground="#c0c0c0")
             e.grid(row=i+1, column=j, padx=1, pady=1)
+            if j == 0:
+                e.bind("<KeyRelease>",
+                       lambda ev: _autofit_col(self.entries, 0, self.header_entries))
             row_.append(e)
         self.entries.append(row_); self.n_rows += 1
         _bind_nav(self.entries, self.win)
@@ -11208,12 +11339,22 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             messagebox.showwarning("Буфер порожній",
                 "Скопіюйте дані з Excel (Ctrl+C) і спробуйте знову."); return
         if not data.strip(): return
-        for i, line in enumerate(data.splitlines()):
+        r0, c0 = 0, 0
+        w = self.win.focus_get()
+        if isinstance(w, tk.Entry):
+            for i, row_ in enumerate(self.entries):
+                for j, e in enumerate(row_):
+                    if e is w: r0, c0 = i, j; break
+        for ir, line in enumerate(data.splitlines()):
             if not line.strip(): continue
-            if i >= len(self.entries): self._add_row()
-            for j, val in enumerate(line.split("\t")[:self.n_cols]):
+            i = r0 + ir
+            while i >= len(self.entries): self._add_row()
+            for jc, val in enumerate(line.split("\t")):
+                j = c0 + jc
+                if j >= self.n_cols: continue
                 self.entries[i][j].delete(0, tk.END)
                 self.entries[i][j].insert(0, val.strip())
+        _autofit_col(self.entries, 0, self.header_entries)
 
 
 
