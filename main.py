@@ -211,10 +211,18 @@ def embed_figure_scrollable(fig, master, dpi=96):
     widget = cv.get_tk_widget()
     cv.draw()
 
-    w_px = int(fig.get_size_inches()[0] * dpi)
-    h_px = int(fig.get_size_inches()[1] * dpi)
-    cv_container.create_window((0, 0), window=widget, anchor="nw")
-    cv_container.configure(scrollregion=(0, 0, w_px, h_px))
+    win_id = cv_container.create_window((0, 0), window=widget, anchor="nw")
+
+    def _update_scrollregion(event=None):
+        # Невеликий запас (+4px), щоб нижній ряд і правий стовпець точно
+        # не обрізались через заокруглення розмірів рендеру.
+        bbox = cv_container.bbox(win_id)
+        if bbox:
+            x0, y0, x1, y1 = bbox
+            cv_container.configure(scrollregion=(x0, y0, x1 + 4, y1 + 4))
+    widget.bind("<Configure>", _update_scrollregion)
+    cv_container.after(50, _update_scrollregion)
+    cv_container.after(300, _update_scrollregion)
 
     def _on_mw(e):
         cv_container.yview_scroll(int(-1*(e.delta/120)), "units")
@@ -6285,14 +6293,30 @@ class RegressionWindow:
         tk.Entry(frm, textvariable=yv, width=24, font=rf
                  ).grid(row=2, column=1, sticky="w", padx=8)
 
-        # Кольори
+        # Шрифт графіка
+        tk.Label(frm, text="Шрифт:", font=rf
+                 ).grid(row=3, column=0, sticky="w", pady=4)
+        fv = tk.StringVar(value=self.gs.get("font_family", "Times New Roman"))
+        ttk.Combobox(frm, textvariable=fv, state="readonly", width=22,
+                     values=["Times New Roman","Arial","Calibri","Georgia"]
+                     ).grid(row=3, column=1, sticky="w", padx=8)
+
+        tk.Label(frm, text="Розмір шрифту:", font=rf
+                 ).grid(row=4, column=0, sticky="w", pady=4)
+        fsv = tk.IntVar(value=self.gs.get("font_size", 9))
+        tk.Spinbox(frm, from_=6, to=18, textvariable=fsv, width=6, font=rf
+                   ).grid(row=4, column=1, sticky="w", padx=8)
+
+        # Кольори — кожен на власному рядку, без колізій з полями вище
         color_vars = {}
         color_defs = [
             ("Колір точок:",       "scatter_color", "#4c72b0"),
             ("Колір кривої:",      "line_color",    "#c62828"),
             ("Колір ДІ (смуга):",  "ci_color",      "#c62828"),
         ]
-        for ri, (lbl, key, default) in enumerate(color_defs, 1):
+        base_row = 5
+        for i, (lbl, key, default) in enumerate(color_defs):
+            ri = base_row + i
             tk.Label(frm, text=lbl, font=rf
                      ).grid(row=ri, column=0, sticky="w", pady=3)
             v = tk.StringVar(value=self.gs.get(key, default))
@@ -6307,12 +6331,15 @@ class RegressionWindow:
             self._graph_title = tv.get().strip()
             self._xlabel = xv.get().strip() or "x"
             self._ylabel = yv.get().strip() or "y"
+            self.gs["font_family"] = fv.get()
+            self.gs["font_size"]   = fsv.get()
             for key, v in color_vars.items():
                 self.gs[key] = v.get()
             dlg.destroy()
             if hasattr(self, '_last_run_args'):
                 self._show_result(*self._last_run_args)
-        bf = tk.Frame(frm); bf.grid(row=len(color_defs)+4, column=0, columnspan=2, pady=(12,0))
+        bf = tk.Frame(frm); bf.grid(row=base_row+len(color_defs)+1, column=0,
+                                    columnspan=2, pady=(12,0))
         tk.Button(bf, text="Застосувати", bg="#c62828", fg="white",
                   font=rf, command=_apply).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", font=rf,
@@ -6706,6 +6733,8 @@ class RegressionWindow:
                   command=self._graph_settings).pack(side=tk.RIGHT, padx=2)
 
         # Figure 1
+        ff = self.gs.get("font_family", "Times New Roman")
+        fz = self.gs.get("font_size", 9)
         fig1 = Figure(figsize=(5.2, 4.2), dpi=100)
         ax1  = fig1.add_subplot(111)
         x_sort   = np.sort(x); idx_sort = np.argsort(x)
@@ -6732,17 +6761,19 @@ class RegressionWindow:
                                      label=f"{ci_pct}% ДІ")
             except Exception: pass
         custom_title = getattr(self, '_graph_title', '')
-        ax1.set_title(custom_title if custom_title else f"{model_name}", fontsize=10)
-        ax1.set_xlabel(getattr(self,'_xlabel','x'), fontsize=9)
-        ax1.set_ylabel(getattr(self,'_ylabel','y'), fontsize=9)
-        ax1.legend(fontsize=8)
+        ax1.set_title(custom_title if custom_title else f"{model_name}",
+                      fontsize=fz+1, fontfamily=ff)
+        ax1.set_xlabel(getattr(self,'_xlabel','x'), fontsize=fz, fontfamily=ff)
+        ax1.set_ylabel(getattr(self,'_ylabel','y'), fontsize=fz, fontfamily=ff)
+        ax1.tick_params(labelsize=max(6, fz-1))
+        ax1.legend(fontsize=max(6, fz-1))
         r2_str = f"R²={fmt(r['R2'],4)}"
         if not math.isnan(r.get("R2_adj",float("nan"))):
             r2_str += f"  R²adj={fmt(r['R2_adj'],4)}"
         eq = r.get("equation","")
         ax1.text(0.03, 0.97, f"{eq}\n{r2_str}",
-                 transform=ax1.transAxes, fontsize=8, va="top",
-                 fontfamily="Times New Roman",
+                 transform=ax1.transAxes, fontsize=max(6, fz-1), va="top",
+                 fontfamily=ff,
                  bbox=dict(boxstyle="round,pad=0.4", facecolor="#eef4ff",
                            edgecolor="#1a4b8c", alpha=0.9, linewidth=1),
                  zorder=5)
