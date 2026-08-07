@@ -2532,9 +2532,13 @@ class CorrelationWindow:
 
         main_outer = tk.Frame(grid)
         main_outer.grid(row=1, column=1, sticky="nsew")
-        vsb = ttk.Scrollbar(grid, orient="vertical")
+        vsb = tk.Scrollbar(grid, orient="vertical", width=16,
+                           bg="#b0b8c4", troughcolor="#eef1f5",
+                           activebackground="#1a4b8c")
         vsb.grid(row=1, column=2, sticky="ns")
-        hsb = ttk.Scrollbar(grid, orient="horizontal")
+        hsb = tk.Scrollbar(grid, orient="horizontal", width=16,
+                           bg="#b0b8c4", troughcolor="#eef1f5",
+                           activebackground="#1a4b8c")
         hsb.grid(row=2, column=1, sticky="ew")
 
         main_cv = tk.Canvas(main_outer, yscrollcommand=vsb.set, xscrollcommand=hsb.set,
@@ -2550,7 +2554,12 @@ class CorrelationWindow:
         fig_w_px, fig_h_px = fig.canvas.get_width_height()
 
         main_cv.create_window((0, 0), window=widget, anchor="nw")
-        main_cv.configure(scrollregion=(0, 0, fig_w_px, fig_h_px))
+        # Невеликий запас з усіх боків (+40px), щоб прокрутка завжди мала
+        # видимий і відчутний простір для руху — навіть коли вся матриця
+        # й так уже вміщається у вікні, повзунок не мусить виглядати
+        # «заблокованим» на всю довжину треку.
+        PAD = 40
+        main_cv.configure(scrollregion=(0, 0, fig_w_px + PAD, fig_h_px + PAD))
 
         # X-межі кожного стовпця — з підграфіків першого ряду (i=0)
         col_bounds = []
@@ -5744,8 +5753,16 @@ class DescriptiveWindow:
         n   = len(arrays)
         fig = Figure(figsize=(10, 6), dpi=100)
         ax  = fig.add_subplot(111)
-        bp  = ax.boxplot([a[~np.isnan(a)] for a in arrays],
-                         labels=names, patch_artist=True, widths=0.55)
+        clean_data = [a[~np.isnan(a)] for a in arrays]
+        try:
+            # matplotlib >= 3.9: параметр перейменовано на tick_labels,
+            # старий "labels" остаточно прибрано в 3.11
+            bp = ax.boxplot(clean_data, tick_labels=names,
+                             patch_artist=True, widths=0.55)
+        except TypeError:
+            # matplotlib < 3.9: tick_labels ще не існує
+            bp = ax.boxplot(clean_data, labels=names,
+                             patch_artist=True, widths=0.55)
         for patch in bp["boxes"]:    patch.set(facecolor=gs.get("box_color","#ffffff"))
         for line  in bp["medians"]:  line.set(color=gs.get("median_color","#c62828"), linewidth=2)
         for line  in bp["whiskers"]+bp["caps"]:
@@ -11702,33 +11719,104 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                       b1p, p_sk, b2p, p_ku, box_chi2, box_p,
                       alpha, mv_normal, groups_data, group_levels, Y, p):
         win = tk.Toplevel(self.win); win.title("MANOVA — Результати")
-        win.geometry("1180x820"); set_icon(win)
+        n_dv = len(dv_names); n_grp = len(group_levels)
+        # Розмір вікна адаптовано під вміст: більше залежних змінних/груп
+        # → ширші таблиці й графіки → трохи більше вікно (в розумних межах).
+        est_w = min(1500, max(1050, 220 + 140*n_dv))
+        est_h = min(900, max(700, 640 + 18*n_grp))
+        win.geometry(f"{est_w}x{est_h}"); set_icon(win)
 
-        # ── Toolbar результатів ─────────────────────────────
-        self._manova_figs = {}   # зберігаємо фігури для копіювання
+        self._manova_figs = {}
         self._manova_colors = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
+        if not hasattr(self, "_manova_gs"): self._manova_gs = {}
+        self._manova_built = {"g1": False, "g2": False}
 
-        tb_res = tk.Frame(win, padx=6, pady=5); tb_res.pack(fill=tk.X)
+        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        sidebar = tk.Frame(main, width=210, bg="#2c3e50")
+        sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+        content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        tk.Label(sidebar, text="MANOVA", bg="#2c3e50", fg="#ecf0f1",
+                 font=("Times New Roman",12,"bold"), pady=12).pack(fill=tk.X)
+
+        active = {"panel": None, "btn": None}
+        def _show_panel(frame, btn):
+            if active["panel"] is not None: active["panel"].pack_forget()
+            if active["btn"] is not None: active["btn"].configure(bg="#2c3e50", fg="#bdc3c7")
+            frame.pack(fill=tk.BOTH, expand=True)
+            active["panel"] = frame; active["btn"] = btn
+            btn.configure(bg="#c62828", fg="white")
+
+        def _sidebar_btn(text, tooltip):
+            fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
+            b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+                          font=("Times New Roman",11), relief=tk.FLAT,
+                          anchor="w", padx=12, pady=6,
+                          activebackground="#c62828", activeforeground="white")
+            b.pack(fill=tk.X)
+            tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
+                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+            tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
+            return b
+
+        rpt_frame = tk.Frame(content)
+        g1_frame  = tk.Frame(content)
+        g2_frame  = tk.Frame(content)
+        self._manova_g1_frame = g1_frame
+        self._manova_g2_frame = g2_frame
+
+        b_rpt = _sidebar_btn("📋 Звіт",               "Статистики, тести, висновок")
+        b_g1  = _sidebar_btn("📊 Групові середні",     "Стовпчикова діаграма ±СП")
+        b_g2  = _sidebar_btn("📈 Профільний графік",   "Нормовані середні по ЗЗ")
+
+        def _open_rpt(): _show_panel(rpt_frame, b_rpt)
+        def _open_g1():
+            _show_panel(g1_frame, b_g1)
+            if not self._manova_built["g1"]:
+                g1_frame.update_idletasks()
+                self._build_manova_g1_panel(g1_frame, dv_names, groups_data,
+                                            group_levels, univ_rows, alpha)
+                self._manova_built["g1"] = True
+        def _open_g2():
+            _show_panel(g2_frame, b_g2)
+            if not self._manova_built["g2"]:
+                g2_frame.update_idletasks()
+                self._build_manova_g2_panel(g2_frame, dv_names, groups_data, group_levels)
+                self._manova_built["g2"] = True
+
+        b_rpt.configure(command=_open_rpt)
+        b_g1.configure( command=_open_g1)
+        b_g2.configure( command=_open_g2)
+
+        self._build_manova_report_panel(
+            rpt_frame, win, wilks_L, F_wilks, p_wilks, pillai_V, F_pillai, p_pillai,
+            hl_T, F_hl, p_hl, roy_GCR, F_roy, p_roy,
+            df1_w, df2_w, df1_p, df2_p, df1_hl, df2_hl,
+            univ_rows, dv_names, b1p, p_sk, b2p, p_ku, box_chi2, box_p,
+            alpha, mv_normal, groups_data, group_levels, Y, p)
+
+        _show_panel(rpt_frame, b_rpt)
+
+    def _build_manova_report_panel(self, frame, win, wilks_L, F_wilks, p_wilks,
+                                   pillai_V, F_pillai, p_pillai,
+                                   hl_T, F_hl, p_hl, roy_GCR, F_roy, p_roy,
+                                   df1_w, df2_w, df1_p, df2_p, df1_hl, df2_hl,
+                                   univ_rows, dv_names,
+                                   b1p, p_sk, b2p, p_ku, box_chi2, box_p,
+                                   alpha, mv_normal, groups_data, group_levels, Y, p):
+        tb_res = tk.Frame(frame, padx=6, pady=5); tb_res.pack(fill=tk.X)
         tk.Button(tb_res, text="📋 Копіювати звіт (текст)", font=("Times New Roman",11),
                   command=lambda: self._copy_manova_text(win)).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb_res, text="📋 Копіювати графік 1", font=("Times New Roman",11),
-                  command=lambda: self._copy_manova_fig(1)).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb_res, text="📋 Копіювати графік 2", font=("Times New Roman",11),
-                  command=lambda: self._copy_manova_fig(2)).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb_res, text="⚙ Налаштування графіків", font=("Times New Roman",11),
-                  command=lambda: self._restyle_manova(win, dv_names, groups_data,
-                                                        group_levels, univ_rows,
-                                                        alpha, p_pillai)).pack(side=tk.LEFT, padx=4)
 
-        # ── Прокручуване тіло ────────────────────────────────
-        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        main = tk.Frame(frame); main.pack(fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(main, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas = tk.Canvas(main, yscrollcommand=vsb.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.config(command=canvas.yview)
         self._manova_body = body = tk.Frame(canvas)
-        canvas.create_window((0,0), window=body, anchor="nw")
+        body_win = canvas.create_window((0,0), window=body, anchor="nw")
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(body_win, width=e.width))
         win.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
         def _head(txt):
@@ -11739,7 +11827,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             tk.Label(body, text=txt, font=("Times New Roman",11), fg=color,
                      anchor="w", justify="left").pack(fill=tk.X, padx=14, pady=1)
         def _tbl(headers, rows):
-            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.X, padx=10, pady=2)
+            f, _ = make_tv(body, headers, rows); f.pack(fill=tk.BOTH, expand=True, padx=10, pady=2)
 
         # ── Заголовок ────────────────────────────────────────
         tk.Label(body,
@@ -11754,10 +11842,6 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             if p_val < alpha * 0.2:   return "**"   # суттєво нижче α (умовно «дуже значущий»)
             if p_val < alpha:         return "*"
             return "–"
-
-        def _sig_color(p_val):
-            if p_val is None or math.isnan(p_val): return "#000000"
-            return "#1a6b1a" if p_val < alpha else "#000000"
 
         # ── Перевірка передумов ───────────────────────────────
         _head("Перевірка передумов")
@@ -11782,11 +11866,6 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         # ── Тестові статистики MANOVA ─────────────────────────
         _head("Тестові статистики MANOVA")
 
-        # η² (розмір ефекту) для кожної статистики MANOVA
-        # Wilks: η² = 1 - Λ^(1/s), де s = min(df_h, p)
-        # Pillai: V вже є мірою ефекту (0-1), η² ≈ V/s
-        # Hotelling: η² = T/(T+1) (наближення)
-        # Roy: η² = θ/(1+θ)
         s_val = min(len(group_levels)-1, p)
         try:
             eta2_wilks = 1 - wilks_L**(1/max(s_val,1)) if not math.isnan(wilks_L) and wilks_L > 0 else np.nan
@@ -11822,7 +11901,6 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         _tbl(["Статистика","Значення","F","df","p",f"Знач.(α={alpha})",
               "partial η²","Сила ефекту","Примітка"], manova_rows)
 
-        # Опис сили ефекту
         _txt("Сила ефекту (partial η²): < 0.01 дуже слабкий | 0.01–0.06 слабкий | "
              "0.06–0.14 середній | > 0.14 сильний", "#555555")
 
@@ -11863,143 +11941,127 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             means_rows.append(row_)
         _tbl(means_headers, means_rows)
 
-        # ── Графіки: стовпчикова ±SE + профільний ─────────────
-        if HAS_MPL and len(dv_names) >= 2:
-            n_dv = len(dv_names)
-            colors_ = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
+    # ── Панель: графік групових середніх ±SE ──────────────────
+    def _build_manova_g1_panel(self, frame, dv_names, groups_data, group_levels,
+                               univ_rows, alpha):
+        for w in frame.winfo_children(): w.destroy()
+        if not HAS_MPL or len(dv_names) < 1: return
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="💾 Зберегти PNG", font=("Times New Roman",11),
+                  command=lambda: self._save_manova_png(1)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📋 Копіювати", font=("Times New Roman",11),
+                  command=lambda: self._copy_manova_fig(1)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування", font=("Times New Roman",11),
+                  command=lambda: self._restyle_manova(
+                      frame, dv_names, groups_data, group_levels, univ_rows, alpha, None)
+                  ).pack(side=tk.LEFT, padx=4)
 
-            # Графік 1: стовпчикова ±SE для кожної ЗЗ
-            fig1 = Figure(figsize=(10, 6), dpi=100)
-            for di, dv_nm in enumerate(dv_names):
-                ax = fig1.add_subplot(1, n_dv, di+1)
-                gm = [float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
-                gs_ = [float(np.std(groups_data[lv][:,di],ddof=1) /
-                              math.sqrt(len(groups_data[lv])))
-                       for lv in group_levels]
-                xpos = range(len(group_levels))
-                ax.bar(xpos, gm, yerr=gs_, capsize=4,
-                       color=[colors_[i % len(colors_)] for i in range(len(group_levels))],
-                       alpha=0.85, error_kw={"ecolor":"#333","lw":1.5})
-                # позначення значущості univariate
-                if univ_rows and di < len(univ_rows):
-                    try:
-                        p_uv = float(univ_rows[di][2])
-                        if p_uv < bonf_alpha:
-                            ax.set_title(f"{dv_nm}\n(p={fmt(p_uv,3)}*)", fontsize=8)
-                        else:
-                            ax.set_title(f"{dv_nm}\n(p={fmt(p_uv,3)})", fontsize=8)
-                    except Exception:
-                        ax.set_title(dv_nm, fontsize=8)
-                else:
-                    ax.set_title(dv_nm, fontsize=8)
-                ax.set_xticks(list(xpos))
-                ax.set_xticklabels(group_levels, rotation=30, ha="right", fontsize=7)
-                ax.set_ylabel("Середнє ± СП" if di==0 else "", fontsize=8)
-                ax.yaxis.grid(True, alpha=0.3)
-                ax.spines["top"].set_visible(False)
-                ax.spines["right"].set_visible(False)
-            fig1.suptitle("Групові середні (±СП) по залежних змінних", fontsize=10)
-            fig1.tight_layout()
-            self._manova_figs[1] = fig1
-            self._manova_frame1 = tk.Frame(body)
-            self._manova_frame1.pack(fill=tk.X, padx=10, pady=4)
-            embed_figure(fig1, self._manova_frame1)
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+        self._manova_frame1 = plot_f
 
-            # Графік 2: профільний (нормовані середні)
-            fig2 = Figure(figsize=(10, 6), dpi=100)
-            ax2 = fig2.add_subplot(111)
-            # Нормуємо кожну ЗЗ до [0,1] для порівняння профілів
-            all_means = np.array([[float(np.mean(groups_data[lv][:,j]))
-                                   for j in range(n_dv)] for lv in group_levels])
-            mn_col = all_means.min(axis=0); mx_col = all_means.max(axis=0)
-            rng = np.where(mx_col > mn_col, mx_col - mn_col, 1.)
-            normed = (all_means - mn_col) / rng
+        n_dv = len(dv_names)
+        colors_ = self._manova_gs.get("colors", self._manova_colors)
+        bar_alpha = self._manova_gs.get("bar_alpha", 0.85)
+        ff_ = self._manova_gs.get("font_family", "Times New Roman")
+        fz_ = self._manova_gs.get("font_size", 9)
+        bonf_alpha = alpha / max(n_dv, 1)
 
-            x_pos = range(n_dv)
-            for gi, lv in enumerate(group_levels):
-                ax2.plot(list(x_pos), normed[gi], "o-",
-                         color=colors_[gi % len(colors_)],
-                         label=str(lv), linewidth=2, markersize=7)
-            ax2.set_xticks(list(x_pos))
-            ax2.set_xticklabels(dv_names, rotation=20, ha="right", fontsize=9)
-            ax2.set_ylabel("Нормоване середнє (0–1)", fontsize=9)
-            ax2.set_title("Профільний графік груп (нормовані середні по ЗЗ)", fontsize=10)
-            ax2.legend(title="Група", fontsize=8, title_fontsize=8)
-            ax2.yaxis.grid(True, linestyle="--", alpha=0.4)
-            ax2.spines["top"].set_visible(False)
-            ax2.spines["right"].set_visible(False)
-            fig2.tight_layout()
-            self._manova_figs[2] = fig2
-            self._manova_frame2 = tk.Frame(body)
-            self._manova_frame2.pack(fill=tk.X, padx=10, pady=(0,10))
-            embed_figure(fig2, self._manova_frame2)
+        fig1 = Figure(figsize=(max(8, n_dv*2.4), 6), dpi=100)
+        for di, dv_nm in enumerate(dv_names):
+            ax = fig1.add_subplot(1, n_dv, di+1)
+            gm = [float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
+            gs_ = [float(np.std(groups_data[lv][:,di],ddof=1) / math.sqrt(len(groups_data[lv])))
+                   for lv in group_levels]
+            xpos = range(len(group_levels))
+            ax.bar(xpos, gm, yerr=gs_, capsize=4,
+                   color=[colors_[i % len(colors_)] for i in range(len(group_levels))],
+                   alpha=bar_alpha, error_kw={"ecolor":"#333","lw":1.5})
+            try:
+                p_uv = float(univ_rows[di][2]) if univ_rows and di < len(univ_rows) else float("nan")
+                mark = "*" if p_uv < bonf_alpha else ""
+                ax.set_title(f"{dv_nm}\n(p={fmt(p_uv,3)}{mark})", fontsize=fz_, fontfamily=ff_)
+            except Exception:
+                ax.set_title(dv_nm, fontsize=fz_, fontfamily=ff_)
+            ax.set_xticks(list(xpos))
+            ax.set_xticklabels(group_levels, rotation=30, ha="right", fontsize=max(6,fz_-1))
+            ax.set_ylabel("Середнє ± СП" if di==0 else "", fontsize=fz_)
+            ax.yaxis.grid(True, alpha=0.3)
+            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        fig1.suptitle("Групові середні (±СП) по залежних змінних", fontsize=fz_+1, fontfamily=ff_)
+        fig1.tight_layout()
+        self._manova_figs[1] = fig1
+        embed_figure(fig1, plot_f)
+
+    # ── Панель: профільний графік ──────────────────────────────
+    def _build_manova_g2_panel(self, frame, dv_names, groups_data, group_levels):
+        for w in frame.winfo_children(): w.destroy()
+        if not HAS_MPL or len(dv_names) < 2: return
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="💾 Зберегти PNG", font=("Times New Roman",11),
+                  command=lambda: self._save_manova_png(2)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📋 Копіювати", font=("Times New Roman",11),
+                  command=lambda: self._copy_manova_fig(2)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування", font=("Times New Roman",11),
+                  command=lambda: self._restyle_manova(
+                      frame, dv_names, groups_data, group_levels, None, 0.05, None)
+                  ).pack(side=tk.LEFT, padx=4)
+
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+        self._manova_frame2 = plot_f
+
+        n_dv = len(dv_names)
+        colors_ = self._manova_gs.get("colors", self._manova_colors)
+        lw_ = self._manova_gs.get("lw", 2.0)
+        ms_ = self._manova_gs.get("ms", 7)
+        ff_ = self._manova_gs.get("font_family", "Times New Roman")
+        fz_ = self._manova_gs.get("font_size", 9)
+
+        fig2 = Figure(figsize=(max(7, n_dv*0.9+2), 5.5), dpi=100)
+        ax2 = fig2.add_subplot(111)
+        all_means = np.array([[float(np.mean(groups_data[lv][:,j])) for j in range(n_dv)]
+                              for lv in group_levels])
+        mn_col = all_means.min(axis=0); mx_col = all_means.max(axis=0)
+        rng = np.where(mx_col > mn_col, mx_col - mn_col, 1.)
+        normed = (all_means - mn_col) / rng
+        for gi, lv in enumerate(group_levels):
+            ax2.plot(list(range(n_dv)), normed[gi], "o-",
+                     color=colors_[gi % len(colors_)],
+                     label=str(lv), linewidth=lw_, markersize=ms_)
+        ax2.set_xticks(list(range(n_dv)))
+        ax2.set_xticklabels(dv_names, rotation=20, ha="right", fontsize=fz_, fontfamily=ff_)
+        ax2.set_ylabel("Нормоване середнє (0–1)", fontsize=fz_, fontfamily=ff_)
+        ax2.set_title("Профільний графік груп (нормовані середні по ЗЗ)",
+                      fontsize=fz_+1, fontfamily=ff_)
+        ax2.legend(title="Група", fontsize=fz_, title_fontsize=fz_)
+        ax2.yaxis.grid(True, linestyle="--", alpha=0.4)
+        ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
+        fig2.tight_layout()
+        self._manova_figs[2] = fig2
+        embed_figure(fig2, plot_f)
+
+    def _save_manova_png(self, n):
+        fig = self._manova_figs.get(n)
+        if fig is None: messagebox.showwarning("","Графік відсутній."); return
+        path = filedialog.asksaveasfilename(defaultextension=".png",
+                    filetypes=[("PNG зображення","*.png")], title="Зберегти графік")
+        if not path: return
+        try:
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
 
     # ── Допоміжні методи для результатів MANOVA ───────────────
 
     def _rebuild_manova_graphs(self, dv_names, groups_data, group_levels,
                                 univ_rows, alpha, p_pillai):
-        """Перебудовує лише графіки у вже відкритому вікні MANOVA."""
-        if not hasattr(self, '_manova_frame1'): return
-        bonf_alpha = alpha / max(len(dv_names),1)
-        colors_ = self._manova_gs.get("colors", self._manova_colors)
-        bar_alpha = self._manova_gs.get("bar_alpha", 0.85)
-        lw_ = self._manova_gs.get("lw", 2.0)
-        ms_ = self._manova_gs.get("ms", 7)
-        ff_ = self._manova_gs.get("font_family","Times New Roman")
-        fz_ = self._manova_gs.get("font_size", 9)
-        n_dv = len(dv_names)
-
-        # Перебудовуємо графік 1
-        for w in self._manova_frame1.winfo_children(): w.destroy()
-        fig1 = Figure(figsize=(10, 6), dpi=100)
-        for di,dv_nm in enumerate(dv_names):
-            ax=fig1.add_subplot(1,n_dv,di+1)
-            gm=[float(np.mean(groups_data[lv][:,di])) for lv in group_levels]
-            gs_=[float(np.std(groups_data[lv][:,di],ddof=1)/math.sqrt(len(groups_data[lv])))
-                 for lv in group_levels]
-            xpos=range(len(group_levels))
-            ax.bar(xpos,gm,yerr=gs_,capsize=4,
-                   color=[colors_[i%len(colors_)] for i in range(len(group_levels))],
-                   alpha=bar_alpha,error_kw={"ecolor":"#333","lw":1.5})
-            try:
-                p_uv=float(univ_rows[di][2]) if univ_rows and di<len(univ_rows) else float("nan")
-                mark="*" if p_uv<bonf_alpha else ""
-                ax.set_title(f"{dv_nm}\n(p={fmt(p_uv,3)}{mark})",fontsize=fz_,fontfamily=ff_)
-            except Exception:
-                ax.set_title(dv_nm,fontsize=fz_,fontfamily=ff_)
-            ax.set_xticks(list(xpos))
-            ax.set_xticklabels(group_levels,rotation=30,ha="right",fontsize=max(6,fz_-1))
-            ax.set_ylabel("Середнє ± СП" if di==0 else "",fontsize=fz_)
-            ax.yaxis.grid(True,alpha=0.3)
-            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-        fig1.suptitle("Групові середні (±СП) по залежних змінних",fontsize=fz_+1)
-        fig1.tight_layout()
-        self._manova_figs[1]=fig1
-        embed_figure(fig1, self._manova_frame1)
-
-        # Перебудовуємо графік 2
-        for w in self._manova_frame2.winfo_children(): w.destroy()
-        fig2=Figure(figsize=(max(6,n_dv*0.9+2),4),dpi=100)
-        ax2=fig2.add_subplot(111)
-        all_means=np.array([[float(np.mean(groups_data[lv][:,j])) for j in range(n_dv)]
-                             for lv in group_levels])
-        mn_col=all_means.min(axis=0); mx_col=all_means.max(axis=0)
-        rng=np.where(mx_col>mn_col,mx_col-mn_col,1.)
-        normed=(all_means-mn_col)/rng
-        for gi,lv in enumerate(group_levels):
-            ax2.plot(list(range(n_dv)),normed[gi],"o-",
-                     color=colors_[gi%len(colors_)],
-                     label=str(lv),linewidth=lw_,markersize=ms_)
-        ax2.set_xticks(list(range(n_dv)))
-        ax2.set_xticklabels(dv_names,rotation=20,ha="right",fontsize=fz_,fontfamily=ff_)
-        ax2.set_ylabel("Нормоване середнє (0–1)",fontsize=fz_,fontfamily=ff_)
-        ax2.set_title("Профільний графік груп (нормовані середні по ЗЗ)",fontsize=fz_+1,fontfamily=ff_)
-        ax2.legend(title="Група",fontsize=fz_,title_fontsize=fz_)
-        ax2.yaxis.grid(True,linestyle="--",alpha=0.4)
-        ax2.spines["top"].set_visible(False); ax2.spines["right"].set_visible(False)
-        fig2.tight_layout()
-        self._manova_figs[2]=fig2
-        embed_figure(fig2, self._manova_frame2)
+        """Перебудовує лише ті графіки MANOVA, які вже були відкриті."""
+        if self._manova_built.get("g1") and hasattr(self, '_manova_frame1'):
+            self._build_manova_g1_panel(self._manova_frame1.master, dv_names, groups_data,
+                                        group_levels, univ_rows, alpha)
+        if self._manova_built.get("g2") and hasattr(self, '_manova_frame2'):
+            self._build_manova_g2_panel(self._manova_frame2.master, dv_names, groups_data,
+                                        group_levels)
 
 
     def _copy_manova_text(self, win):
