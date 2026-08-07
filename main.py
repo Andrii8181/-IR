@@ -5619,24 +5619,90 @@ class DescriptiveWindow:
     def _show_result(self, headers, rows, arrays, names):
         win = tk.Toplevel(self.win)
         win.title("Описова статистика — Результати")
-        win.geometry("1340x600"); set_icon(win)
+        win.geometry("1300x760"); set_icon(win)
+        if not hasattr(self, "_bp_gs"): self._bp_gs = {}
+        if not hasattr(self, "_qq_gs"): self._qq_gs = {}
 
-        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати таблицю",
-                  font=("Times New Roman", 11),
+        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        sidebar = tk.Frame(main, width=210, bg="#2c3e50")
+        sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+        content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        tk.Label(sidebar, text="ОПИСОВА\nСТАТИСТИКА", bg="#2c3e50", fg="#ecf0f1",
+                 font=("Times New Roman",12,"bold"), pady=12, justify="center").pack(fill=tk.X)
+
+        active = {"panel": None, "btn": None}
+        def _show_panel(frame, btn):
+            if active["panel"] is not None: active["panel"].pack_forget()
+            if active["btn"] is not None: active["btn"].configure(bg="#2c3e50", fg="#bdc3c7")
+            frame.pack(fill=tk.BOTH, expand=True)
+            active["panel"] = frame; active["btn"] = btn
+            btn.configure(bg="#c62828", fg="white")
+
+        def _sidebar_btn(text, tooltip):
+            fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
+            b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+                          font=("Times New Roman",11), relief=tk.FLAT,
+                          anchor="w", padx=12, pady=6,
+                          activebackground="#c62828", activeforeground="white")
+            b.pack(fill=tk.X)
+            tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
+                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+            tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
+            return b
+
+        tbl_frame = tk.Frame(content)
+        bp_frame  = tk.Frame(content)
+        qq_frame  = tk.Frame(content)
+
+        b_tbl = _sidebar_btn("📋 Таблиця",     "Описові статистики")
+        b_bp  = _sidebar_btn("📊 Боксплоти",   "Розподіл показників")
+        b_qq  = _sidebar_btn("📈 QQ-графіки",  "Перевірка нормальності")
+
+        b_tbl.configure(command=lambda: _show_panel(tbl_frame, b_tbl))
+        b_bp.configure( command=lambda: _show_panel(bp_frame, b_bp))
+        b_qq.configure( command=lambda: _show_panel(qq_frame, b_qq))
+
+        self._build_desc_table_panel(tbl_frame, headers, rows, win)
+        self._build_desc_bp_panel(bp_frame, arrays, names)
+        self._build_desc_qq_panel(qq_frame, arrays, names)
+
+        _show_panel(tbl_frame, b_tbl)
+
+    def _build_desc_table_panel(self, frame, headers, rows, win):
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати таблицю", font=("Times New Roman",11),
                   command=lambda: self._copy_table(win, headers, rows)
                   ).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="📊 Боксплоти",
-                  font=("Times New Roman", 11),
-                  command=lambda: self._plot_boxes(arrays, names)
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="📈 QQ-графіки",
-                  font=("Times New Roman", 11),
-                  command=lambda: self._plot_qq(arrays, names)
-                  ).pack(side=tk.LEFT, padx=4)
+        tbl_frm, _ = make_tv(frame, headers, rows, min_col=80)
+        tbl_frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
-        frm, _ = make_tv(win, headers, rows, min_col=80)
-        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+    def _build_desc_bp_panel(self, frame, arrays, names):
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати PNG", font=("Times New Roman",11),
+                  command=lambda: self._copy_fig(self._bp_fig)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування", font=("Times New Roman",11),
+                  command=lambda: self._restyle_bp(frame, arrays, names)
+                  ).pack(side=tk.LEFT, padx=4)
+        self._bp_frame = tk.Frame(frame); self._bp_frame.pack(fill=tk.BOTH, expand=True)
+        self._bp_arrays = arrays; self._bp_names = names
+        self._draw_boxes(self._bp_frame, arrays, names)
+
+    def _build_desc_qq_panel(self, frame, arrays, names):
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати PNG", font=("Times New Roman",11),
+                  command=lambda: self._copy_fig(self._qq_fig)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування", font=("Times New Roman",11),
+                  command=lambda: self._restyle_qq(frame, arrays, names)
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Label(tb, text="Точки на прямій → нормальний розподіл ✓   |   "
+                          "Відхилення від прямої → ненормальний ⚠",
+                 font=("Times New Roman", 9), fg="#555").pack(side=tk.LEFT, padx=8)
+        self._qq_frame = tk.Frame(frame); self._qq_frame.pack(fill=tk.BOTH, expand=True)
+        self._qq_arrays = arrays; self._qq_names = names
+        self._draw_qq(self._qq_frame, arrays, names)
 
     def _copy_table(self, win, headers, rows):
         """Копіює таблицю у буфер обміну у форматі TSV (для вставки у Excel/Word)."""
@@ -5650,25 +5716,6 @@ class DescriptiveWindow:
             "Вставте у Word або Excel через Ctrl+V.")
 
     # ── Боксплот ─────────────────────────────────────────────
-    def _plot_boxes(self, arrays, names):
-        if not HAS_MPL: return
-        win = tk.Toplevel(self.win)
-        win.title("Боксплоти"); win.geometry("920x580"); set_icon(win)
-
-        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати PNG",
-                  font=("Times New Roman", 11),
-                  command=lambda: self._copy_fig(self._bp_fig)
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування",
-                  font=("Times New Roman", 11),
-                  command=lambda: self._restyle_bp(win, arrays, names)
-                  ).pack(side=tk.LEFT, padx=4)
-
-        self._bp_frame = tk.Frame(win); self._bp_frame.pack(fill=tk.BOTH, expand=True)
-        self._bp_arrays = arrays; self._bp_names = names
-        self._draw_boxes(self._bp_frame, arrays, names)
-
     def _draw_boxes(self, frame, arrays, names):
         for w in frame.winfo_children(): w.destroy()
         gs = self._bp_gs
@@ -5752,31 +5799,6 @@ class DescriptiveWindow:
         center_win(dlg)
 
     # ── QQ-графіки ───────────────────────────────────────────
-    def _plot_qq(self, arrays, names):
-        if not HAS_MPL: return
-        from scipy.stats import probplot
-        n = len(arrays); cols_ = min(n, 4); rows_n = math.ceil(n / cols_)
-        win = tk.Toplevel(self.win)
-        win.title("QQ-графіки"); win.geometry("1000x640"); set_icon(win)
-
-        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати PNG",
-                  font=("Times New Roman", 11),
-                  command=lambda: self._copy_fig(self._qq_fig)
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="⚙ Налаштування",
-                  font=("Times New Roman", 11),
-                  command=lambda: self._restyle_qq(win, arrays, names)
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Label(tb,
-                 text="Точки на прямій → нормальний розподіл ✓   |   "
-                      "Відхилення від прямої → ненормальний ⚠",
-                 font=("Times New Roman", 9), fg="#555").pack(side=tk.LEFT, padx=8)
-
-        self._qq_frame   = tk.Frame(win); self._qq_frame.pack(fill=tk.BOTH, expand=True)
-        self._qq_arrays  = arrays; self._qq_names = names
-        self._draw_qq(self._qq_frame, arrays, names)
-
     def _draw_qq(self, frame, arrays, names):
         from scipy.stats import probplot
         for w in frame.winfo_children(): w.destroy()
@@ -5927,7 +5949,7 @@ SHAPIRO-WILK:
     def __init__(self, parent):
         self.win = tk.Toplevel(parent)
         self.win.title("t-тест / Критерій Манна-Уітні")
-        self.win.geometry("700x660"); set_icon(self.win)
+        self.win.geometry("1080x640"); set_icon(self.win)
         self._build()
 
     def _build(self):
@@ -5950,49 +5972,63 @@ SHAPIRO-WILK:
                   font=("Times New Roman",11),
                   command=self._show_help).pack(side=tk.LEFT, padx=8)
 
-        # ── Тип тесту ────────────────────────────────────────
-        frm = tk.Frame(self.win, padx=12); frm.pack(fill=tk.BOTH, expand=True)
-        tk.Label(frm, text="Тип тесту:",
-                 font=("Times New Roman",12,"bold")).grid(row=0, column=0, sticky="w", pady=4)
-        self.test_var = tk.StringVar(value="ind")
+        # ── Дві колонки: зліва — введення, справа — звіт ─────
+        main = tk.Frame(self.win); main.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0,8))
+
+        left = tk.Frame(main, width=380)
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(0,10))
+        left.pack_propagate(False)
+
+        right = tk.Frame(main)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # ── ЛІВА КОЛОНКА: тип тесту + дані ───────────────────
         rf = ("Times New Roman",12)
+        tk.Label(left, text="Тип тесту:",
+                 font=("Times New Roman",12,"bold")).pack(anchor="w", pady=(0,4))
+        self.test_var = tk.StringVar(value="ind")
         tests = [("Незалежні вибірки (2 різні групи)", "ind"),
                  ("Парні вибірки (до/після, однакові об'єкти)", "paired"),
                  ("Одна вибірка (проти відомого μ₀)", "one")]
-        for ri, (txt, val) in enumerate(tests):
-            tk.Radiobutton(frm, text=txt, variable=self.test_var, value=val,
-                           font=rf, command=self._update_ui
-                           ).grid(row=ri+1, column=0, columnspan=2, sticky="w")
+        for txt, val in tests:
+            tk.Radiobutton(left, text=txt, variable=self.test_var, value=val,
+                           font=rf, command=self._update_ui,
+                           wraplength=360, justify="left", anchor="w"
+                           ).pack(fill=tk.X, anchor="w")
 
-        # ── Поля введення ─────────────────────────────────────
-        tk.Label(frm, text="Група 1 / Вибірка:",
-                 font=("Times New Roman",12)).grid(row=4, column=0, sticky="w", pady=10)
-        self.e1 = tk.Text(frm, width=55, height=5, font=("Times New Roman",11))
-        self.e1.grid(row=5, column=0, columnspan=2, sticky="ew")
-        tk.Label(frm, text="Вводьте через кому, пробіл або кожне значення з нового рядка",
-                 font=("Times New Roman",9), fg="#666"
-                 ).grid(row=6, column=0, columnspan=2, sticky="w")
+        tk.Label(left, text="Група 1 / Вибірка:",
+                 font=("Times New Roman",12)).pack(anchor="w", pady=(14,2))
+        self.e1 = tk.Text(left, width=34, height=6, font=("Times New Roman",11))
+        self.e1.pack(fill=tk.X)
+        tk.Label(left, text="Через кому, пробіл або кожне значення з нового рядка",
+                 font=("Times New Roman",9), fg="#666", wraplength=360, justify="left"
+                 ).pack(anchor="w")
 
-        self.lbl2 = tk.Label(frm, text="Група 2:", font=("Times New Roman",12))
-        self.lbl2.grid(row=7, column=0, sticky="w", pady=8)
-        self.e2 = tk.Text(frm, width=55, height=5, font=("Times New Roman",11))
-        self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
+        self.lbl2 = tk.Label(left, text="Група 2:", font=("Times New Roman",12))
+        self.e2 = tk.Text(left, width=34, height=6, font=("Times New Roman",11))
 
-        self.lbl_mu = tk.Label(frm, text="Відоме середнє (μ₀):", font=("Times New Roman",12))
-        self.e_mu = tk.Entry(frm, width=12, font=("Times New Roman",12))
+        # «Відоме середнє» — виразний виділений блок, а не дрібне поле збоку
+        self.mu_frame = tk.Frame(left, bg="#eef3f8", padx=12, pady=10,
+                                 highlightbackground="#1a4b8c", highlightthickness=1)
+        self.lbl_mu = tk.Label(self.mu_frame, text="Відоме (гіпотетичне) середнє μ₀:",
+                               font=("Times New Roman",12,"bold"),
+                               bg="#eef3f8", fg="#1a4b8c", wraplength=330, justify="left")
+        self.lbl_mu.pack(anchor="w")
+        self.e_mu = tk.Entry(self.mu_frame, width=14, font=("Times New Roman",14))
         self.e_mu.insert(0, "0")
+        self.e_mu.pack(anchor="w", pady=(6,0))
 
-        # ── Результати (scrollable) ───────────────────────────
-        res_frm = tk.Frame(frm); res_frm.grid(row=13, column=0, columnspan=2,
-                                               sticky="nsew", pady=(8,4))
-        frm.rowconfigure(13, weight=1); frm.columnconfigure(0, weight=1)
+        # ── ПРАВА КОЛОНКА: результати (на всю висоту) ────────
+        tk.Label(right, text="Результати:",
+                 font=("Times New Roman",12,"bold")).pack(anchor="w", pady=(0,4))
+        res_frm = tk.Frame(right); res_frm.pack(fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(res_frm, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.res_txt = tk.Text(res_frm, wrap="word",
-                               font=("Times New Roman",11),
+                               font=("Times New Roman",12),
                                yscrollcommand=vsb.set,
                                relief=tk.FLAT, bg="#f8f8f8",
-                               padx=8, pady=6, cursor="arrow",
-                               state="disabled", height=8)
+                               padx=12, pady=10, cursor="arrow",
+                               state="disabled")
         self.res_txt.pack(fill=tk.BOTH, expand=True)
         vsb.config(command=self.res_txt.yview)
 
@@ -6001,13 +6037,12 @@ SHAPIRO-WILK:
     def _update_ui(self):
         t = self.test_var.get()
         if t == "one":
-            self.lbl2.grid_remove(); self.e2.grid_remove()
-            self.lbl_mu.grid(row=7, column=0, sticky="w", pady=(8,2))
-            self.e_mu.grid(row=7, column=1, sticky="w", padx=6)
+            self.lbl2.pack_forget(); self.e2.pack_forget()
+            self.mu_frame.pack(fill=tk.X, pady=(12,2))
         else:
-            self.lbl_mu.grid_remove(); self.e_mu.grid_remove()
-            self.lbl2.grid(row=7, column=0, sticky="w", pady=(8,2))
-            self.e2.grid(row=8, column=0, columnspan=2, sticky="ew")
+            self.mu_frame.pack_forget()
+            self.lbl2.pack(anchor="w", pady=(12,2))
+            self.e2.pack(fill=tk.X)
             txt = ("Група 2 (парна — той самий порядок що й Група 1):"
                    if t == "paired" else "Група 2:")
             self.lbl2.configure(text=txt)
