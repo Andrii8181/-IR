@@ -5659,13 +5659,33 @@ class DescriptiveWindow:
         b_bp  = _sidebar_btn("📊 Боксплоти",   "Розподіл показників")
         b_qq  = _sidebar_btn("📈 QQ-графіки",  "Перевірка нормальності")
 
-        b_tbl.configure(command=lambda: _show_panel(tbl_frame, b_tbl))
-        b_bp.configure( command=lambda: _show_panel(bp_frame, b_bp))
-        b_qq.configure( command=lambda: _show_panel(qq_frame, b_qq))
+        # Панелі з графіками будуються ЛІНИВО — лише при першому переході
+        # на них, коли їхній фрейм вже показаний (packed) на екрані. Якщо
+        # будувати matplotlib-графік у ще прихованому (unpacked) фреймі
+        # заздалегідь, на деяких системах він потім не перемальовується
+        # коректно після показу — звідси й «графік не відображається».
+        built = {"bp": False, "qq": False}
+
+        def _open_tbl():
+            _show_panel(tbl_frame, b_tbl)
+        def _open_bp():
+            _show_panel(bp_frame, b_bp)
+            if not built["bp"]:
+                bp_frame.update_idletasks()
+                self._build_desc_bp_panel(bp_frame, arrays, names)
+                built["bp"] = True
+        def _open_qq():
+            _show_panel(qq_frame, b_qq)
+            if not built["qq"]:
+                qq_frame.update_idletasks()
+                self._build_desc_qq_panel(qq_frame, arrays, names)
+                built["qq"] = True
+
+        b_tbl.configure(command=_open_tbl)
+        b_bp.configure( command=_open_bp)
+        b_qq.configure( command=_open_qq)
 
         self._build_desc_table_panel(tbl_frame, headers, rows, win)
-        self._build_desc_bp_panel(bp_frame, arrays, names)
-        self._build_desc_qq_panel(qq_frame, arrays, names)
 
         _show_panel(tbl_frame, b_tbl)
 
