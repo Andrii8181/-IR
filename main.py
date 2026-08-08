@@ -1777,6 +1777,7 @@ class CorrelationWindow:
         for i in range(self.rows):
             self._add_row_widgets(i)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _build_headers(self):
         for j in range(self.cols):
@@ -1822,6 +1823,7 @@ class CorrelationWindow:
         i = len(self.entries)
         self._add_row_widgets(i); self.rows += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
 
     def del_row(self):
@@ -1848,6 +1850,7 @@ class CorrelationWindow:
             e.bind("<Return>", self._on_enter); e.bind("<Tab>", self._on_tab)
             row_.append(e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def del_col(self):
         if self.cols <= 2: return
@@ -5540,6 +5543,7 @@ class DescriptiveWindow:
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     # ── Перейменування стовпця ───────────────────────────────
     def _rename_col(self, idx):
@@ -5567,6 +5571,7 @@ class DescriptiveWindow:
             e.grid(row=i+1, column=j, padx=2, pady=2); row_.append(e)
         self.entries.append(row_); self.rows += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
         self._canvas.config(scrollregion=self._canvas.bbox("all"))
 
     def _del_row(self):
@@ -5590,6 +5595,7 @@ class DescriptiveWindow:
                          highlightthickness=1, highlightbackground="#c0c0c0")
             e.grid(row=i+1, column=ci, padx=2, pady=2); row_.append(e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_col(self):
         if self.cols <= 1: return
@@ -7611,6 +7617,10 @@ class ClusterWindow:
         tk.Spinbox(top, from_=2, to=20, textvariable=self.k_var,
                    width=4, font=("Times New Roman",11)).pack(side=tk.LEFT, padx=2)
 
+        tk.Button(top, text="📊 Попередній аналіз", bg="#1a6b1a", fg="white",
+                  font=("Times New Roman",11), relief=tk.FLAT, padx=8, pady=3,
+                  cursor="hand2", command=self._recommend_method).pack(side=tk.LEFT, padx=(10,4))
+
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
                             font=("Times New Roman",11), relief=tk.RAISED, bd=2)
@@ -7673,6 +7683,7 @@ class ClusterWindow:
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     # ── Перейменування ────────────────────────────────────────
     def _rename_col(self, idx):
@@ -7701,6 +7712,7 @@ class ClusterWindow:
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_row(self):
         if not self.entries: return
@@ -7723,6 +7735,7 @@ class ClusterWindow:
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_col(self):
         if self.cols_n <= 2: return
@@ -7874,6 +7887,100 @@ class ClusterWindow:
         self._cl_fig = fig
 
         embed_figure(fig, frame)
+
+    # ── Попередній аналіз: рекомендація методу кластеризації ──
+    def _recommend_method(self):
+        from scipy.cluster.hierarchy import linkage, cophenet
+        from scipy.spatial.distance import pdist
+        from scipy.stats import zscore
+
+        raw = [[e.get().strip() for e in row] for row in self.entries]
+        raw = [r for r in raw if any(v for v in r)]
+        obj_names = []; data_matrix = []
+        for row in raw:
+            nm = row[0].strip() if row else ""
+            if not nm: continue
+            vals = []
+            for v in row[1:]:
+                if not v: continue
+                try: vals.append(float(v.replace(",",".")))
+                except Exception: continue
+            if vals:
+                obj_names.append(nm); data_matrix.append(vals)
+
+        if len(data_matrix) < 4:
+            messagebox.showwarning("Замало об'єктів",
+                "Потрібно щонайменше 4 об'єкти для попереднього аналізу."); return
+
+        min_cols = min(len(r) for r in data_matrix)
+        X = np.array([r[:min_cols] for r in data_matrix], dtype=float)
+        X_std = zscore(X, axis=0, ddof=1); X_std = np.nan_to_num(X_std)
+        orig_dist = pdist(X_std)
+
+        candidates = []
+        for method in ["ward","complete","average","single"]:
+            try:
+                Z = linkage(X_std, method=method)
+                c, _ = cophenet(Z, orig_dist)
+                candidates.append((method, float(c)))
+            except Exception:
+                continue
+
+        if not candidates:
+            messagebox.showwarning("", "Не вдалося порівняти методи на цих даних."); return
+
+        candidates.sort(key=lambda x: -x[1])
+        best = candidates[0][0]
+        self._show_cluster_recommendation(candidates, best)
+
+    def _show_cluster_recommendation(self, candidates, best):
+        win = tk.Toplevel(self.win)
+        win.title("Попередній аналіз — рекомендація методу кластеризації")
+        win.geometry("620x420"); set_icon(win)
+        rf = ("Times New Roman",11)
+
+        tk.Label(win, text="Порівняння методів за кофенетичною кореляцією:",
+                 font=("Times New Roman",12,"bold"), anchor="w"
+                 ).pack(fill=tk.X, padx=12, pady=(12,4))
+        tk.Label(win,
+                 text="Кофенетична кореляція показує, наскільки добре ієрархія "
+                      "кластеризації (дендрограма) зберігає РЕАЛЬНІ відстані між "
+                      "об'єктами з вихідних даних. Чим ближче до 1 — тим точніше "
+                      "дендрограма відображає структуру даних.",
+                 font=("Times New Roman",10), fg="#555", justify="left",
+                 wraplength=580, anchor="w").pack(fill=tk.X, padx=12, pady=(0,10))
+
+        def interp(c):
+            if c >= 0.75: return "хороша відповідність"
+            if c >= 0.5:  return "помірна відповідність"
+            return "слабка відповідність"
+
+        rows = [[("★ " if m==best else "  ")+m, fmt(c,4), interp(c)] for m,c in candidates]
+        frm, _ = make_tv(win, ["Метод","Кофенетична кореляція","Оцінка"], rows)
+        frm.pack(fill=tk.X, padx=12, pady=4)
+
+        tk.Label(win,
+                 text="⚠ Це орієнтир, а не остаточне рішення. Ward зазвичай дає "
+                      "компактні, збалансовані за розміром кластери й є типовим "
+                      "вибором за замовчуванням в агробіологічних дослідженнях, "
+                      "навіть якщо його кофенетична кореляція не найвища — тому "
+                      "що цей критерій оцінює лише точність відтворення відстаней, "
+                      "а не практичну інтерпретованість чи збалансованість груп. "
+                      "Single linkage часто дає найвищу кофенетичну кореляцію, "
+                      "але схильний до «ланцюгового ефекту» (витягнуті, "
+                      "невиразні кластери) — тому висока кореляція сама по собі "
+                      "не завжди означає кращий практичний результат.",
+                 font=("Times New Roman",10), fg="#555", justify="left",
+                 wraplength=580, anchor="w").pack(fill=tk.X, padx=12, pady=(6,8))
+
+        bf = tk.Frame(win); bf.pack(pady=(0,12))
+        def _apply():
+            self.meth_var.set(best); win.destroy()
+        tk.Button(bf, text=f"Обрати «{best}» і закрити", bg="#1a6b1a", fg="white",
+                  font=rf, command=_apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Закрити (оберу сам)", font=rf,
+                  command=win.destroy).pack(side=tk.LEFT, padx=4)
+        center_win(win)
 
     # ── Виконання аналізу ─────────────────────────────────────
     def _run(self):
@@ -8141,6 +8248,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     # ── Перейменування заголовка ──────────────────────────────
     def _rename_col(self, idx):
@@ -8169,6 +8277,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_row(self):
         if not self.entries: return
@@ -8191,6 +8300,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_col(self):
         if self.cols_n <= 3: return
@@ -8303,7 +8413,7 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
     # ── Toolbar окремого графіка (як у звітах ANOVA) ──────────
     def _pca_tab_toolbar(self, frame, key, rebuild_fn, settings_fn):
         tb = tk.Frame(frame, bg="#f0f0f0", padx=4, pady=4)
-        tb.pack(fill=tk.X, side=tk.BOTTOM)
+        tb.pack(fill=tk.X, side=tk.TOP)
         tk.Button(tb, text="💾 Зберегти PNG", font=("Times New Roman",10),
                   command=lambda: self._pca_save_png(key)).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📋 Копіювати", font=("Times New Roman",10),
@@ -8874,6 +8984,7 @@ class RepeatedMeasuresWindow:
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     # ── Перейменування часової точки ─────────────────────────
     def _rename_time_col(self, idx):
@@ -8904,6 +9015,7 @@ class RepeatedMeasuresWindow:
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_row(self):
         if not self.entries: return
@@ -8926,6 +9038,7 @@ class RepeatedMeasuresWindow:
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_col(self):
         if self.cols_n <= 3: return
@@ -9591,6 +9704,7 @@ class MixedRepeatedWindow:
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     # ── Перейменування дати ───────────────────────────────────
     def _rename_col(self, idx):
@@ -9621,6 +9735,7 @@ class MixedRepeatedWindow:
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_row(self):
         if not self.entries: return
@@ -9644,6 +9759,7 @@ class MixedRepeatedWindow:
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_col(self):
         if self.cols_n <= 4: return  # мінімум Варіант+Повт+2 дати
@@ -10527,6 +10643,7 @@ class StabilityWindow:
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     # ── Перейменування середовища ─────────────────────────────
     def _rename_env(self, idx):
@@ -10557,6 +10674,7 @@ class StabilityWindow:
             row_.append(e)
         self.entries.append(row_); self.rows_n += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_row(self):
         if not self.entries: return
@@ -10578,6 +10696,7 @@ class StabilityWindow:
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_col(self):
         if self.cols_n <= 3: return
@@ -10920,6 +11039,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _show_help(self):
         win = tk.Toplevel(self.win)
@@ -10977,6 +11097,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             row_.append(e)
         self.entries.append(row_); self.n_rows += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
         self.inner.update_idletasks()
 
     def _del_row(self):
@@ -11006,6 +11127,7 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         self.n_cols += 1
         self._regrid_columns()
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_covariate(self):
         n_covariates = self.n_cols - 2  # без стовпця "Група" і стовпця "Залежна Y"
@@ -14032,6 +14154,7 @@ class HomogeneousPlotWindow:
                 row_e.append(e)
             self.entries.append(row_e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
         self._status_lbl = tk.Label(self.win, text="", fg="#B71C1C",
                                     font=("Times New Roman",10), wraplength=1360,
@@ -14067,6 +14190,7 @@ class HomogeneousPlotWindow:
             row_e.append(e)
         self.entries.append(row_e); self.rows_n += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_row(self):
         if not self.entries: return
