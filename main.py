@@ -9492,6 +9492,8 @@ class MixedRepeatedWindow:
             "show_grid": True, "alpha_fill": 0.12,
             "colors": ["#4c72b0","#dd8452","#55a868","#c44e52",
                        "#8172b2","#937860","#da8bc3","#8c8c8c"],
+            "err_mode": "all",       # "all" | "none" | "selected"
+            "err_selected": [],      # назви варіантів, коли err_mode == "selected"
         }
         self._build()
 
@@ -10019,20 +10021,31 @@ class MixedRepeatedWindow:
 
         # Основна таблиця ANOVA
         _head("Зведена таблиця дисперсійного аналізу")
-        _txt("Варіант тестується через whole-plot error; "
-             "Час і Взаємодія — через sub-plot error.", "#555")
+        _txt("Ефект Варіанту перевіряється відносно «Похибки між повторностями» —\n"
+             "вона відображає, наскільки різняться між собою повторності ОДНОГО Й ТОГО Ж\n"
+             "варіанту (усереднено по часу). Ефекти Часу і Взаємодії перевіряються\n"
+             "відносно окремої, зазвичай значно меншої «Похибки всередині повторностей»\n"
+             "(залишкової мінливості вимірів у часі для кожної повторності окремо).\n"
+             "Це і є суть split-plot: варіант — «велика ділянка», час — «підділянка»,\n"
+             "кожна має власну похибку — використання не тієї похибки дало б хибний F.",
+             "#555")
         def _row(name, SS, df, MS, F, p, e2, note=""):
             mark = ("**" if p<alpha*0.2 else ("*" if p<alpha else "–")) if not math.isnan(p) else "–"
             return [name, fmt(SS,4), str(df), fmt(MS,4), fmt(F,4),
                     fmt(p,4), mark, fmt(e2,4), eta2_label(e2), note]
         anova_tbl = [
-            _row("Варіант (between)",    SS_var,    df_var,    MS_var,    F_var,   p_var,   e2_var,  "÷ WP-error"),
-            ["  Whole-plot error",       fmt(SS_wp_err,4), str(df_wp_err), fmt(MS_wp_err,4),"–","–","–","–","",""],
-            _row("Час (within)",          SS_time,   df_time,   MS_time,   F_time,  p_time,  e2_time, "÷ SP-error"),
-            _row("Варіант × Час",         SS_inter,  df_inter,  MS_inter,  F_inter, p_inter, e2_inter,"÷ SP-error"),
-            ["  Sub-plot error",         fmt(SS_sub_err,4),str(df_sub_err),fmt(MS_sub_err,4),"–","–","–","–","",""],
+            _row("Варіант (between)",    SS_var,    df_var,    MS_var,    F_var,   p_var,   e2_var,
+                 "÷ Похибка між повторностями"),
+            ["  Похибка між повторностями (Whole-plot)",
+             fmt(SS_wp_err,4), str(df_wp_err), fmt(MS_wp_err,4),"–","–","–","–","",""],
+            _row("Час (within)",          SS_time,   df_time,   MS_time,   F_time,  p_time,  e2_time,
+                 "÷ Похибка всередині повторностей"),
+            _row("Варіант × Час",         SS_inter,  df_inter,  MS_inter,  F_inter, p_inter, e2_inter,
+                 "÷ Похибка всередині повторностей"),
+            ["  Похибка всередині повторностей (Sub-plot)",
+             fmt(SS_sub_err,4),str(df_sub_err),fmt(MS_sub_err,4),"–","–","–","–","",""],
         ]
-        _tbl(["Джерело","SS","df","MS","F","p","Знач.","η²","Ефект","Знаменник"],
+        _tbl(["Джерело","SS","df","MS","F","p","Знач.","η²","Ефект","Знаменник F-тесту"],
              anova_tbl)
 
         # Висновки
@@ -10093,6 +10106,8 @@ class MixedRepeatedWindow:
         gs = self._plot_gs
         k = len(time_names)
         colors = gs["colors"]
+        err_mode = gs.get("err_mode", "all")
+        err_sel  = set(gs.get("err_selected", []))
         fig = Figure(figsize=(10, 6), dpi=100)
         ax  = fig.add_subplot(111)
 
@@ -10100,16 +10115,23 @@ class MixedRepeatedWindow:
             col = colors[ci % len(colors)]
             means_ = np.mean(var_data[lv], axis=0)
             ses_   = np.std(var_data[lv], axis=0, ddof=1) / math.sqrt(len(var_data[lv]))
-            ax.errorbar(range(k), means_, yerr=ses_,
-                        fmt=gs["marker"]+"-", capsize=5,
-                        color=col, ecolor=col,
-                        linewidth=gs["linewidth"],
-                        markersize=gs["markersize"],
-                        label=str(lv), alpha=0.9, zorder=3)
-            # Тіньова смуга ±СП
-            ax.fill_between(range(k),
-                            means_-ses_, means_+ses_,
-                            alpha=gs["alpha_fill"], color=col)
+            show_bars = (err_mode == "all") or (err_mode == "selected" and lv in err_sel)
+            if show_bars:
+                ax.errorbar(range(k), means_, yerr=ses_,
+                            fmt=gs["marker"]+"-", capsize=5,
+                            color=col, ecolor=col,
+                            linewidth=gs["linewidth"],
+                            markersize=gs["markersize"],
+                            label=str(lv), alpha=0.9, zorder=3)
+                # Тіньова смуга ±СП
+                ax.fill_between(range(k),
+                                means_-ses_, means_+ses_,
+                                alpha=gs["alpha_fill"], color=col)
+            else:
+                ax.plot(range(k), means_, gs["marker"]+"-",
+                       color=col, linewidth=gs["linewidth"],
+                       markersize=gs["markersize"], label=str(lv),
+                       alpha=0.9, zorder=3)
 
         ax.set_xticks(range(k))
         ax.set_xticklabels(time_names,
@@ -10117,9 +10139,12 @@ class MixedRepeatedWindow:
                            fontfamily=gs["font_family"])
         ax.set_xlabel("Дата / Часова точка",
                       fontsize=gs["font_size"], fontfamily=gs["font_family"])
-        ax.set_ylabel("Середнє ± СП",
+        ax.set_ylabel("Середнє" + (" ± СП" if err_mode != "none" else ""),
                       fontsize=gs["font_size"], fontfamily=gs["font_family"])
-        ax.set_title("Динаміка по варіантах (Середнє ± СП)",
+        title_suffix = {"all": "Середнє ± СП, усі варіанти",
+                        "none": "лише середні, без смуг похибки",
+                        "selected": "Середнє ± СП для обраних варіантів"}[err_mode]
+        ax.set_title(f"Динаміка по варіантах ({title_suffix})",
                      fontsize=gs["font_size"]+1, fontfamily=gs["font_family"])
         ax.legend(title="Варіант", fontsize=gs["font_size"],
                   title_fontsize=gs["font_size"])
@@ -10178,8 +10203,50 @@ class MixedRepeatedWindow:
             elif wt=="check":
                 tk.Checkbutton(frm, variable=var).grid(row=ri, column=1, sticky="w", padx=8)
 
-        # Кольори варіантів
+        # Смуги похибки (±СП) — усі / жодної / обрані варіанти
         base_r = len(rows_cfg)
+        err_row = base_r
+        tk.Label(frm, text="Смуги ±СП (похибка):", font=rb_f).grid(
+            row=err_row, column=0, sticky="w", pady=(10,4))
+        mode_map = {"Показати для всіх варіантів": "all",
+                    "Не показувати (лише лінії середніх)": "none",
+                    "Показати лише для обраних нижче": "selected"}
+        mode_rev = {v: k for k, v in mode_map.items()}
+        mode_disp_v = tk.StringVar(
+            value=mode_rev.get(gs.get("err_mode", "all"), "Показати для всіх варіантів"))
+        mode_cb = ttk.Combobox(frm, textvariable=mode_disp_v, values=list(mode_map.keys()),
+                               state="readonly", width=32)
+        mode_cb.grid(row=err_row, column=1, sticky="w", padx=8, pady=(10,4))
+
+        tk.Label(frm, text="Довірчі смуги — це ±СП (стандартна похибка середнього),\n"
+                          "не довірчий інтервал. При багатьох варіантах вони можуть\n"
+                          "накладатись одна на одну — оберіть режим вище, щоб показати\n"
+                          "лише потрібні.",
+                 font=("Times New Roman",9), fg="#666", justify="left"
+                 ).grid(row=err_row+1, column=0, columnspan=2, sticky="w", padx=(0,0))
+
+        tk.Label(frm, text="Обрані варіанти:", font=rb_f).grid(
+            row=err_row+2, column=0, sticky="nw", pady=(8,4))
+        sel_frame = tk.Frame(frm)
+        sel_frame.grid(row=err_row+2, column=1, sticky="w", padx=8, pady=(8,4))
+        cur_sel = set(gs.get("err_selected", []))
+        sel_vars = {}
+        for lv in var_levels:
+            v = tk.BooleanVar(value=(lv in cur_sel))
+            cb = tk.Checkbutton(sel_frame, text=str(lv), variable=v,
+                                font=("Times New Roman",10), anchor="w")
+            cb.pack(fill=tk.X, anchor="w")
+            sel_vars[lv] = v
+
+        def _toggle_sel_state(*_):
+            state = tk.NORMAL if mode_map[mode_disp_v.get()] == "selected" else tk.DISABLED
+            for child in sel_frame.winfo_children():
+                child.configure(state=state)
+        mode_cb.bind("<<ComboboxSelected>>", _toggle_sel_state)
+        _toggle_sel_state()
+
+        # Кольори варіантів
+        base_r = err_row + 3
         tk.Label(frm, text="Кольори варіантів:", font=rb_f).grid(
             row=base_r, column=0, sticky="w", pady=4)
         cf = tk.Frame(frm); cf.grid(row=base_r, column=1, sticky="w")
@@ -10194,11 +10261,14 @@ class MixedRepeatedWindow:
             btn.configure(command=_pick); col_btns.append(btn)
 
         def apply():
+            selected = [lv for lv, v in sel_vars.items() if v.get()]
             self._plot_gs.update({
                 "font_family": ff_v.get(), "font_size": fz_v.get(),
                 "linewidth":   lw_v.get(), "markersize": ms_v.get(),
                 "marker":      mk_v.get(), "show_grid": gr_v.get(),
                 "alpha_fill":  al_v.get(), "colors": col_refs,
+                "err_mode":    mode_map[mode_disp_v.get()],
+                "err_selected": selected,
             })
             dlg.destroy()
             self._draw_graph(var_levels, var_data, time_names, alpha)
