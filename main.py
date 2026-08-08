@@ -2553,34 +2553,48 @@ class CorrelationWindow:
         renderer = fig.canvas.get_renderer()
         fig_w_px, fig_h_px = fig.canvas.get_width_height()
 
-        main_cv.create_window((0, 0), window=widget, anchor="nw")
-        # Невеликий запас з усіх боків (+40px), щоб прокрутка завжди мала
-        # видимий і відчутний простір для руху — навіть коли вся матриця
-        # й так уже вміщається у вікні, повзунок не мусить виглядати
-        # «заблокованим» на всю довжину треку.
-        PAD = 40
-        main_cv.configure(scrollregion=(0, 0, fig_w_px + PAD, fig_h_px + PAD))
+        win_id = main_cv.create_window((0, 0), window=widget, anchor="nw")
+        main_cv.update_idletasks()
+        # Реальний розмір відрендереного віджета (а не лише розрахункове
+        # значення matplotlib) — про всяк випадок, якщо є розбіжність
+        # через масштабування дисплея (той самий клас проблеми, що й у
+        # embed_figure_scrollable).
+        bbox0 = main_cv.bbox(win_id)
+        real_w = (bbox0[2]-bbox0[0]) if bbox0 else fig_w_px
+        real_h = (bbox0[3]-bbox0[1]) if bbox0 else fig_h_px
+        sx = real_w / fig_w_px if fig_w_px else 1.0
+        sy = real_h / fig_h_px if fig_h_px else 1.0
 
-        # X-межі кожного стовпця — з підграфіків першого ряду (i=0)
+        # Невеликий запас (+40px) з усіх боків, щоб прокрутка завжди мала
+        # видимий і відчутний простір для руху. Запас застосовано ОДНАКОВО
+        # до main_cv і до відповідного header-канваса (по тій самій осі) —
+        # інакше однакова частка прокрутки (fraction) відповідала б різним
+        # пікселям у різних канвасах, і заголовки «розсинхронізовувались»
+        # би з контентом що далі, то більше.
+        PAD = 40
+        main_cv.configure(scrollregion=(0, 0, real_w + PAD, real_h + PAD))
+
+        # X-межі кожного стовпця — з підграфіків першого ряду (i=0),
+        # переведені у реальні піксельні координати віджета (масштаб sx)
         col_bounds = []
         for j in range(n):
             ax = fig.axes[j]
             bb = ax.get_window_extent(renderer=renderer)
-            col_bounds.append((bb.x0, bb.x1))
+            col_bounds.append((bb.x0*sx, bb.x1*sx))
         # Y-межі кожного ряду — з підграфіків першого стовпця (j=0),
-        # переведено в координати Tkinter (відлік згори)
+        # переведено в координати Tkinter (відлік згори) й масштаб sy
         row_bounds = []
         for i in range(n):
             ax = fig.axes[i*n]
             bb = ax.get_window_extent(renderer=renderer)
-            row_bounds.append((fig_h_px - bb.y1, fig_h_px - bb.y0))
+            row_bounds.append(((fig_h_px - bb.y1)*sy, (fig_h_px - bb.y0)*sy))
 
         for j, lbl in enumerate(labels):
             x0, x1 = col_bounds[j]
             top_cv.create_window((x0+x1)/2, HEADER_H/2, anchor="center",
                 window=tk.Label(top_cv, text=lbl, bg="#dfe7f2", fg="#1a4b8c",
                                 font=(ff, 9, "bold"), wraplength=max(20, int(x1-x0))))
-        top_cv.configure(scrollregion=(0, 0, fig_w_px, HEADER_H))
+        top_cv.configure(scrollregion=(0, 0, real_w + PAD, HEADER_H))
 
         for i, lbl in enumerate(labels):
             y0, y1 = row_bounds[i]
@@ -2588,7 +2602,7 @@ class CorrelationWindow:
                 window=tk.Label(left_cv, text=lbl, bg="#dfe7f2", fg="#1a4b8c",
                                 font=(ff, 9, "bold"), wraplength=HEADER_W-14,
                                 justify="center"))
-        left_cv.configure(scrollregion=(0, 0, HEADER_W, fig_h_px))
+        left_cv.configure(scrollregion=(0, 0, HEADER_W, real_h + PAD))
 
         def _sync_xview(*args):
             main_cv.xview(*args); top_cv.xview(*args)
@@ -11728,7 +11742,25 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
 
         self._manova_figs = {}
         self._manova_colors = ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"]
-        if not hasattr(self, "_manova_gs"): self._manova_gs = {}
+        if not hasattr(self, "_manova_gs"):
+            self._manova_gs = {
+                "colors": ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"],
+                "bar_alpha": 0.85, "lw": 2.0, "ms": 7,
+                "font_family": "Times New Roman", "font_size": 9,
+            }
+        # Єдине джерело правди для параметрів цього аналізу — читається
+        # діалогом налаштувань незалежно від того, з якої вкладки (графіка)
+        # його відкрито. Раніше кожна вкладка передавала свій власний набір
+        # параметрів у _restyle_manova, і з вкладки "Профільний графік"
+        # передавались НЕПРАВИЛЬНІ значення (univ_rows=None, alpha=0.05
+        # замість реального α) — тому застосування налаштувань звідти
+        # ламало позначки значущості на вкладці "Групові середні".
+        self._manova_dv_names    = dv_names
+        self._manova_groups_data = groups_data
+        self._manova_group_levels = group_levels
+        self._manova_univ_rows   = univ_rows
+        self._manova_alpha       = alpha
+        self._manova_p_pillai    = p_pillai
         self._manova_built = {"g1": False, "g2": False}
 
         main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
@@ -11952,8 +11984,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         tk.Button(tb, text="📋 Копіювати", font=("Times New Roman",11),
                   command=lambda: self._copy_manova_fig(1)).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="⚙ Налаштування", font=("Times New Roman",11),
-                  command=lambda: self._restyle_manova(
-                      frame, dv_names, groups_data, group_levels, univ_rows, alpha, None)
+                  command=lambda: self._restyle_manova(frame)
                   ).pack(side=tk.LEFT, padx=4)
 
         plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
@@ -12002,8 +12033,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         tk.Button(tb, text="📋 Копіювати", font=("Times New Roman",11),
                   command=lambda: self._copy_manova_fig(2)).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="⚙ Налаштування", font=("Times New Roman",11),
-                  command=lambda: self._restyle_manova(
-                      frame, dv_names, groups_data, group_levels, None, 0.05, None)
+                  command=lambda: self._restyle_manova(frame)
                   ).pack(side=tk.LEFT, padx=4)
 
         plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
@@ -12088,9 +12118,19 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         if ok: messagebox.showinfo("","Графік скопійовано.\nВставте у Word через Ctrl+V.")
         else:   messagebox.showwarning("",f"Помилка: {msg}")
 
-    def _restyle_manova(self, win, dv_names, groups_data, group_levels,
-                        univ_rows, alpha, p_pillai):
-        """Діалог налаштувань кольорів/розмірів графіків MANOVA."""
+    def _restyle_manova(self, win):
+        """Діалог налаштувань кольорів/розмірів графіків MANOVA.
+        Параметри аналізу (dv_names, groups_data, group_levels, univ_rows,
+        alpha, p_pillai) беруться з self._manova_* — це єдине джерело
+        правди, незалежно від того, з якої вкладки (графіка) відкрито
+        діалог, тож застосування налаштувань завжди перебудовує обидва
+        графіки з правильними, узгодженими даними."""
+        dv_names     = self._manova_dv_names
+        groups_data  = self._manova_groups_data
+        group_levels = self._manova_group_levels
+        univ_rows    = self._manova_univ_rows
+        alpha        = self._manova_alpha
+        p_pillai     = self._manova_p_pillai
         if not hasattr(self, '_manova_gs'):
             self._manova_gs = {
                 "colors": ["#4c72b0","#dd8452","#55a868","#c44e52","#8172b2","#937860"],
@@ -12101,11 +12141,11 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         gs = self._manova_gs
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        ff_v  = tk.StringVar(value=gs["font_family"])
-        fz_v  = tk.IntVar(value=gs["font_size"])
-        al_v  = tk.DoubleVar(value=gs["bar_alpha"])
-        lw_v  = tk.DoubleVar(value=gs["lw"])
-        ms_v  = tk.IntVar(value=gs["ms"])
+        ff_v  = tk.StringVar(value=gs.get("font_family", "Times New Roman"))
+        fz_v  = tk.IntVar(value=gs.get("font_size", 9))
+        al_v  = tk.DoubleVar(value=gs.get("bar_alpha", 0.85))
+        lw_v  = tk.DoubleVar(value=gs.get("lw", 2.0))
+        ms_v  = tk.IntVar(value=gs.get("ms", 7))
         rb_f  = ("Times New Roman",12)
         rows_cfg = [
             ("Шрифт:",         "combo",  ff_v, ["Times New Roman","Arial","Calibri","Georgia"]),
