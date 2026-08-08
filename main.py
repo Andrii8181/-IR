@@ -468,6 +468,78 @@ def _bind_nav(entries_2d, win, factors_count=0):
             e._nav_bound = True
 
 
+def _bind_fill_handle(entries_2d, win):
+    """Реалізує 'протягування' комірки за правий нижній кут — як в Excel.
+    Клік і утримування саме в куточку комірки (кілька пікселів біля
+    правого нижнього краю) починає виділення прямокутного діапазону;
+    відпускання кнопки миші копіює вміст ПОЧАТКОВОЇ комірки в усі
+    клітинки виділеного діапазону. Звичайний клік/виділення тексту
+    всередині комірки при цьому не зачіпається."""
+    HANDLE_PX = 5
+    state = {"dragging": False, "origin": None, "highlighted": []}
+
+    def _cell_pos(w):
+        return getattr(w, "_nav_pos", None)
+
+    def _clear_highlight():
+        for e in state["highlighted"]:
+            try: e.configure(bg="white")
+            except Exception: pass
+        state["highlighted"] = []
+
+    def _on_press(event):
+        w = event.widget
+        if event.x >= w.winfo_width() - HANDLE_PX and event.y >= w.winfo_height() - HANDLE_PX:
+            pos = _cell_pos(w)
+            if pos is None: return
+            state["dragging"] = True
+            state["origin"] = pos
+            w.configure(cursor="crosshair")
+            return "break"
+
+    def _on_motion(event):
+        if not state["dragging"]: return
+        oi, oj = state["origin"]
+        target = win.winfo_containing(event.x_root, event.y_root)
+        if not isinstance(target, tk.Entry): return "break"
+        pos = _cell_pos(target)
+        if pos is None: return "break"
+        ti, tj = pos
+        _clear_highlight()
+        i0, i1 = sorted((oi, ti)); j0, j1 = sorted((oj, tj))
+        for i in range(i0, i1+1):
+            if i >= len(entries_2d): continue
+            for j in range(j0, j1+1):
+                if j >= len(entries_2d[i]): continue
+                if i == oi and j == oj: continue
+                e = entries_2d[i][j]
+                e.configure(bg="#dbe9fb")
+                state["highlighted"].append(e)
+        return "break"
+
+    def _on_release(event):
+        if not state["dragging"]: return
+        state["dragging"] = False
+        oi, oj = state["origin"]
+        origin_val = entries_2d[oi][oj].get()
+        for e in state["highlighted"]:
+            e.delete(0, tk.END); e.insert(0, origin_val)
+        _clear_highlight()
+        try: event.widget.configure(cursor="xterm")
+        except Exception: pass
+        state["origin"] = None
+        return "break"
+
+    for row in entries_2d:
+        for e in row:
+            if getattr(e, "_fill_bound", False):
+                continue
+            e.bind("<ButtonPress-1>", _on_press, add="+")
+            e.bind("<B1-Motion>", _on_motion, add="+")
+            e.bind("<ButtonRelease-1>", _on_release, add="+")
+            e._fill_bound = True
+
+
 def _nav_move(entries_2d, ri, ci):
     if 0 <= ri < len(entries_2d) and 0 <= ci < len(entries_2d[ri]):
         entries_2d[ri][ci].focus_set(); entries_2d[ri][ci].icursor(tk.END)
@@ -8724,6 +8796,11 @@ class RepeatedMeasuresWindow:
                   font=("Times New Roman", 13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
+        tk.Label(top, text="α:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+        self.alpha_var = tk.StringVar(value="0.05")
+        ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
+                     state="readonly", width=7).pack(side=tk.LEFT)
+
         # Налаштування — спадне меню
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
                             font=("Times New Roman",11), relief=tk.RAISED, bd=2)
@@ -9095,7 +9172,7 @@ class RepeatedMeasuresWindow:
         p = float(1 - f_dist.cdf(F, df_time, df_err)) if not math.isnan(F) else float("nan")
         eta2_time = SS_time/(SS_time+SS_error) if (SS_time+SS_error) > 0 else float("nan")
         R2 = (SS_time+SS_subj)/SS_total if SS_total > 0 else float("nan")
-        alpha = ALPHA
+        alpha = float(self.alpha_var.get())
 
         sw_ps = []
         for j in range(k):
@@ -9105,16 +9182,49 @@ class RepeatedMeasuresWindow:
                 except Exception: p_sw = float("nan")
                 sw_ps.append(p_sw)
         min_sw = min((pp for pp in sw_ps if not math.isnan(pp)), default=float("nan"))
-        norm_ok = not math.isnan(min_sw) and min_sw > 0.05
+        norm_ok = not math.isnan(min_sw) and min_sw > alpha
 
-        from scipy.stats import ttest_rel
-        ph_results = {}
+        use_friedman = False
+        chi2_fr = p_fr = df_fr = float("nan")
+        if not norm_ok:
+            ans = messagebox.askyesno("Ненормальні різниці",
+                f"Різниці між часовими точками не відповідають нормальному розподілу\n"
+                f"(Shapiro–Wilk: мін. p = {fmt(min_sw,4)} ≤ α = {alpha}).\n\n"
+                "Параметричний дисперсійний аналіз повторних вимірів передбачає\n"
+                "нормальність цих різниць.\n\n"
+                "Виконати тест Фрідмана (непараметричний аналог) замість нього?\n\n"
+                "«Так» — тест Фрідмана + попарні Вілкоксона (Бонферроні)\n"
+                "«Ні» — продовжити з параметричним аналізом попри це")
+            if ans:
+                use_friedman = True
+                from scipy.stats import friedmanchisquare
+                try:
+                    chi2_fr, p_fr = friedmanchisquare(*[data[:,j] for j in range(k)])
+                    chi2_fr = float(chi2_fr); p_fr = float(p_fr)
+                except Exception:
+                    chi2_fr, p_fr = float("nan"), float("nan")
+                df_fr = k - 1
+
         mt = k*(k-1)/2 if k > 1 else 1
-        for j in range(k):
-            for jj in range(j+1, k):
-                st_, p_t_ = ttest_rel(data[:,j], data[:,jj])
-                p_adj_ = min(1., float(p_t_)*mt)
-                ph_results[(j,jj)] = (float(np.mean(data[:,j]-data[:,jj])), float(st_), p_adj_)
+        ph_results = {}
+        if use_friedman:
+            from scipy.stats import wilcoxon
+            for j in range(k):
+                for jj in range(j+1, k):
+                    try:
+                        st_, p_w_ = wilcoxon(data[:,j], data[:,jj])
+                        st_, p_w_ = float(st_), float(p_w_)
+                    except Exception:
+                        st_, p_w_ = float("nan"), float("nan")
+                    p_adj_ = min(1., p_w_*mt) if not math.isnan(p_w_) else float("nan")
+                    ph_results[(j,jj)] = (float(np.mean(data[:,j]-data[:,jj])), st_, p_adj_)
+        else:
+            from scipy.stats import ttest_rel
+            for j in range(k):
+                for jj in range(j+1, k):
+                    st_, p_t_ = ttest_rel(data[:,j], data[:,jj])
+                    p_adj_ = min(1., float(p_t_)*mt)
+                    ph_results[(j,jj)] = (float(np.mean(data[:,j]-data[:,jj])), float(st_), p_adj_)
 
         if not HAS_MPL: messagebox.showwarning("","matplotlib недоступний."); return
 
@@ -9147,25 +9257,43 @@ class RepeatedMeasuresWindow:
 
         _head("Дисперсійний аналіз повторних вимірювань")
         _txt(f"Суб'єктів (n): {n}   |   Часових точок (k): {k}   |   α = {alpha}")
-        _head("Таблиця дисперсійного аналізу")
-        anova_rows = [
-            ["Час (within)",fmt(SS_time,4),str(df_time),fmt(MS_time,4),fmt(F,4),fmt(p,4),
-             ("✓ значущий" if p < alpha else "✗ незначущий") if not math.isnan(p) else "–"],
-            ["Суб'єкти",fmt(SS_subj,4),str(df_subj),"–","–","–","виноситься окремо"],
-            ["Похибка",fmt(SS_error,4),str(df_err),fmt(MS_err,4),"–","–",""],
-            ["Загальна",fmt(SS_total,4),str(df_time+df_subj+df_err),"–","–","–",""],
-        ]
-        frm_a, _ = make_tv(body, ["Джерело","SS","df","MS","F","p","Висновок"], anova_rows)
-        frm_a.pack(fill=tk.X, padx=8, pady=(2,6))
-        _head("Показники якості")
-        sig_c = "#1a6b1a" if not math.isnan(p) and p < alpha else "#c62828"
-        _txt(f"F({df_time},{df_err}) = {fmt(F,4)},  p = {fmt(p,4)}  "
-             f"{'✓ значуща динаміка' if not math.isnan(p) and p < alpha else '✗ динаміка незначуща'}", sig_c)
-        _txt(f"Partial η² (час) = {fmt(eta2_time,4)}  →  {eta2_label(eta2_time)}")
-        _txt(f"R² = {fmt(R2,4)}  (час + суб'єкти)")
-        _txt(f"Shapiro–Wilk (різниці) мін. p = {fmt(min_sw,4)}  "
-             f"{'✓ нормальні' if norm_ok else '⚠ ненормальні → розгляньте тест Фрідмана'}",
-             "#000" if norm_ok else "#c62828")
+
+        if use_friedman:
+            _head("Тест Фрідмана (непараметричний аналог)")
+            fr_sig = not math.isnan(p_fr) and p_fr < alpha
+            fr_rows = [["Фрідман", fmt(chi2_fr,4), str(df_fr), fmt(p_fr,4),
+                       ("✓ значущий" if fr_sig else "✗ незначущий") if not math.isnan(p_fr) else "–"]]
+            frm_a, _ = make_tv(body, ["Тест","χ²","df","p","Висновок"], fr_rows)
+            frm_a.pack(fill=tk.X, padx=8, pady=(2,6))
+            _head("Показники якості")
+            sig_c = "#1a6b1a" if fr_sig else "#c62828"
+            _txt(f"χ²({df_fr}) = {fmt(chi2_fr,4)},  p = {fmt(p_fr,4)}  "
+                 f"{'✓ значуща динаміка' if fr_sig else '✗ динаміка незначуща'}", sig_c)
+            _txt(f"Shapiro–Wilk (різниці) мін. p = {fmt(min_sw,4)}  ⚠ ненормальні "
+                 f"→ застосовано тест Фрідмана замість параметричного аналізу", "#c62828")
+            p_for_posthoc = p_fr
+        else:
+            _head("Таблиця дисперсійного аналізу")
+            anova_rows = [
+                ["Час (within)",fmt(SS_time,4),str(df_time),fmt(MS_time,4),fmt(F,4),fmt(p,4),
+                 ("✓ значущий" if p < alpha else "✗ незначущий") if not math.isnan(p) else "–"],
+                ["Суб'єкти",fmt(SS_subj,4),str(df_subj),"–","–","–","виноситься окремо"],
+                ["Похибка",fmt(SS_error,4),str(df_err),fmt(MS_err,4),"–","–",""],
+                ["Загальна",fmt(SS_total,4),str(df_time+df_subj+df_err),"–","–","–",""],
+            ]
+            frm_a, _ = make_tv(body, ["Джерело","SS","df","MS","F","p","Висновок"], anova_rows)
+            frm_a.pack(fill=tk.X, padx=8, pady=(2,6))
+            _head("Показники якості")
+            sig_c = "#1a6b1a" if not math.isnan(p) and p < alpha else "#c62828"
+            _txt(f"F({df_time},{df_err}) = {fmt(F,4)},  p = {fmt(p,4)}  "
+                 f"{'✓ значуща динаміка' if not math.isnan(p) and p < alpha else '✗ динаміка незначуща'}", sig_c)
+            _txt(f"Partial η² (час) = {fmt(eta2_time,4)}  →  {eta2_label(eta2_time)}")
+            _txt(f"R² = {fmt(R2,4)}  (час + суб'єкти)")
+            _txt(f"Shapiro–Wilk (різниці) мін. p = {fmt(min_sw,4)}  "
+                 f"{'✓ нормальні' if norm_ok else '⚠ ненормальні (продовжено з параметричним аналізом)'}",
+                 "#000" if norm_ok else "#c62828")
+            p_for_posthoc = p
+
         _head("Середні по часових точках")
         means_tbl = [[time_names[j], fmt(float(np.mean(data[:,j])),4),
                       fmt(float(np.std(data[:,j],ddof=1)),4),
@@ -9178,23 +9306,27 @@ class RepeatedMeasuresWindow:
         self._rm_graph_frame.pack(fill=tk.X, padx=8, pady=6)
         self._redraw_rm(win, time_names, data, n, ph_results, alpha)
 
-        if not math.isnan(p) and p < alpha:
-            _head(f"Пост-хок порівняння (Бонферроні)")
+        if not math.isnan(p_for_posthoc) and p_for_posthoc < alpha:
+            stat_col = "W" if use_friedman else "t"
+            method_lbl = "Вілкоксона" if use_friedman else "парного t-тесту"
+            _head(f"Пост-хок порівняння ({method_lbl}, Бонферроні)")
             _txt(f"Скоригований α = {fmt(alpha,2)} / {int(mt)} пар = {fmt(alpha/mt,4)}   "
                  f"│   * p < {alpha}   │   ** p < {alpha*0.2:.3f}","#555")
             ph_rows = []
             for j in range(k):
                 for jj in range(j+1, k):
                     d_, st_, pa_ = ph_results[(j,jj)]
-                    mark = "**" if pa_<alpha*0.2 else ("*" if pa_<alpha else "–")
+                    mark = "**" if not math.isnan(pa_) and pa_<alpha*0.2 else \
+                           ("*" if not math.isnan(pa_) and pa_<alpha else "–")
                     ph_rows.append([f"{time_names[j]} vs {time_names[jj]}",
                                     fmt(d_,4), fmt(st_,4), fmt(pa_,4), mark])
-            frm_ph, _ = make_tv(body, ["Пара","Різниця","t","p (Bonf.)","Знач."], ph_rows)
+            frm_ph, _ = make_tv(body, ["Пара","Різниця",stat_col,"p (Bonf.)","Знач."], ph_rows)
             frm_ph.pack(fill=tk.X, padx=8, pady=(2,4))
             _txt(f"* — p < α={alpha} (значуща різниця)   "
                  f"** — p < {alpha*0.2:.3f} (висока значущість)   – — незначуща","#555")
         else:
-            _txt("Post-hoc аналіз не виконується при незначущому F-тесті.","#888")
+            _txt(f"Post-hoc аналіз не виконується при незначущому "
+                 f"{'тесті Фрідмана' if use_friedman else 'F-тесті'}.","#888")
 
     def _redraw_rm(self, win, time_names, data_arr, n, ph_results=None, alpha=0.05):
         if not hasattr(self,"_rm_graph_frame"): return
@@ -11344,6 +11476,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
                 row_.append(e)
             self.entries.append(row_)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     # ── Довідка ───────────────────────────────────────────────
     def _show_help(self):
@@ -11380,6 +11513,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             row_.append(e)
         self.entries.append(row_); self.n_rows += 1
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
         self.inner.update_idletasks()
 
     def _del_row(self):
@@ -11403,6 +11537,7 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             e.grid(row=i+1, column=ci, padx=1, pady=1)
             row_.append(e)
         _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_col(self):
         if self.n_cols <= 3: return
