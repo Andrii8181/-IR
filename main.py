@@ -9494,6 +9494,7 @@ class MixedRepeatedWindow:
                        "#8172b2","#937860","#da8bc3","#8c8c8c"],
             "err_mode": "all",       # "all" | "none" | "selected"
             "err_selected": [],      # назви варіантів, коли err_mode == "selected"
+            "show_fill_band": True,  # окремо від планок похибки (whiskers)
         }
         self._build()
 
@@ -9944,9 +9945,13 @@ class MixedRepeatedWindow:
                            fmt(p_adj,4), mark])
 
         # ── Простий ефект: порівняння варіантів на кожну дату ─
+        # + літери істотної різниці (CLD) між варіантами В МЕЖАХ кожної дати
         simple_rows = []
+        letters_by_date = {}   # dn -> {variant: "a"/"ab"/...}
+        mt_simple = n_vars*(n_vars-1)/2 if n_vars > 1 else 1
         for ti, dn in enumerate(time_names):
             col_data = {lv: var_data[lv][:,ti] for lv in var_levels}
+            means_t = {lv: float(np.mean(col_data[lv])) for lv in var_levels}
             # ANOVA на цій даті
             grand_t = np.mean(np.concatenate(list(col_data.values())))
             ss_b = sum(len(col_data[lv])*(np.mean(col_data[lv])-grand_t)**2 for lv in var_levels)
@@ -9960,6 +9965,22 @@ class MixedRepeatedWindow:
             mark_t = "**" if p_t<alpha*0.2 else ("*" if p_t<alpha else "–")
             simple_rows.append([dn, fmt(F_t,4), f"{dft_b},{dft_w}", fmt(p_t,4), mark_t])
 
+            # Попарні порівняння варіантів САМЕ на цій даті (LSD, пул-похибка
+            # цієї дати ms_w), Бонферроні-корекція → компактні літери (CLD)
+            sig_matrix = {}
+            if not math.isnan(ms_w) and ms_w > 1e-12 and dft_w > 0:
+                for i in range(n_vars):
+                    for j in range(i+1, n_vars):
+                        lv1, lv2 = var_levels[i], var_levels[j]
+                        n1, n2 = len(col_data[lv1]), len(col_data[lv2])
+                        se_ = math.sqrt(ms_w*(1/n1+1/n2))
+                        if se_ > 1e-12:
+                            t_ = (means_t[lv1]-means_t[lv2]) / se_
+                            p_ = 2*(1-float(t_dist.cdf(abs(t_), dft_w)))
+                            p_adj = min(1., p_*mt_simple)
+                            sig_matrix[(lv1,lv2)] = p_adj < alpha
+            letters_by_date[dn] = cld(var_levels, means_t, sig_matrix)
+
         if not HAS_MPL:
             messagebox.showwarning("","matplotlib недоступний."); return
 
@@ -9971,7 +9992,7 @@ class MixedRepeatedWindow:
             F_var, F_time, F_inter,
             p_var, p_time, p_inter,
             e2_var, e2_time, e2_inter,
-            ph_var, simple_rows)
+            ph_var, simple_rows, letters_by_date)
 
     def _show_results(self, var_levels, var_data, time_names, n_reps, alpha,
                       SS_var, SS_wp_err, SS_time, SS_inter, SS_sub_err,
@@ -9980,7 +10001,8 @@ class MixedRepeatedWindow:
                       F_var, F_time, F_inter,
                       p_var, p_time, p_inter,
                       e2_var, e2_time, e2_inter,
-                      ph_var, simple_rows):
+                      ph_var, simple_rows, letters_by_date):
+        self._letters_by_date = letters_by_date
 
         win = tk.Toplevel(self.win)
         win.title("Змішаний Repeated Measures — Результати")
@@ -9988,7 +10010,6 @@ class MixedRepeatedWindow:
 
         # Toolbar
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        self._graph_frame = tk.Frame(win)
         tk.Button(tb, text="📋 Копіювати графік", font=("Times New Roman",11),
                   command=lambda: self._copy_fig()).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="⚙ Налаштування графіка", font=("Times New Roman",11),
@@ -10001,8 +10022,13 @@ class MixedRepeatedWindow:
         sc = tk.Canvas(sa, yscrollcommand=vsb.set, highlightthickness=0)
         sc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.config(command=sc.yview)
-        body = tk.Frame(sc); sc.create_window((0,0), window=body, anchor="nw")
+        body = tk.Frame(sc)
+        body_win = sc.create_window((0,0), window=body, anchor="nw")
         body.bind("<Configure>", lambda e: sc.configure(scrollregion=sc.bbox("all")))
+        # Ширина body синхронізована з видимою шириною canvas — інакше вміст
+        # (таблиці, графік) не звужується/розширюється разом з вікном і
+        # виглядає так, ніби «не адаптується» до розміру вікна.
+        sc.bind("<Configure>", lambda e: sc.itemconfig(body_win, width=e.width))
         win.bind("<MouseWheel>", lambda e: sc.yview_scroll(int(-1*(e.delta/120)),"units"))
 
         def _head(t):
@@ -10085,7 +10111,7 @@ class MixedRepeatedWindow:
         # Графік
         self._graph_frame = tk.Frame(body)
         self._graph_frame.pack(fill=tk.X, padx=8, pady=6)
-        self._draw_graph(var_levels, var_data, time_names, alpha)
+        self._draw_graph(var_levels, var_data, time_names, alpha, letters_by_date)
 
         # Post-hoc варіанти
         if not math.isnan(p_var) and p_var < alpha:
@@ -10093,7 +10119,8 @@ class MixedRepeatedWindow:
             _tbl(["Пара","Сер.1","Сер.2","Різниця","t","p (Bonf.)","Знач."], ph_var)
             _txt(f"* p<{alpha}   ** p<{alpha*0.2:.3f}   – незначуща","#555")
 
-        # Прості ефекти (по датах)
+        # Прості ефекти (по датах) — F-тест по датах показується лише коли
+        # взаємодія значуща (це і є методичний привід дивитись на дати окремо)
         if not math.isnan(p_inter) and p_inter < alpha:
             _head("Простий ефект: порівняння варіантів на кожну дату окремо")
             _txt("Виконується при значущій взаємодії — показує на яких датах варіанти відрізняються.",
@@ -10101,13 +10128,34 @@ class MixedRepeatedWindow:
             _tbl(["Дата","F","df","p","Знач."], simple_rows)
             _txt(f"* p<{alpha}   ** p<{alpha*0.2:.3f}   – незначуща","#555")
 
-    def _draw_graph(self, var_levels, var_data, time_names, alpha=0.05):
+        # Літери істотної різниці — показуємо ЗАВЖДИ (узгоджено з графіком,
+        # де вони теж завжди присутні), з відповідним застереженням
+        _head("Групи істотної різниці (літери) між варіантами на кожну дату")
+        _txt("Попарне порівняння варіантів САМЕ на цій даті (LSD, Бонферроні). "
+             "Варіанти з ОДНАКОВОЮ літерою в межах однієї дати статистично не "
+             "відрізняються один від одного; з РІЗНИМИ літерами — відрізняються.\n"
+             "Ці самі літери показані безпосередньо на графіку біля кожної точки.",
+             "#555")
+        if math.isnan(p_inter) or p_inter >= alpha:
+            _txt("⚠ Взаємодія Варіант × Час НЕзначуща — це означає, що загалом "
+                 "варіанти поводяться однаково в часі. Літери нижче все ж показують "
+                 "поточний статистичний розподіл на кожну дату, але як основний "
+                 "висновок про відмінність варіантів спирайтесь на ефект Варіанту "
+                 "вище, а не на розбіжності літер тут.", "#b07000")
+        letters_hdrs = ["Варіант"] + list(time_names)
+        letters_rows = [[lv] + [letters_by_date[dn].get(lv,"") for dn in time_names]
+                        for lv in var_levels]
+        _tbl(letters_hdrs, letters_rows)
+
+    def _draw_graph(self, var_levels, var_data, time_names, alpha=0.05, letters_by_date=None):
         for w in self._graph_frame.winfo_children(): w.destroy()
         gs = self._plot_gs
         k = len(time_names)
         colors = gs["colors"]
         err_mode = gs.get("err_mode", "all")
         err_sel  = set(gs.get("err_selected", []))
+        show_fill = gs.get("show_fill_band", True)
+        letters_by_date = letters_by_date or {}
         fig = Figure(figsize=(10, 6), dpi=100)
         ax  = fig.add_subplot(111)
 
@@ -10117,21 +10165,44 @@ class MixedRepeatedWindow:
             ses_   = np.std(var_data[lv], axis=0, ddof=1) / math.sqrt(len(var_data[lv]))
             show_bars = (err_mode == "all") or (err_mode == "selected" and lv in err_sel)
             if show_bars:
+                # Планки похибки (whiskers/caps) — завжди разом з errorbar,
+                # незалежно від того, чи ввімкнена тіньова смуга нижче
                 ax.errorbar(range(k), means_, yerr=ses_,
                             fmt=gs["marker"]+"-", capsize=5,
                             color=col, ecolor=col,
                             linewidth=gs["linewidth"],
                             markersize=gs["markersize"],
                             label=str(lv), alpha=0.9, zorder=3)
-                # Тіньова смуга ±СП
-                ax.fill_between(range(k),
-                                means_-ses_, means_+ses_,
-                                alpha=gs["alpha_fill"], color=col)
+                # Тіньова смуга ±СП — окрема, незалежна опція; її вимкнення
+                # НЕ прибирає планки похибки вище
+                if show_fill:
+                    ax.fill_between(range(k),
+                                    means_-ses_, means_+ses_,
+                                    alpha=gs["alpha_fill"], color=col)
             else:
                 ax.plot(range(k), means_, gs["marker"]+"-",
                        color=col, linewidth=gs["linewidth"],
                        markersize=gs["markersize"], label=str(lv),
                        alpha=0.9, zorder=3)
+
+            # Літери істотної різниці (CLD) біля кожної точки — порівняння
+            # варіантів В МЕЖАХ цієї ж дати (не між датами!)
+            if letters_by_date:
+                for ti, dn in enumerate(time_names):
+                    lt = letters_by_date.get(dn, {}).get(lv, "")
+                    if lt:
+                        y_top = means_[ti] + (ses_[ti] if show_bars else 0)
+                        ax.annotate(lt, (ti, y_top),
+                                   textcoords="offset points", xytext=(0, 6),
+                                   ha="center", va="bottom",
+                                   fontsize=max(7, gs["font_size"]-1),
+                                   color=col, fontweight="bold")
+
+        if letters_by_date:
+            fig.text(0.5, 0.005,
+                     "Літери — групи істотної різниці МІЖ ВАРІАНТАМИ в межах кожної дати "
+                     "окремо (однакова літера = не відрізняються)",
+                     ha="center", fontsize=max(7, gs["font_size"]-2), color="#666")
 
         ax.set_xticks(range(k))
         ax.set_xticklabels(time_names,
@@ -10225,10 +10296,20 @@ class MixedRepeatedWindow:
                  font=("Times New Roman",9), fg="#666", justify="left"
                  ).grid(row=err_row+1, column=0, columnspan=2, sticky="w", padx=(0,0))
 
+        fill_v = tk.BooleanVar(value=gs.get("show_fill_band", True))
+        tk.Label(frm, text="Тіньова смуга (заливка) навколо лінії:", font=rb_f).grid(
+            row=err_row+2, column=0, sticky="w", pady=(6,4))
+        tk.Checkbutton(frm, variable=fill_v).grid(
+            row=err_row+2, column=1, sticky="w", padx=8, pady=(6,4))
+        tk.Label(frm, text="Не впливає на планки похибки (вусики) у точках — їх вимикає\n"
+                          "лише вибір режиму вище («Не показувати»/«Обрані»).",
+                 font=("Times New Roman",9), fg="#666", justify="left"
+                 ).grid(row=err_row+3, column=0, columnspan=2, sticky="w")
+
         tk.Label(frm, text="Обрані варіанти:", font=rb_f).grid(
-            row=err_row+2, column=0, sticky="nw", pady=(8,4))
+            row=err_row+4, column=0, sticky="nw", pady=(8,4))
         sel_frame = tk.Frame(frm)
-        sel_frame.grid(row=err_row+2, column=1, sticky="w", padx=8, pady=(8,4))
+        sel_frame.grid(row=err_row+4, column=1, sticky="w", padx=8, pady=(8,4))
         cur_sel = set(gs.get("err_selected", []))
         sel_vars = {}
         for lv in var_levels:
@@ -10246,7 +10327,7 @@ class MixedRepeatedWindow:
         _toggle_sel_state()
 
         # Кольори варіантів
-        base_r = err_row + 3
+        base_r = err_row + 5
         tk.Label(frm, text="Кольори варіантів:", font=rb_f).grid(
             row=base_r, column=0, sticky="w", pady=4)
         cf = tk.Frame(frm); cf.grid(row=base_r, column=1, sticky="w")
@@ -10269,9 +10350,10 @@ class MixedRepeatedWindow:
                 "alpha_fill":  al_v.get(), "colors": col_refs,
                 "err_mode":    mode_map[mode_disp_v.get()],
                 "err_selected": selected,
+                "show_fill_band": fill_v.get(),
             })
             dlg.destroy()
-            self._draw_graph(var_levels, var_data, time_names, alpha)
+            self._draw_graph(var_levels, var_data, time_names, alpha, self._letters_by_date)
 
         bf = tk.Frame(frm); bf.grid(row=base_r+1, column=0, columnspan=2, pady=(14,0))
         tk.Button(bf, text="OK (застосувати)", bg="#c62828", fg="white",
