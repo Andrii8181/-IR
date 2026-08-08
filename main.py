@@ -9509,6 +9509,11 @@ class MixedRepeatedWindow:
                   font=("Times New Roman",13),
                   command=self._run).pack(side=tk.LEFT, padx=4)
 
+        tk.Label(top, text="α:", font=("Times New Roman",12)).pack(side=tk.LEFT, padx=(10,2))
+        self.alpha_var = tk.StringVar(value="0.05")
+        ttk.Combobox(top, textvariable=self.alpha_var, values=["0.01","0.05","0.10"],
+                     state="readonly", width=7).pack(side=tk.LEFT)
+
         mb2 = tk.Menubutton(top, text="⚙ Налаштування ▾",
                             font=("Times New Roman",11), relief=tk.RAISED, bd=2)
         mb2.pack(side=tk.LEFT, padx=4)
@@ -9824,7 +9829,7 @@ class MixedRepeatedWindow:
             messagebox.showwarning("Замало повторностей",
                 "Кожен варіант потребує ≥ 2 повторностей."); return
 
-        alpha = ALPHA
+        alpha = float(self.alpha_var.get())
 
         # ══ Split-plot у часі: правильні дві помилки ══
         # Загальне середнє
@@ -9905,24 +9910,35 @@ class MixedRepeatedWindow:
         e2_inter = peta2(SS_inter, SS_sub_err)
 
         # ── Post-hoc між варіантами (Бонферроні) ─────────────
-        from scipy.stats import ttest_ind
+        # Використовуємо ТУ САМУ пул-похибку (MS_wp_err, df_wp_err), що й
+        # основний F-тест ефекту Варіанту — це методично правильний підхід
+        # (Доспєхов, принцип НІР): усі попарні порівняння мають спиратись
+        # на єдину, спільну оцінку похибки з повної моделі (з її більшим,
+        # надійнішим df), а не на окремо перераховану для кожної пари
+        # дисперсію, яка ігнорує дані решти варіантів і дає менш надійний,
+        # неузгоджений з омнібус-тестом результат.
         var_pairs = [(var_levels[i],var_levels[j])
                      for i in range(n_vars) for j in range(i+1,n_vars)]
         mt_var = len(var_pairs)
         ph_var = []
         for lv1,lv2 in var_pairs:
-            m1 = np.mean(var_data[lv1]); m2 = np.mean(var_data[lv2])
-            # t-тест на середніх по часу (агрегований)
-            means1 = np.mean(var_data[lv1], axis=1)
-            means2 = np.mean(var_data[lv2], axis=1)
-            try:
-                t_, p_ = ttest_ind(means1, means2)
-                p_adj = min(1., float(p_)*mt_var)
-            except Exception: t_=float("nan"); p_adj=float("nan")
-            mark = "**" if p_adj<alpha*0.2 else ("*" if p_adj<alpha else "–")
+            m1 = float(np.mean(var_data[lv1])); m2 = float(np.mean(var_data[lv2]))
+            n1, n2 = n_reps[lv1], n_reps[lv2]
+            if not math.isnan(MS_wp_err) and df_wp_err > 0:
+                se_diff = math.sqrt(MS_wp_err * (1/n1 + 1/n2))
+                if se_diff > 1e-12:
+                    t_ = (m1 - m2) / se_diff
+                    p_raw = 2 * (1 - float(t_dist.cdf(abs(t_), df_wp_err)))
+                    p_adj = min(1., p_raw * mt_var)
+                else:
+                    t_, p_adj = float("nan"), float("nan")
+            else:
+                t_, p_adj = float("nan"), float("nan")
+            mark = ("**" if not math.isnan(p_adj) and p_adj<alpha*0.2 else
+                    ("*" if not math.isnan(p_adj) and p_adj<alpha else "–"))
             ph_var.append([f"{lv1} vs {lv2}",
-                           fmt(float(m1),4), fmt(float(m2),4),
-                           fmt(float(m1-m2),4), fmt(float(t_),4),
+                           fmt(m1,4), fmt(m2,4),
+                           fmt(m1-m2,4), fmt(float(t_),4),
                            fmt(p_adj,4), mark])
 
         # ── Простий ефект: порівняння варіантів на кожну дату ─
