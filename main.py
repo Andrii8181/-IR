@@ -7584,7 +7584,7 @@ class ClusterWindow:
     def __init__(self, parent, gs):
         self.win = tk.Toplevel(parent)
         self.win.title("Кластерний аналіз")
-        self.win.geometry("960x660"); set_icon(self.win)
+        self.win.geometry("1300x680"); set_icon(self.win)
         self.gs = gs
         self._cl_fig = None
         self._cl_gs  = {
@@ -7936,7 +7936,7 @@ class ClusterWindow:
     def _show_cluster_recommendation(self, candidates, best):
         win = tk.Toplevel(self.win)
         win.title("Попередній аналіз — рекомендація методу кластеризації")
-        win.geometry("620x420"); set_icon(win)
+        win.geometry("640x580"); set_icon(win)
         rf = ("Times New Roman",11)
 
         tk.Label(win, text="Порівняння методів за кофенетичною кореляцією:",
@@ -8033,11 +8033,26 @@ class ClusterWindow:
         # ── Вікно результатів ──────────────────────────────────
         win = tk.Toplevel(self.win)
         win.title("Кластерний аналіз — Результати")
-        win.geometry("1060x720"); set_icon(win)
+        win.geometry("1150x800"); set_icon(win)
 
-        # Toolbar результатів
+        # Toolbar результатів (фіксовано зверху)
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        graph_frame = tk.Frame(win); # буде pack після tb
+
+        # Прокручувана область: дендрограма + таблиця приналежності —
+        # обидва завжди доступні (раніше graph_frame з expand=True займав
+        # увесь простір і таблиця нижче фактично ставала невидимою).
+        sa = tk.Frame(win); sa.pack(fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(sa, orient="vertical"); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        sc = tk.Canvas(sa, yscrollcommand=vsb.set, highlightthickness=0)
+        sc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=sc.yview)
+        body = tk.Frame(sc)
+        body_win = sc.create_window((0,0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: sc.configure(scrollregion=sc.bbox("all")))
+        sc.bind("<Configure>", lambda e: sc.itemconfig(body_win, width=e.width))
+        win.bind("<MouseWheel>", lambda e: sc.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+        graph_frame = tk.Frame(body)
 
         tk.Button(tb, text="📋 Копіювати дендрограму", font=("Times New Roman",11),
                   command=lambda: self._copy_dendro()).pack(side=tk.LEFT, padx=4)
@@ -8050,11 +8065,11 @@ class ClusterWindow:
                  font=("Times New Roman",11), fg="#555").pack(side=tk.LEFT, padx=10)
 
         # Дендрограма
-        graph_frame.pack(fill=tk.BOTH, expand=True, padx=4)
+        graph_frame.pack(fill=tk.X, padx=4, pady=4)
         self._draw_dendrogram(graph_frame, obj_names, Z, k, method)
 
-        # Таблиця приналежності (знизу, прокручувана)
-        tbl_frame = tk.Frame(win); tbl_frame.pack(fill=tk.X, padx=8, pady=4)
+        # Таблиця приналежності
+        tbl_frame = tk.Frame(body); tbl_frame.pack(fill=tk.X, padx=8, pady=(4,16))
         tk.Label(tbl_frame, text="Приналежність до кластерів:",
                  font=("Times New Roman",11,"bold"), anchor="w").pack(fill=tk.X)
         membership_rows = sorted(
