@@ -14110,16 +14110,18 @@ class HPPlotBuilder:
 
     def _take_guard(self, row_plants, i, n, needed, role):
         taken = 0
+        taken_plants = []
         while i < n and taken < needed:
             gp = row_plants[i]
             if self._guard_eligible(gp):
                 gp.role = role; taken += 1
+                taken_plants.append(gp)
             elif gp.status == "dead":
                 gp.role = HP_ROLE_DEAD
             elif gp.status == "pollinizer":
                 gp.role = HP_ROLE_POLLINIZER
             i += 1
-        return i
+        return i, taken_plants
 
     def _scan_once(self, allowed_range):
         recorded = []; plot_counter = 0
@@ -14128,8 +14130,10 @@ class HPPlotBuilder:
             i = 0; n = len(row_plants)
 
             # Захисна зона типу 1 — початок ряду
-            i = self._take_guard(row_plants, i, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
+            i, _ = self._take_guard(row_plants, i, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
 
+            last_rep_guard_plants = []
+            ended_naturally = True
             while i < n:
                 plot_members = []
                 while i < n and len(plot_members) < self.plot_size:
@@ -14145,7 +14149,17 @@ class HPPlotBuilder:
                         p.role = HP_ROLE_POLLINIZER
                     i += 1
                 if len(plot_members) < self.plot_size:
-                    break  # ряд закінчився, неповна повторність відкидається
+                    # Ряд закінчився без повної повторності. Лічильник i вже
+                    # пройшов повз ці рештки, тож звичайний виклик _take_guard
+                    # нижче їх більше не побачить (i == n) — без цього вони
+                    # губилися б без жодної ролі замість стати захисною зоною
+                    # кінця ряду. Останні edge_guard_size придатних рослин із
+                    # решток стають захисною зоною (тип 1), як і мало бути.
+                    tail = plot_members[-self.edge_guard_size:] if self.edge_guard_size > 0 else []
+                    for p in tail:
+                        p.role = HP_ROLE_GUARD_EDGE
+                    ended_naturally = False
+                    break  # неповна повторність відкидається
                 plot_counter += 1
                 for p in plot_members:
                     p.role = HP_ROLE_RECORDED; p.plot_id = plot_counter
@@ -14154,10 +14168,22 @@ class HPPlotBuilder:
                 # Захисна зона типу 2 — після КОЖНОЇ сформованої повторності
                 # (повторності розкидаються рандомізовано по варіантах пізніше,
                 # тож будь-які дві сусідні повторності потребують захисту між ними)
-                i = self._take_guard(row_plants, i, n, self.rep_guard_size, HP_ROLE_GUARD_REP)
+                i, last_rep_guard_plants = self._take_guard(
+                    row_plants, i, n, self.rep_guard_size, HP_ROLE_GUARD_REP)
 
-            # Захисна зона типу 1 — кінець ряду
-            i = self._take_guard(row_plants, i, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
+            # Якщо ряд закінчився РІВНО на щойно взятій захисній зоні між
+            # повтореннями (без жодної рослини по тому) — вона фактично і Є
+            # захисною зоною кінця ряду, а не «між повтореннями» (адже
+            # наступного повторення там уже нема). Перекласифіковуємо для
+            # відповідності принципу «останні edge_guard_size рослин ряду —
+            # завжди захисна зона краю».
+            if ended_naturally and i >= n and last_rep_guard_plants:
+                for p in last_rep_guard_plants:
+                    p.role = HP_ROLE_GUARD_EDGE
+
+            # Захисна зона типу 1 — кінець ряду (додатково, якщо після break
+            # лишилось ще місце, або повторностей не було взагалі)
+            i, _ = self._take_guard(row_plants, i, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
         return recorded
 
     def build(self):
@@ -14801,6 +14827,86 @@ class HomogeneousPlotWindow:
         _bind_nav(self.entries, self.win)
         _bind_fill_handle(self.entries, self.win)
 
+    def _save_scheme(self):
+        """Зберігає ЗГЕНЕРОВАНУ схему (карту рослин з роллю/варіантом/
+        повторенням кожної) — саме те, що потрібно для подальшого ведення
+        польового журналу обліків. Формат той самий .sadp (JSON), що й у
+        решти проектів програми, з type="homogeneous_plot_scheme" — при
+        відкритті програма перевіряє саме це поле, а не назву файлу, тож
+        файл можна перейменувати без ризику."""
+        if self._result is None:
+            messagebox.showwarning("", "Спочатку згенеруйте план (▶ Згенерувати план)."); return
+        plants_data = []
+        for p in self._result["plants"]:
+            plants_data.append({
+                "row": p.row, "position": p.position, "value": p.value,
+                "status": p.status, "role": p.role, "plot_id": p.plot_id,
+                "variant": p.variant, "replication": p.replication,
+            })
+        d = {
+            "type": "homogeneous_plot_scheme", "version": APP_VER,
+            "cfg": self._cfg, "variant_names": self._variant_names,
+            "plants": plants_data,
+            "final_cv_pct": self._result.get("final_cv_pct"),
+            "plots_formed": self._result.get("plots_formed"),
+            "iterations_used": self._result.get("iterations_used"),
+            "warnings": self._result.get("warnings", []),
+        }
+        default_name = "схема_" + (self._cfg.get("trait_name","план").replace(" ","_")) + ".sadp"
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".sadp", initialfile=default_name,
+            filetypes=[("SAD схема","*.sadp"),("JSON","*.json")],
+            title="Зберегти схему досліду")
+        if not path: return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo("Збережено",
+                f"Схему збережено:\n{path}\n\n"
+                "Цей файл можна відкрити пізніше тут само (📂 Відкрити схему), "
+                "або в модулі «Польовий журнал обліків», щоб вносити фактичні "
+                "виміряні значення прямо в цю схему протягом сезонів.")
+        except Exception as ex:
+            messagebox.showerror("Помилка збереження", str(ex))
+
+    def _load_scheme(self):
+        path = filedialog.askopenfilename(
+            parent=self.win, filetypes=[("SAD схема","*.sadp"),("JSON","*.json")],
+            title="Відкрити схему досліду")
+        if not path: return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception as ex:
+            messagebox.showerror("Помилка відкриття", str(ex)); return
+        if d.get("type") != "homogeneous_plot_scheme":
+            messagebox.showwarning("Не той тип файлу",
+                "Цей файл не є збереженою схемою досліду "
+                "(«💾 Зберегти схема»). Можливо, це звичайний проект "
+                "із вхідними даними («💾 Зберегти проект») — його слід "
+                "відкривати через «📂 Відкрити проект» у меню «⚙ Таблиця»."); return
+
+        plants = []
+        for pd in d.get("plants", []):
+            p = HPPlant(pd["row"], pd["position"], pd.get("value"), pd.get("status","ok"))
+            p.role = pd.get("role", HP_ROLE_UNASSIGNED)
+            p.plot_id = pd.get("plot_id")
+            p.variant = pd.get("variant")
+            p.replication = pd.get("replication")
+            plants.append(p)
+
+        self._result = {
+            "plants": plants,
+            "final_cv_pct": d.get("final_cv_pct", 0),
+            "plots_formed": d.get("plots_formed", 0),
+            "iterations_used": d.get("iterations_used", 0),
+            "warnings": d.get("warnings", []),
+        }
+        self._cfg = d.get("cfg", {})
+        self._variant_names = d.get("variant_names", [])
+        self._show_results()
+        messagebox.showinfo("Відкрито", f"Схему завантажено:\n{path}")
+
     def _paste(self):
         if not self._table_built:
             messagebox.showinfo("", "Спочатку побудуйте таблицю (крок 1 вгорі)."); return
@@ -14998,6 +15104,11 @@ class HomogeneousPlotWindow:
         tk.Button(tb, text="💾 Зберегти PNG (друк)", font=("Times New Roman",11),
                   command=lambda: self._save_png(self._map_fig, "Зберегти карту")
                   ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="💾 Зберегти схему", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._save_scheme).pack(side=tk.LEFT, padx=(12,4))
+        tk.Button(tb, text="📂 Відкрити схему", font=("Times New Roman",11),
+                  command=self._load_scheme).pack(side=tk.LEFT, padx=4)
         cfg = self._cfg
         design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
         tk.Label(tb, text=f"Дизайн: {design_txt}", font=("Times New Roman",11),
@@ -15313,6 +15424,608 @@ class HomogeneousPlotWindow:
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
 _SADTk_orig_init = SADTk.__init__
+
+
+# ═══════════════════════════════════════════════════════════════
+# ПОЛЬОВИЙ ЖУРНАЛ ОБЛІКІВ — внесення фактичних вимірів у схему
+# ═══════════════════════════════════════════════════════════════
+class FieldJournalWindow:
+    """
+    Окремий модуль від «Планування досліду за однорідністю» (навмисно —
+    для простоти й зрозумілості кожен інструмент робить одну річ).
+
+    Завантажує ЗБЕРЕЖЕНУ СХЕМУ (файл .sadp, type="homogeneous_plot_scheme")
+    або вже існуючий журнал (type="field_journal") і дозволяє:
+      • вписувати виміряні значення показника прямо в клітинки схеми —
+        на екрані комп'ютера, у тому самому фізичному розташуванні, що
+        й у саду;
+      • вести кілька РІЗНИХ показників («Урожайність 2024», «Діаметр
+        штамбу 2023» тощо) по ОДНІЙ і тій самій фізичній схемі —
+        кожен зберігається як окремий «облік» (record) у тому самому
+        файлі журналу;
+      • роздрукувати порожній бланк для внесення даних у польових
+        умовах олівцем/ручкою.
+    """
+
+    HELP_TEXT = """
+ПОЛЬОВИЙ ЖУРНАЛ ОБЛІКІВ — ІНСТРУКЦІЯ
+═════════════════════════════════════
+
+ДЛЯ ЧОГО ЦЕЙ МОДУЛЬ?
+  Модуль «Планування досліду за однорідністю» створює схему — яка саме
+  рослина до якого варіанту й повторення належить. Але сама схема не
+  містить майбутніх результатів обліків (урожайність, вміст цукру
+  тощо) — для цього і є цей журнал.
+
+КРОК 1. ВІДКРИЙТЕ СХЕМУ АБО ЖУРНАЛ
+  «📂 Відкрити» — оберіть файл .sadp:
+    • якщо це щойно збережена СХЕМА — журнал створюється з нуля на її
+      основі (ще без жодного обліку);
+    • якщо це вже існуючий ЖУРНАЛ — відкриються всі попередні обліки,
+      які в ньому вже збережені.
+
+КРОК 2. СТВОРІТЬ ОБЛІК (ПОКАЗНИК)
+  «➕ Новий облік» — вкажіть назву показника й одиницю виміру
+  (наприклад, «Урожайність 2024», кг). Можна створити скільки завгодно
+  обліків по одній і тій самій схемі — для різних років чи показників.
+  Перемикайтесь між ними через випадаючий список зверху.
+
+КРОК 3. ВНОСЬТЕ ЗНАЧЕННЯ
+  Зелені клітинки — облікові рослини поточного варіанту/повторення,
+  саме туди вписуються виміряні значення. Сірі/жовті/помаранчеві —
+  захисні/виключені рослини (не редагуються, показані лише для
+  орієнтації в саду). Дані зберігаються автоматично в пам'яті —
+  не забудьте «💾 Зберегти журнал» наприкінці роботи.
+
+ДРУК
+  «🖨 Друкувати бланк» — та сама схема, але порожня, з місцем для
+  запису значень від руки в полі (як в модулі планування).
+"""
+
+    def __init__(self, parent, gs=None):
+        self._parent = parent
+        self.win = tk.Toplevel(parent)
+        self.win.title("Польовий журнал обліків")
+        self.win.geometry("1400x820"); set_icon(self.win)
+        self.gs = dict(gs) if gs else {}
+        self.plants = []           # список HPPlant з завантаженої схеми
+        self.cfg = {}
+        self.variant_names = []
+        self.records = {}          # {"Урожайність 2024": {"unit":..., "values": {"r:p": val}}}
+        self.current_record = None
+        self._journal_path = None
+        self._entry_widgets = {}   # (row,position) -> tk.Entry (лише для облікових)
+        self._build()
+
+    # ─────────────────────────────────────────────────────
+    def _build(self):
+        rf = ("Times New Roman", 11)
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
+        tk.Button(top, text="📂 Відкрити схему / журнал", bg="#1a4b8c", fg="white",
+                  font=rf, command=self._open_file).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="💾 Зберегти журнал", bg="#1a6b1a", fg="white",
+                  font=rf, command=self._save_journal).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="➕ Новий облік", font=rf,
+                  command=self._new_record).pack(side=tk.LEFT, padx=(16,4))
+
+        tk.Label(top, text="Поточний облік:", font=rf).pack(side=tk.LEFT, padx=(16,2))
+        self._record_var = tk.StringVar(value="")
+        self._record_cb = ttk.Combobox(top, textvariable=self._record_var,
+                                       state="readonly", width=28, values=[])
+        self._record_cb.pack(side=tk.LEFT, padx=2)
+        self._record_cb.bind("<<ComboboxSelected>>",
+                             lambda e: self._switch_record(self._record_var.get()))
+
+        tk.Button(top, text="🖨 Друкувати бланк", font=rf,
+                  command=self._print_blank_form).pack(side=tk.LEFT, padx=(16,4))
+        tk.Button(top, text="📊 Звести для аналізу", bg="#8c1a1a", fg="white", font=rf,
+                  command=self._open_aggregate_dialog).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white", font=rf,
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+
+        self._info_lbl = tk.Label(self.win,
+                text="Немає завантаженої схеми. Натисніть «📂 Відкрити схему / журнал», "
+                     "щоб почати.",
+                font=("Times New Roman",11), fg="#888", anchor="w")
+        self._info_lbl.pack(fill=tk.X, padx=8, pady=(0,4))
+
+        # ── Легенда (та сама, що й у схемі) ───────────────
+        self._legend_f = tk.Frame(self.win, bg="#f7f7f7", padx=8, pady=6)
+        self._legend_f.pack(fill=tk.X)
+
+        # ── Прокручувана область сітки ─────────────────────
+        tbl_area = tk.Frame(self.win); tbl_area.pack(fill=tk.BOTH, expand=True, padx=8, pady=(2,4))
+        self._canvas = tk.Canvas(tbl_area)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_v = ttk.Scrollbar(tbl_area, orient="vertical", command=self._canvas.yview)
+        sb_v.pack(side=tk.RIGHT, fill=tk.Y)
+        sb_h = ttk.Scrollbar(self.win, orient="horizontal", command=self._canvas.xview)
+        sb_h.pack(fill=tk.X, padx=8)
+        self._canvas.configure(yscrollcommand=sb_v.set, xscrollcommand=sb_h.set)
+        self.inner = tk.Frame(self._canvas)
+        self._canvas.create_window((0,0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>",
+                        lambda e: self._canvas.config(scrollregion=self._canvas.bbox("all")))
+        self.win.bind("<MouseWheel>",
+                      lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+    def _show_help(self):
+        win = tk.Toplevel(self.win); win.title("Довідка — Польовий журнал")
+        win.geometry("700x600"); set_icon(win)
+        txt = tk.Text(win, wrap="word", font=("Times New Roman",11), padx=10, pady=10)
+        txt.pack(fill=tk.BOTH, expand=True)
+        txt.insert("1.0", self.HELP_TEXT.strip()); txt.configure(state="disabled")
+        tk.Button(win, text="Закрити", command=win.destroy,
+                  font=("Times New Roman",11)).pack(pady=6)
+
+    # ── Відкриття схеми/журналу ───────────────────────────
+    def _open_file(self):
+        path = filedialog.askopenfilename(
+            parent=self.win, filetypes=[("SAD файл","*.sadp"),("JSON","*.json")],
+            title="Відкрити схему або журнал")
+        if not path: return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception as ex:
+            messagebox.showerror("Помилка відкриття", str(ex)); return
+
+        ftype = d.get("type")
+        if ftype not in ("homogeneous_plot_scheme", "field_journal"):
+            messagebox.showwarning("Не той тип файлу",
+                "Цей файл не є ані схемою досліду, ані журналом обліків.\n"
+                "Оберіть файл, збережений через «💾 Зберегти схема» в модулі "
+                "планування, або раніше збережений журнал."); return
+
+        plants = []
+        for pd in d.get("plants", []):
+            p = HPPlant(pd["row"], pd["position"], pd.get("value"), pd.get("status","ok"))
+            p.role = pd.get("role", HP_ROLE_UNASSIGNED)
+            p.plot_id = pd.get("plot_id")
+            p.variant = pd.get("variant")
+            p.replication = pd.get("replication")
+            plants.append(p)
+        self.plants = plants
+        self.cfg = d.get("cfg", {})
+        self.variant_names = d.get("variant_names", [])
+        self.records = d.get("records", {}) if ftype == "field_journal" else {}
+        self._journal_path = path if ftype == "field_journal" else None
+
+        self._record_cb.configure(values=list(self.records.keys()))
+        if self.records:
+            first = list(self.records.keys())[0]
+            self._record_var.set(first)
+            self.current_record = first
+        else:
+            self._record_var.set("")
+            self.current_record = None
+
+        n_rec = len(self.records)
+        self._info_lbl.configure(
+            text=f"Завантажено: {os.path.basename(path)}   |   "
+                 f"Показник схеми: {self.cfg.get('trait_name','—')}   |   "
+                 f"Облікових рослин: {sum(1 for p in self.plants if p.role == HP_ROLE_RECORDED)}   |   "
+                 f"Обліків у журналі: {n_rec}",
+            fg="#1a6b1a")
+        self._build_legend()
+        self._build_grid()
+
+    # ── Керування обліками (показниками) ──────────────────
+    def _new_record(self):
+        if not self.plants:
+            messagebox.showwarning("", "Спочатку відкрийте схему або журнал."); return
+        dlg = tk.Toplevel(self.win); dlg.title("Новий облік")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        tk.Label(frm, text="Назва показника (напр. «Урожайність 2024»):",
+                 font=("Times New Roman",11)).grid(row=0, column=0, sticky="w", pady=4)
+        name_v = tk.StringVar()
+        tk.Entry(frm, textvariable=name_v, width=30, font=("Times New Roman",11)
+                 ).grid(row=0, column=1, sticky="w", padx=8)
+        tk.Label(frm, text="Одиниця виміру:", font=("Times New Roman",11)
+                 ).grid(row=1, column=0, sticky="w", pady=4)
+        unit_v = tk.StringVar()
+        tk.Entry(frm, textvariable=unit_v, width=15, font=("Times New Roman",11)
+                 ).grid(row=1, column=1, sticky="w", padx=8)
+
+        def _create():
+            nm = name_v.get().strip()
+            if not nm:
+                messagebox.showwarning("", "Вкажіть назву показника.", parent=dlg); return
+            if nm in self.records:
+                messagebox.showwarning("", "Такий облік вже існує.", parent=dlg); return
+            self.records[nm] = {"unit": unit_v.get().strip(), "values": {}}
+            self._record_cb.configure(values=list(self.records.keys()))
+            self._record_var.set(nm)
+            self.current_record = nm
+            dlg.destroy()
+            self._build_grid()
+        bf = tk.Frame(frm); bf.grid(row=2, column=0, columnspan=2, pady=(12,0))
+        tk.Button(bf, text="Створити", bg="#1a6b1a", fg="white",
+                  font=("Times New Roman",11), command=_create).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=("Times New Roman",11),
+                  command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    def _switch_record(self, name):
+        if not name or name not in self.records: return
+        self._save_current_values_from_widgets()
+        self.current_record = name
+        self._build_grid()
+
+    def _save_current_values_from_widgets(self):
+        if self.current_record is None: return
+        vals = self.records[self.current_record]["values"]
+        for (r,p), e in self._entry_widgets.items():
+            txt = e.get().strip()
+            key = f"{r}:{p}"
+            if txt: vals[key] = txt
+            elif key in vals: del vals[key]
+
+    # ── Легенда (компактна, та сама палітра що й у схемі) ─
+    def _build_legend(self):
+        for w in self._legend_f.winfo_children(): w.destroy()
+        row1 = tk.Frame(self._legend_f, bg="#f7f7f7"); row1.pack(fill=tk.X)
+        for role, color in HP_ROLE_COLORS.items():
+            sw = tk.Frame(row1, bg=color, width=14, height=14, relief=tk.RIDGE, bd=1)
+            sw.pack(side=tk.LEFT, padx=(0,4), pady=2); sw.pack_propagate(False)
+            tk.Label(row1, text=HP_ROLE_LABELS[role], bg="#f7f7f7",
+                     font=("Times New Roman",9)).pack(side=tk.LEFT, padx=(0,12))
+        if self.variant_names:
+            names_txt = "   •   ".join(f"В{i+1}={nm}" for i, nm in enumerate(self.variant_names))
+            tk.Label(self._legend_f, text="Варіанти: " + names_txt,
+                     bg="#f7f7f7", fg="#1a4b8c", font=("Times New Roman",9,"bold"),
+                     anchor="w").pack(fill=tk.X, pady=(2,0))
+
+    # ── Основна сітка внесення даних ───────────────────────
+    def _build_grid(self):
+        for w in self.inner.winfo_children(): w.destroy()
+        self._entry_widgets = {}
+        if not self.plants: return
+
+        by_row = {}
+        for p in self.plants:
+            by_row.setdefault(p.row, {})[p.position] = p
+        rows = sorted(by_row.keys())
+        max_pos = max((p.position for p in self.plants), default=1)
+
+        vals = self.records.get(self.current_record, {}).get("values", {}) \
+               if self.current_record else {}
+
+        tk.Label(self.inner, text="Ряд \\ Поз.", width=9, relief=tk.RIDGE,
+                 bg="#444444", fg="white", font=("Times New Roman",10,"bold")
+                 ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+        for j in range(1, max_pos+1):
+            tk.Label(self.inner, text=str(j), width=6, relief=tk.RIDGE,
+                     bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold")
+                     ).grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+
+        for ri, row_num in enumerate(rows):
+            tk.Label(self.inner, text=f"Ряд {row_num}", width=9, relief=tk.RIDGE,
+                     bg="#444444", fg="white", font=("Times New Roman",9,"bold")
+                     ).grid(row=ri+1, column=0, padx=1, pady=1, sticky="nsew")
+            for pos in range(1, max_pos+1):
+                p = by_row.get(row_num, {}).get(pos)
+                if p is None:
+                    continue
+                if p.role == HP_ROLE_RECORDED:
+                    key = f"{row_num}:{pos}"
+                    e = tk.Entry(self.inner, width=6, font=("Times New Roman",9),
+                                bg="#e8f5e9", justify="center")
+                    e.grid(row=ri+1, column=pos, padx=1, pady=1)
+                    if key in vals: e.insert(0, str(vals[key]))
+                    e.bind("<FocusOut>", lambda ev, r=row_num, po=pos: self._on_cell_edit(r, po))
+                    self._entry_widgets[(row_num,pos)] = e
+                else:
+                    label = {HP_ROLE_GUARD_EDGE:"К", HP_ROLE_GUARD_REP:"П",
+                             HP_ROLE_DEAD:"-", HP_ROLE_POLLINIZER:"+",
+                             HP_ROLE_EXTRA:"×"}.get(p.role, "")
+                    color = HP_ROLE_COLORS.get(p.role, "#eeeeee")
+                    tk.Label(self.inner, text=label, width=6, relief=tk.RIDGE,
+                             bg=color, font=("Times New Roman",9)
+                             ).grid(row=ri+1, column=pos, padx=1, pady=1)
+        _bind_nav(self._grid_as_2d(rows, max_pos, by_row), self.win)
+
+    def _grid_as_2d(self, rows, max_pos, by_row):
+        """Формує 2D-масив лише з редагованих (облікових) клітинок —
+        для навігації Enter/стрілками (пропускаючи нередаговані)."""
+        out = []
+        for row_num in rows:
+            line = []
+            for pos in range(1, max_pos+1):
+                p = by_row.get(row_num, {}).get(pos)
+                if p is not None and p.role == HP_ROLE_RECORDED:
+                    e = self._entry_widgets.get((row_num,pos))
+                    if e is not None: line.append(e)
+            if line: out.append(line)
+        return out
+
+    def _on_cell_edit(self, row, pos):
+        if self.current_record is None: return
+        e = self._entry_widgets.get((row,pos))
+        if e is None: return
+        vals = self.records[self.current_record]["values"]
+        key = f"{row}:{pos}"
+        txt = e.get().strip()
+        if txt: vals[key] = txt
+        elif key in vals: del vals[key]
+
+    # ── Збереження журналу ──────────────────────────────────
+    def _save_journal(self):
+        if not self.plants:
+            messagebox.showwarning("", "Немає завантаженої схеми — нічого зберігати."); return
+        self._save_current_values_from_widgets()
+        plants_data = []
+        for p in self.plants:
+            plants_data.append({
+                "row": p.row, "position": p.position, "value": p.value,
+                "status": p.status, "role": p.role, "plot_id": p.plot_id,
+                "variant": p.variant, "replication": p.replication,
+            })
+        d = {
+            "type": "field_journal", "version": APP_VER,
+            "cfg": self.cfg, "variant_names": self.variant_names,
+            "plants": plants_data, "records": self.records,
+        }
+        default_name = os.path.basename(self._journal_path) if self._journal_path else \
+            "журнал_" + (self.cfg.get("trait_name","досліду").replace(" ","_")) + ".sadp"
+        path = filedialog.asksaveasfilename(
+            parent=self.win, defaultextension=".sadp", initialfile=default_name,
+            filetypes=[("SAD журнал","*.sadp"),("JSON","*.json")],
+            title="Зберегти журнал")
+        if not path: return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            self._journal_path = path
+            messagebox.showinfo("Збережено", f"Журнал збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка збереження", str(ex))
+
+    # ── Друк порожнього бланку ──────────────────────────────
+    def _print_blank_form(self):
+        if not self.plants:
+            messagebox.showwarning("", "Спочатку відкрийте схему або журнал."); return
+        if not HAS_MPL:
+            messagebox.showwarning("", "Для друку потрібен matplotlib."); return
+
+        by_row = {}
+        for p in self.plants:
+            by_row.setdefault(p.row, {})[p.position] = p
+        rows = sorted(by_row.keys())
+
+        POS_PER_PAGE = 14; ROWS_PER_PAGE = 4
+        segments = []
+        for row_num in rows:
+            positions = sorted(by_row[row_num].keys())
+            for i in range(0, len(positions), POS_PER_PAGE):
+                segments.append((row_num, positions[i:i+POS_PER_PAGE]))
+        pages = [segments[i:i+ROWS_PER_PAGE] for i in range(0, len(segments), ROWS_PER_PAGE)] \
+                or [[]]
+
+        page_idx = {"i": 0}
+        win = tk.Toplevel(self.win); win.title("Друк бланку журналу")
+        win.geometry("1100x750"); set_icon(win)
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
+        lbl = tk.Label(tb, text="", font=("Times New Roman",11,"bold"))
+        lbl.pack(side=tk.LEFT, padx=8)
+        holder = tk.Frame(win); holder.pack(fill=tk.BOTH, expand=True)
+        state = {"fig": None}
+
+        def _render():
+            for w in holder.winfo_children(): w.destroy()
+            segs = pages[page_idx["i"]]
+            n_seg = max(1, len(segs))
+            max_len = max((len(pl) for _, pl in segs), default=1)
+            fig = Figure(figsize=(max(9, max_len*0.85), max(4.5, n_seg*2.3+1.2)), dpi=100)
+            ax = fig.add_subplot(111)
+            ROW_H = 2.1
+            for si, (row_num, pos_list) in enumerate(segs):
+                y_top = n_seg*ROW_H - si*ROW_H
+                ax.text(-0.7, y_top-1.0, f"Ряд {row_num}\n(поз. {pos_list[0]}-{pos_list[-1]})",
+                        ha="right", va="center", fontsize=9, fontfamily="Times New Roman",
+                        fontweight="bold")
+                for ci, pos in enumerate(pos_list):
+                    p = by_row.get(row_num, {}).get(pos)
+                    if p is None: continue
+                    x = ci
+                    ax.text(x+0.5, y_top+0.15, str(pos), ha="center", va="center",
+                            fontsize=8, fontfamily="Times New Roman", color="#555")
+                    if p.role == HP_ROLE_RECORDED:
+                        top_r = matplotlib.patches.Rectangle(
+                            (x+0.03, y_top-0.72), 0.94, 0.55,
+                            facecolor="#EAF2FB", edgecolor="#333", linewidth=1.0)
+                        ax.add_patch(top_r)
+                        ax.text(x+0.5, y_top-0.44, f"В{p.variant}-П{p.replication}",
+                                ha="center", va="center", fontsize=8,
+                                fontfamily="Times New Roman", color="#1a4b8c", fontweight="bold")
+                        bot_r = matplotlib.patches.Rectangle(
+                            (x+0.03, y_top-1.55), 0.94, 0.78,
+                            facecolor="white", edgecolor="#333", linewidth=1.2)
+                        ax.add_patch(bot_r)
+                    else:
+                        label = {HP_ROLE_GUARD_EDGE:"K", HP_ROLE_GUARD_REP:"P",
+                                 HP_ROLE_DEAD:"-", HP_ROLE_POLLINIZER:"+",
+                                 HP_ROLE_EXTRA:"x"}.get(p.role, "")
+                        rect = matplotlib.patches.Rectangle(
+                            (x+0.12, y_top-1.2), 0.76, 1.0,
+                            facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
+                        ax.add_patch(rect)
+                        if label:
+                            ax.text(x+0.5, y_top-0.7, label, ha="center", va="center",
+                                    fontsize=8, color="#999", fontfamily="Times New Roman")
+            ax.set_xlim(-1.6, max_len+0.5); ax.set_ylim(0, n_seg*ROW_H+1.3)
+            ax.axis("off")
+            ax.set_title(
+                "БЛАНК ОБЛІКУ\n"
+                "Показник: _______________________   Одиниця: _________\n"
+                f"Дата: _______________     Виконав: _______________________     "
+                f"Сторінка {page_idx['i']+1}/{len(pages)}",
+                fontsize=10, fontfamily="Times New Roman", loc="left")
+            fig.subplots_adjust(top=0.82, bottom=0.03, left=0.1, right=0.98)
+            state["fig"] = fig
+            lbl.configure(text=f"Сторінка {page_idx['i']+1} / {len(pages)}")
+            embed_figure(fig, holder)
+
+        def _step(d):
+            page_idx["i"] = max(0, min(len(pages)-1, page_idx["i"]+d))
+            _render()
+
+        tk.Button(tb, text="◀ Попередня", font=("Times New Roman",10),
+                  command=lambda: _step(-1)).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="Наступна ▶", font=("Times New Roman",10),
+                  command=lambda: _step(1)).pack(side=tk.LEFT, padx=4)
+        def _save():
+            if state["fig"] is None: return
+            path = filedialog.asksaveasfilename(defaultextension=".png",
+                        filetypes=[("PNG зображення","*.png")],
+                        initialfile=f"blank_form_page_{page_idx['i']+1}.png",
+                        title="Зберегти сторінку")
+            if not path: return
+            try:
+                state["fig"].savefig(path, dpi=150, bbox_inches="tight")
+                messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+            except Exception as ex:
+                messagebox.showerror("Помилка", str(ex))
+        tk.Button(tb, text="💾 Зберегти PNG", font=("Times New Roman",10),
+                  command=_save).pack(side=tk.LEFT, padx=12)
+        _render()
+
+    # ── Зведення журналу в таблицю для аналізу ─────────────
+    def _open_aggregate_dialog(self):
+        if not self.plants:
+            messagebox.showwarning("", "Спочатку відкрийте схему або журнал."); return
+        if not self.records:
+            messagebox.showwarning("", "У журналі ще немає жодного обліку — "
+                                       "спершу створіть облік і внесіть значення."); return
+        self._save_current_values_from_widgets()
+
+        dlg = tk.Toplevel(self.win); dlg.title("Звести дані для аналізу")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        tk.Label(frm,
+                 text="Оберіть один або кілька обліків (показників), які потрібно звести в\n"
+                      "підсумкову таблицю. Якщо обрати кілька (наприклад, «Урожайність 2022»,\n"
+                      "«2023», «2024») — вони стануть окремими стовпцями однієї таблиці,\n"
+                      "придатної для аналізу динаміки в часі (Змішаний RM).",
+                 font=("Times New Roman",10), fg="#555", justify="left"
+                 ).pack(anchor="w", pady=(0,10))
+        check_vars = {}
+        for nm in self.records.keys():
+            v = tk.BooleanVar(value=True)
+            tk.Checkbutton(frm, text=nm, variable=v, font=("Times New Roman",11)
+                           ).pack(anchor="w")
+            check_vars[nm] = v
+
+        def _go():
+            chosen = [nm for nm, v in check_vars.items() if v.get()]
+            if not chosen:
+                messagebox.showwarning("", "Оберіть хоча б один облік.", parent=dlg); return
+            dlg.destroy()
+            self._show_aggregate_result(chosen)
+        bf = tk.Frame(frm); bf.pack(pady=(12,0))
+        tk.Button(bf, text="Звести →", bg="#1a6b1a", fg="white",
+                  font=("Times New Roman",11), command=_go).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=("Times New Roman",11),
+                  command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    def _aggregate_for_analysis(self, record_names):
+        """Зводить журнал у таблицю: одна строка на КОЖНУ повторність (не на
+        кожну облікову рослину!) — значення всіх облікових рослин В МЕЖАХ
+        однієї повторності усереднюються в одне число. Це методично
+        правильно: облікові рослини всередині повторності — субпроби
+        однієї дослідної одиниці, а не незалежні повторення, тож пряме
+        підставлення кожної окремо в ANOVA спричинило б псевдоповторність."""
+        groups = {}
+        for p in self.plants:
+            if p.role != HP_ROLE_RECORDED: continue
+            key = (p.variant, p.replication)
+            groups.setdefault(key, []).append(p)
+
+        rows = []
+        for (v, r) in sorted(groups.keys(), key=lambda k: (k[0] or 0, k[1] or 0)):
+            plist = groups[(v, r)]
+            vname = (self.variant_names[v-1] if self.variant_names and v and
+                     1 <= v <= len(self.variant_names) else f"В{v}")
+            row = {"variant": v, "variant_name": vname, "replication": r, "n_subsamples": len(plist)}
+            for rn in record_names:
+                vals_dict = self.records.get(rn, {}).get("values", {})
+                vals = []
+                for p in plist:
+                    key = f"{p.row}:{p.position}"
+                    raw = vals_dict.get(key)
+                    if raw is None or str(raw).strip() == "": continue
+                    try: vals.append(float(str(raw).replace(",",".")))
+                    except ValueError: pass
+                row[rn] = round(sum(vals)/len(vals), 4) if vals else None
+            rows.append(row)
+        return rows
+
+    def _show_aggregate_result(self, record_names):
+        rows = self._aggregate_for_analysis(record_names)
+        if not rows:
+            messagebox.showwarning("", "Немає жодної сформованої повторності "
+                                       "(облікові рослини не визначені в схемі)."); return
+
+        win = tk.Toplevel(self.win); win.title("Зведена таблиця для аналізу")
+        win.geometry("900x600"); set_icon(win)
+        tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати (для вставки в будь-який аналіз)",
+                  font=("Times New Roman",11),
+                  command=lambda: self._copy_aggregate(win, record_names, rows)
+                  ).pack(side=tk.LEFT, padx=4)
+        if len(record_names) >= 2:
+            tk.Button(tb, text="➡ Відкрити в «Змішаний RM»", bg="#1a6b1a", fg="white",
+                      font=("Times New Roman",11),
+                      command=lambda: self._open_in_mixed_rm(record_names, rows)
+                      ).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(win,
+                 text="Кожен рядок — ОДНА повторність (не одна облікова рослина): значення "
+                      "субпроб усередині повторності усереднено. Це коректний формат для "
+                      "дисперсійного аналізу — уникає псевдоповторності.",
+                 font=("Times New Roman",10), fg="#555", justify="left", wraplength=860,
+                 anchor="w").pack(fill=tk.X, padx=10, pady=(4,4))
+
+        headers = ["Варіант","Повторність","К-сть субпроб"] + record_names
+        tbl_rows = [[r["variant_name"], r["replication"], r["n_subsamples"]] +
+                    [("" if r[rn] is None else r[rn]) for rn in record_names] for r in rows]
+        frm, _ = make_tv(win, headers, tbl_rows)
+        frm.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
+
+    def _copy_aggregate(self, win, record_names, rows):
+        lines = ["\t".join(["Варіант","Повторність"] + record_names)]
+        for r in rows:
+            vals = [str(r["variant_name"]), str(r["replication"])]
+            vals += ["" if r[rn] is None else str(r[rn]) for rn in record_names]
+            lines.append("\t".join(vals))
+        win.clipboard_clear(); win.clipboard_append("\n".join(lines))
+        messagebox.showinfo("Скопійовано",
+            "Таблицю скопійовано у буфер обміну.\n"
+            "Вставте (Ctrl+V) у таблицю потрібного аналізу — курсор поставте "
+            "в перший стовпчик, перший рядок.")
+
+    def _open_in_mixed_rm(self, record_names, rows):
+        """Відкриває Змішаний RM і одразу заповнює його таблицю зведеними
+        даними — Варіант/Повторність збігаються за форматом один-в-один."""
+        w = MixedRepeatedWindow(self._parent, self.gs)
+        while len(w.time_vars) < len(record_names): w._add_col()
+        while len(w.time_vars) > len(record_names): w._del_col()
+        for i, rn in enumerate(record_names):
+            w.time_vars[i].set(rn)
+        while len(w.entries) < len(rows): w._add_row()
+        while len(w.entries) > len(rows): w._del_row()
+        for i, r in enumerate(rows):
+            w.entries[i][0].delete(0, tk.END); w.entries[i][0].insert(0, str(r["variant_name"]))
+            w.entries[i][1].delete(0, tk.END); w.entries[i][1].insert(0, str(r["replication"]))
+            for j, rn in enumerate(record_names):
+                val = r[rn]
+                w.entries[i][2+j].delete(0, tk.END)
+                if val is not None: w.entries[i][2+j].insert(0, str(val))
+        messagebox.showinfo("Дані перенесено",
+            f"Дані з {len(record_names)} обліків перенесено у «Змішаний RM»\n"
+            f"({len(rows)} повторностей). Перевірте таблицю і натисніть «▶ Аналіз».")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -16685,6 +17398,9 @@ def _SADTk_new_init(self, root):
         ("homogplot","Однорідні ділянки саду","За CV% наявних рослин",
          C["olive"],HomogeneousPlotWindow,True,None,
          "однорідні ділянки cv діаметр штамб сад дерева вирівнювання рандомізація ітеративний"),
+        ("fieldjournal","Польовий журнал обліків","Внесення даних у схему досліду",
+         C["olive"],FieldJournalWindow,True,None,
+         "польовий журнал облік схема внесення даних сезон рік урожайність вимірювання"),
     ]
 
     def _open(key, cls, needs_gs, custom_fn=None):
