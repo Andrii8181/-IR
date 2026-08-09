@@ -8834,8 +8834,12 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                    edgecolors="white", linewidths=0.5)
         if gs["annotate_obj"]:
             for i, nm in enumerate(obj_names[:len(scores)]):
-                ax.annotate(nm, (scores[i,0], scores[i,1]),
-                            fontsize=max(6, fz-1), alpha=0.85, fontfamily=ff)
+                ann = ax.annotate(nm, xy=(scores[i,0], scores[i,1]),
+                            xytext=(7, 7), textcoords="offset points",
+                            fontsize=max(6, fz-1), alpha=0.9, fontfamily=ff,
+                            arrowprops=dict(arrowstyle="-", color="#999",
+                                           alpha=0.6, lw=0.6, shrinkA=0, shrinkB=3))
+                ann.draggable(True)
         max_s = max(np.max(np.abs(scores[:,0])), np.max(np.abs(scores[:,1])), 1e-6)
         for j in range(min_c):
             lx = eigenvectors[j,0]*max_s*sc; ly = eigenvectors[j,1]*max_s*sc
@@ -8843,8 +8847,12 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                         arrowprops=dict(arrowstyle="->", color=ac, lw=1.3))
             if gs["annotate_var"]:
                 nm_j = var_names[j] if j < len(var_names) else f"П{j+1}"
-                ax.text(lx*1.07, ly*1.07, nm_j,
-                        fontsize=max(6, fz-1), color=ac, fontfamily=ff)
+                ann_v = ax.annotate(nm_j, xy=(lx,ly),
+                            xytext=(9, 9), textcoords="offset points",
+                            fontsize=max(6, fz-1), color=ac, fontfamily=ff,
+                            arrowprops=dict(arrowstyle="-", color=ac,
+                                           alpha=0.5, lw=0.6, shrinkA=0, shrinkB=3))
+                ann_v.draggable(True)
         ax.axhline(0, color="#888", lw=0.5); ax.axvline(0, color="#888", lw=0.5)
         ax.set_xlabel(f"ГК1 ({fmt(explained[0],1)}%)", fontsize=fz, fontfamily=ff)
         ax.set_ylabel(f"ГК2 ({fmt(explained[1],1)}%)" if n_comp>1 else "ГК2",
@@ -11084,15 +11092,23 @@ class StabilityWindow:
         ax1.axhline(0, color="k", lw=0.5); ax1.axvline(0, color="k", lw=0.5)
         ax1.scatter(pc1_g, pc2_g, s=ps, color=pc_, zorder=3)
         for i, nm in enumerate(gen_names):
-            ax1.annotate(nm, (pc1_g[i], pc2_g[i]), fontsize=fz-1, ha='center', va='bottom',
-                        fontfamily=ff)
+            ann = ax1.annotate(nm, xy=(pc1_g[i], pc2_g[i]),
+                        xytext=(7, 7), textcoords="offset points",
+                        fontsize=fz-1, fontfamily=ff,
+                        arrowprops=dict(arrowstyle="-", color="#999",
+                                       alpha=0.6, lw=0.6, shrinkA=0, shrinkB=3))
+            ann.draggable(True)
         sc = max(np.max(np.abs(pc1_g)), np.max(np.abs(pc2_g)), 1e-10)
         sc_e = sc / max(np.max(np.abs(pc1_e)), max(np.max(np.abs(pc2_e)),1e-10))
         for j, nm in enumerate(env_names):
             ax1.annotate("", xy=(pc1_e[j]*sc_e*0.8, pc2_e[j]*sc_e*0.8), xytext=(0,0),
                          arrowprops=dict(arrowstyle="->", color=vc, lw=1.2))
-            ax1.text(pc1_e[j]*sc_e*0.85, pc2_e[j]*sc_e*0.85, nm, fontsize=fz-1,
-                     color=vc, fontfamily=ff)
+            ann_e = ax1.annotate(nm, xy=(pc1_e[j]*sc_e*0.8, pc2_e[j]*sc_e*0.8),
+                        xytext=(9, 9), textcoords="offset points",
+                        fontsize=fz-1, color=vc, fontfamily=ff,
+                        arrowprops=dict(arrowstyle="-", color=vc,
+                                       alpha=0.5, lw=0.6, shrinkA=0, shrinkB=3))
+            ann_e.draggable(True)
         ax1.set_xlabel(f"ГК1 ({fmt(var_exp[0],1)}%)", fontsize=fz, fontfamily=ff)
         ax1.set_ylabel(f"ГК2 ({fmt(var_exp[1] if len(var_exp)>1 else 0,1)}%)",
                        fontsize=fz, fontfamily=ff)
