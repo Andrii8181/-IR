@@ -362,6 +362,60 @@ def fit_font(texts, family="Times New Roman", start=13, min_s=9, target=155):
     return f
 
 # ═══════════════════════════════════════════════════════════════
+# ЗБЕРЕЖЕННЯ / ВІДКРИТТЯ ПРОЕКТУ (універсально для будь-якої таблиці)
+# ═══════════════════════════════════════════════════════════════
+def _get_header_texts(header_widgets):
+    """Повертає список текстів заголовків незалежно від того, чи це
+    StringVar, Entry, чи Label (усі три патерни зустрічаються в програмі)."""
+    out = []
+    for h in header_widgets:
+        if hasattr(h, "get"):
+            out.append(h.get())
+        else:
+            out.append(str(h.cget("text")))
+    return out
+
+def generic_save_project(win, proj_type, header_widgets, entries, extra=None):
+    """Зберігає заголовки і вміст таблиці entries у файл проекту .sadp (JSON)."""
+    path = filedialog.asksaveasfilename(
+        parent=win, defaultextension=".sadp",
+        filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
+        title="Зберегти проект")
+    if not path: return
+    d = {"type": proj_type, "version": APP_VER,
+         "headers": _get_header_texts(header_widgets) if header_widgets else [],
+         "rows_data": [[e.get() for e in row] for row in entries]}
+    if extra: d.update(extra)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        messagebox.showinfo("Збережено", f"Проект збережено:\n{path}")
+    except Exception as ex:
+        messagebox.showerror("Помилка збереження", str(ex))
+
+def _set_header_text(widget, text):
+    """Встановлює текст заголовка незалежно від того, чи це StringVar
+    (має .set) чи Entry (має .delete/.insert)."""
+    if hasattr(widget, "set"):
+        widget.set(text)
+    elif hasattr(widget, "delete") and hasattr(widget, "insert"):
+        widget.delete(0, tk.END); widget.insert(0, text)
+
+def generic_load_project(win):
+    """Відкриває файл проекту .sadp (JSON) і повертає його вміст (dict),
+    або None якщо користувач скасував/сталася помилка."""
+    path = filedialog.askopenfilename(
+        parent=win, filetypes=[("SAD проект","*.sadp"),("JSON","*.json")],
+        title="Відкрити проект")
+    if not path: return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as ex:
+        messagebox.showerror("Помилка відкриття", str(ex)); return None
+
+
+# ═══════════════════════════════════════════════════════════════
 # TREEVIEW TABLE (fixed columns, no drift)
 # ═══════════════════════════════════════════════════════════════
 def make_tv(parent, headers, rows, min_col=90):
@@ -5495,6 +5549,9 @@ class DescriptiveWindow:
         sm.add_command(label="Видалити стовпець", command=self._del_col)
         sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
         mb2["menu"] = sm
 
         tk.Button(tb, text="Вставити з буфера",
@@ -5607,6 +5664,22 @@ class DescriptiveWindow:
         if not messagebox.askyesno("Очистити", "Видалити всі числові дані?\n(Назви стовпців залишаться)"): return
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
+
+    def _save_proj(self):
+        generic_save_project(self.win, "descriptive", self.header_vars, self.entries)
+
+    def _load_proj(self):
+        d = generic_load_project(self.win)
+        if d is None: return
+        headers = d.get("headers", []); rd = d.get("rows_data", [])
+        while self.cols < len(headers): self._add_col()
+        for j, h in enumerate(headers):
+            if j < len(self.header_vars): self.header_vars[j].set(h)
+        while len(self.entries) < len(rd): self._add_row()
+        for i, rv in enumerate(rd):
+            for j, v in enumerate(rv):
+                if i < len(self.entries) and j < len(self.entries[i]):
+                    self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
 
     # ── Вставка і завантаження ───────────────────────────────
     def _paste(self):
@@ -7633,6 +7706,9 @@ class ClusterWindow:
         sm.add_command(label="Видалити стовпець", command=self._del_col)
         sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
@@ -7748,6 +7824,22 @@ class ClusterWindow:
                 "Видалити всі дані? (Заголовки залишаться)"): return
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
+
+    def _save_proj(self):
+        generic_save_project(self.win, "cluster", self.header_vars, self.entries)
+
+    def _load_proj(self):
+        d = generic_load_project(self.win)
+        if d is None: return
+        headers = d.get("headers", []); rd = d.get("rows_data", [])
+        while self.cols_n < len(headers): self._add_col()
+        for j, h in enumerate(headers):
+            if j < len(self.header_vars): self.header_vars[j].set(h)
+        while len(self.entries) < len(rd): self._add_row()
+        for i, rv in enumerate(rd):
+            for j, v in enumerate(rv):
+                if i < len(self.entries) and j < len(self.entries[i]):
+                    self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
 
     # ── Вставка / Довідка ────────────────────────────────────
     def _paste(self):
@@ -8213,6 +8305,9 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         sm.add_command(label="Видалити стовпець", command=self._del_col)
         sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
@@ -8328,6 +8423,22 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                 "Видалити всі дані? (Заголовки залишаться)"): return
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
+
+    def _save_proj(self):
+        generic_save_project(self.win, "pca", self.header_vars, self.entries)
+
+    def _load_proj(self):
+        d = generic_load_project(self.win)
+        if d is None: return
+        headers = d.get("headers", []); rd = d.get("rows_data", [])
+        while self.cols_n < len(headers): self._add_col()
+        for j, h in enumerate(headers):
+            if j < len(self.header_vars): self.header_vars[j].set(h)
+        while len(self.entries) < len(rd): self._add_row()
+        for i, rv in enumerate(rd):
+            for j, v in enumerate(rv):
+                if i < len(self.entries) and j < len(self.entries[i]):
+                    self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
 
     # ── Вставка / Довідка ────────────────────────────────────
     def _paste(self):
@@ -10578,6 +10689,11 @@ class StabilityWindow:
         self.win.geometry("1020x680"); set_icon(self.win)
         self.gs = gs
         self._stab_fig = None
+        self._st_gs = {
+            "font_family": "Times New Roman", "font_size": 9,
+            "point_color": "#4c72b0", "vector_color": "#c62828",
+            "point_size": 80,
+        }
         self._build()
 
     def _build(self):
@@ -10846,38 +10962,217 @@ class StabilityWindow:
         pc1_e = Vt[0,:];       pc2_e = Vt[1,:] if len(S)>1 else np.zeros(e_count)
         var_exp = S**2 / np.sum(S**2) * 100
 
-        if not HAS_MPL: messagebox.showwarning("","matplotlib needed."); return
-        win = tk.Toplevel(self.win); win.title("Аналіз стабільності — Результати"); win.geometry("1150x720")
+        if not HAS_MPL:
+            messagebox.showwarning("", "Для побудови графіків потрібен matplotlib."); return
 
-        fig = Figure(figsize=(10, 6), dpi=100)
-        # GGE biplot
-        ax1 = fig.add_subplot(121)
+        win = tk.Toplevel(self.win)
+        win.title("Аналіз стабільності — Результати")
+        n_gen = len(gen_names)
+        est_h = min(880, max(680, 560 + 14*n_gen))
+        win.geometry(f"1150x{est_h}"); set_icon(win)
+
+        self._st_data = dict(gen_names=gen_names, env_names=env_names, er_rows=er_rows,
+                             pc1_g=pc1_g, pc2_g=pc2_g, pc1_e=pc1_e, pc2_e=pc2_e,
+                             var_exp=var_exp)
+        self._st_built = {"biplot": False}
+
+        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        sidebar = tk.Frame(main, width=210, bg="#2c3e50")
+        sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+        content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        tk.Label(sidebar, text="СТАБІЛЬНІСТЬ\n(GxE)", bg="#2c3e50", fg="#ecf0f1",
+                 font=("Times New Roman",12,"bold"), pady=12, justify="center").pack(fill=tk.X)
+
+        active = {"panel": None, "btn": None}
+        def _show_panel(frame, btn):
+            if active["panel"] is not None: active["panel"].pack_forget()
+            if active["btn"] is not None: active["btn"].configure(bg="#2c3e50", fg="#bdc3c7")
+            frame.pack(fill=tk.BOTH, expand=True)
+            active["panel"] = frame; active["btn"] = btn
+            btn.configure(bg="#c62828", fg="white")
+
+        def _sidebar_btn(text, tooltip):
+            fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
+            b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+                          font=("Times New Roman",11), relief=tk.FLAT,
+                          anchor="w", padx=12, pady=6,
+                          activebackground="#c62828", activeforeground="white")
+            b.pack(fill=tk.X)
+            tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
+                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+            tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
+            return b
+
+        rpt_frame = tk.Frame(content)
+        bp_frame  = tk.Frame(content)
+
+        b_rpt = _sidebar_btn("📋 Звіт (таблиця)",  "Bi, s²d, клас стабільності")
+        b_bp  = _sidebar_btn("📊 GGE Biplot",       "Генотип × Середовище")
+
+        def _open_rpt(): _show_panel(rpt_frame, b_rpt)
+        def _open_bp():
+            _show_panel(bp_frame, b_bp)
+            if not self._st_built["biplot"]:
+                bp_frame.update_idletasks()
+                self._build_stability_biplot_panel(bp_frame)
+                self._st_built["biplot"] = True
+
+        b_rpt.configure(command=_open_rpt)
+        b_bp.configure( command=_open_bp)
+
+        self._build_stability_report_panel(rpt_frame, win, gen_names, env_names, er_rows)
+
+        _show_panel(rpt_frame, b_rpt)
+
+    def _build_stability_report_panel(self, frame, win, gen_names, env_names, er_rows):
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати таблицю", font=("Times New Roman",11),
+                  command=lambda: self._copy_stability_table(win, er_rows)
+                  ).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(frame,
+                 text=f"Генотипів: {len(gen_names)}   |   Середовищ: {len(env_names)}",
+                 font=("Times New Roman",11), fg="#555", anchor="w"
+                 ).pack(fill=tk.X, padx=10, pady=(4,2))
+
+        frm, _ = make_tv(frame, ["Генотип","Середнє","bi","s²d","Клас стабільності"], er_rows)
+        frm.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+
+        tk.Label(frame,
+                 text="bi (регресійний коефіцієнт Ебергарта–Рассела): bi≈1 — середня "
+                      "чутливість до умов середовища; bi>1 — придатний для сприятливих "
+                      "умов (адаптивний); bi<1 — стабільніший у несприятливих умовах "
+                      "(консервативний).\n"
+                      "s²d (варіанса відхилень від лінії регресії): чим ближче до 0 — "
+                      "тим передбачуваніша поведінка генотипу за цією моделлю.",
+                 font=("Times New Roman",10), fg="#555", justify="left",
+                 wraplength=1000, anchor="w").pack(fill=tk.X, padx=10, pady=(2,10))
+
+    def _copy_stability_table(self, win, er_rows):
+        lines = ["Генотип\tСереднє\tbi\ts²d\tКлас стабільності"]
+        for r in er_rows:
+            lines.append("\t".join(str(x) for x in r))
+        win.clipboard_clear(); win.clipboard_append("\n".join(lines))
+        messagebox.showinfo("Скопійовано",
+            "Таблицю скопійовано у буфер обміну.\nВставте у Word/Excel через Ctrl+V.")
+
+    def _build_stability_biplot_panel(self, frame):
+        for w in frame.winfo_children(): w.destroy()
+        d = self._st_data; gs = self._st_gs
+        gen_names = d["gen_names"]; env_names = d["env_names"]
+        pc1_g = d["pc1_g"]; pc2_g = d["pc2_g"]
+        pc1_e = d["pc1_e"]; pc2_e = d["pc2_e"]; var_exp = d["var_exp"]
+
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="💾 Зберегти PNG", font=("Times New Roman",11),
+                  command=self._save_stability_png).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📋 Копіювати", font=("Times New Roman",11),
+                  command=self._copy_stability_fig).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="⚙ Налаштування", font=("Times New Roman",11),
+                  command=lambda: self._restyle_stability(frame)
+                  ).pack(side=tk.LEFT, padx=4)
+
+        plot_f = tk.Frame(frame); plot_f.pack(fill=tk.BOTH, expand=True)
+        self._stab_plot_frame = plot_f
+
+        ff = gs["font_family"]; fz = gs["font_size"]
+        pc_ = gs["point_color"]; vc = gs["vector_color"]; ps = gs["point_size"]
+
+        fig = Figure(figsize=(9, 7), dpi=100)
+        ax1 = fig.add_subplot(111)
         ax1.axhline(0, color="k", lw=0.5); ax1.axvline(0, color="k", lw=0.5)
-        ax1.scatter(pc1_g, pc2_g, s=80, color="#4c72b0", zorder=3)
+        ax1.scatter(pc1_g, pc2_g, s=ps, color=pc_, zorder=3)
         for i, nm in enumerate(gen_names):
-            ax1.annotate(nm, (pc1_g[i], pc2_g[i]), fontsize=8, ha='center', va='bottom')
-        # environment vectors
-        sc = max(np.max(np.abs(pc1_g)), np.max(np.abs(pc2_g)))
+            ax1.annotate(nm, (pc1_g[i], pc2_g[i]), fontsize=fz-1, ha='center', va='bottom',
+                        fontfamily=ff)
+        sc = max(np.max(np.abs(pc1_g)), np.max(np.abs(pc2_g)), 1e-10)
         sc_e = sc / max(np.max(np.abs(pc1_e)), max(np.max(np.abs(pc2_e)),1e-10))
         for j, nm in enumerate(env_names):
             ax1.annotate("", xy=(pc1_e[j]*sc_e*0.8, pc2_e[j]*sc_e*0.8), xytext=(0,0),
-                         arrowprops=dict(arrowstyle="->", color="#c62828", lw=1.2))
-            ax1.text(pc1_e[j]*sc_e*0.85, pc2_e[j]*sc_e*0.85, nm, fontsize=8, color="#c62828")
-        ax1.set_xlabel(f"ГК1 ({fmt(var_exp[0],1)}%)"); ax1.set_ylabel(f"ГК2 ({fmt(var_exp[1] if len(var_exp)>1 else 0,1)}%)")
-        ax1.set_title("GGE Biplot (Генотип × Середовище)"); ax1.yaxis.grid(True, alpha=0.25)
-
-        # Stability table
-        ax2 = fig.add_subplot(122)
-        ax2.axis("off")
-        col_labels = ["Genotype","Mean","bi","s²d","Stability"]
-        tbl = ax2.table(cellText=er_rows, colLabels=col_labels, loc="center", cellLoc="center")
-        tbl.auto_set_font_size(False); tbl.set_fontsize(9); tbl.scale(1, 1.4)
-        ax2.set_title("Стабільність Eberhart–Russell", pad=14)
-
+                         arrowprops=dict(arrowstyle="->", color=vc, lw=1.2))
+            ax1.text(pc1_e[j]*sc_e*0.85, pc2_e[j]*sc_e*0.85, nm, fontsize=fz-1,
+                     color=vc, fontfamily=ff)
+        ax1.set_xlabel(f"ГК1 ({fmt(var_exp[0],1)}%)", fontsize=fz, fontfamily=ff)
+        ax1.set_ylabel(f"ГК2 ({fmt(var_exp[1] if len(var_exp)>1 else 0,1)}%)",
+                       fontsize=fz, fontfamily=ff)
+        ax1.set_title("GGE Biplot (Генотип × Середовище)", fontsize=fz+1, fontfamily=ff)
+        ax1.tick_params(labelsize=fz)
+        ax1.yaxis.grid(True, alpha=0.25)
         fig.tight_layout()
-        embed_figure(fig, win)
-        frm, _ = make_tv(win, ["Генотип","Середнє","bi","s²d","Клас стабільності"], er_rows)
-        frm.pack(fill=tk.X, padx=8, pady=4)
+        self._stab_fig = fig
+        embed_figure(fig, plot_f)
+
+    def _restyle_stability(self, frame):
+        gs = self._st_gs
+        dlg = tk.Toplevel(self.win); dlg.title("Налаштування графіка")
+        dlg.resizable(False, False); dlg.grab_set(); set_icon(dlg)
+        rf = ("Times New Roman",11)
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+
+        tk.Label(frm, text="Шрифт:", font=rf).grid(row=0, column=0, sticky="w", pady=4)
+        ff_v = tk.StringVar(value=gs["font_family"])
+        ttk.Combobox(frm, textvariable=ff_v, state="readonly", width=20,
+                     values=["Times New Roman","Arial","Calibri","Georgia"]
+                     ).grid(row=0, column=1, sticky="w", padx=8)
+
+        tk.Label(frm, text="Розмір шрифту:", font=rf).grid(row=1, column=0, sticky="w", pady=4)
+        fz_v = tk.IntVar(value=gs["font_size"])
+        tk.Spinbox(frm, from_=6, to=18, textvariable=fz_v, width=6, font=rf
+                   ).grid(row=1, column=1, sticky="w", padx=8)
+
+        tk.Label(frm, text="Розмір точок:", font=rf).grid(row=2, column=0, sticky="w", pady=4)
+        ps_v = tk.IntVar(value=gs["point_size"])
+        tk.Spinbox(frm, from_=20, to=200, increment=10, textvariable=ps_v, width=6, font=rf
+                   ).grid(row=2, column=1, sticky="w", padx=8)
+
+        pt_col_v = tk.StringVar(value=gs["point_color"])
+        vec_col_v = tk.StringVar(value=gs["vector_color"])
+        def _pick(var):
+            c = colorchooser.askcolor(color=var.get(), parent=dlg)
+            if c and c[1]: var.set(c[1])
+        tk.Label(frm, text="Колір генотипів (точок):", font=rf).grid(
+            row=3, column=0, sticky="w", pady=4)
+        tk.Button(frm, text="Обрати колір", command=lambda: _pick(pt_col_v)
+                  ).grid(row=3, column=1, sticky="w", padx=8)
+        tk.Label(frm, text="Колір середовищ (векторів):", font=rf).grid(
+            row=4, column=0, sticky="w", pady=4)
+        tk.Button(frm, text="Обрати колір", command=lambda: _pick(vec_col_v)
+                  ).grid(row=4, column=1, sticky="w", padx=8)
+
+        def apply():
+            self._st_gs.update({
+                "font_family": ff_v.get(), "font_size": fz_v.get(),
+                "point_size": ps_v.get(),
+                "point_color": pt_col_v.get(), "vector_color": vec_col_v.get(),
+            })
+            dlg.destroy()
+            self._build_stability_biplot_panel(frame)
+
+        bf = tk.Frame(frm); bf.grid(row=5, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="OK", bg="#c62828", fg="white", font=rf,
+                  command=apply).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rf, command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    def _save_stability_png(self):
+        if self._stab_fig is None:
+            messagebox.showwarning("","Спочатку виконайте аналіз."); return
+        path = filedialog.asksaveasfilename(defaultextension=".png",
+                    filetypes=[("PNG зображення","*.png")], title="Зберегти графік")
+        if not path: return
+        try:
+            self._stab_fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
+
+    def _copy_stability_fig(self):
+        if self._stab_fig is None:
+            messagebox.showwarning("","Спочатку виконайте аналіз."); return
+        ok, msg = _copy_fig_to_clipboard(self._stab_fig)
+        if ok: messagebox.showinfo("","Графік скопійовано.\nВставте у Word через Ctrl+V.")
+        else:   messagebox.showwarning("",f"Помилка: {msg}")
 
 
 
@@ -10997,6 +11292,9 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         sm.add_command(label="➖ Видалити коваріату", command=self._del_covariate)
         sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
@@ -11162,6 +11460,22 @@ ANCOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             return
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
+
+    def _save_proj(self):
+        generic_save_project(self.win, "ancova", self.header_entries, self.entries)
+
+    def _load_proj(self):
+        d = generic_load_project(self.win)
+        if d is None: return
+        headers = d.get("headers", []); rd = d.get("rows_data", [])
+        while self.n_cols < len(headers): self._add_covariate()
+        for j, h in enumerate(headers):
+            if j < len(self.header_entries): _set_header_text(self.header_entries[j], h)
+        while len(self.entries) < len(rd): self._add_row()
+        for i, rv in enumerate(rd):
+            for j, v in enumerate(rv):
+                if i < len(self.entries) and j < len(self.entries[i]):
+                    self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
 
 
 
@@ -11717,6 +12031,9 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
         sm.add_command(label="Видалити стовпець",  command=self._del_col)
         sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера",
@@ -11857,6 +12174,22 @@ MANOVA — ПОКРОКОВА ІНСТРУКЦІЯ
             return
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
+
+    def _save_proj(self):
+        generic_save_project(self.win, "manova", self.header_vars, self.entries)
+
+    def _load_proj(self):
+        d = generic_load_project(self.win)
+        if d is None: return
+        headers = d.get("headers", []); rd = d.get("rows_data", [])
+        while self.n_cols < len(headers): self._add_col()
+        for j, h in enumerate(headers):
+            if j < len(self.header_vars): self.header_vars[j].set(h)
+        while len(self.entries) < len(rd): self._add_row()
+        for i, rv in enumerate(rd):
+            for j, v in enumerate(rv):
+                if i < len(self.entries) and j < len(self.entries[i]):
+                    self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
 
     # ── Вставка з буфера ──────────────────────────────────────
     def _paste(self):
@@ -14067,6 +14400,9 @@ class HomogeneousPlotWindow:
         sm.add_command(label="Видалити позицію", command=self._del_col)
         sm.add_separator()
         sm.add_command(label="🗑 Очистити таблицю", command=self._clear_table)
+        sm.add_separator()
+        sm.add_command(label="💾 Зберегти проект", command=self._save_proj)
+        sm.add_command(label="📂 Відкрити проект", command=self._load_proj)
         mb2["menu"] = sm
 
         tk.Button(top, text="Вставити з буфера", font=rf,
@@ -14235,6 +14571,22 @@ class HomogeneousPlotWindow:
         if not messagebox.askyesno("Очистити", "Видалити всі дані таблиці?"): return
         for row in self.entries:
             for e in row: e.delete(0, tk.END)
+
+    def _save_proj(self):
+        generic_save_project(self.win, "homogeneous_plot", None, self.entries,
+                             extra={"trait_name": self._trait_var.get() if hasattr(self, "_trait_var") else ""})
+
+    def _load_proj(self):
+        d = generic_load_project(self.win)
+        if d is None: return
+        rd = d.get("rows_data", [])
+        while len(self.entries) < len(rd): self._add_row()
+        max_cols = max((len(rv) for rv in rd), default=0)
+        while self.cols_n < max_cols: self._add_col()
+        for i, rv in enumerate(rd):
+            for j, v in enumerate(rv):
+                if i < len(self.entries) and j < len(self.entries[i]):
+                    self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
 
     def _paste(self):
         try: data = self.win.clipboard_get()
