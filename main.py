@@ -59,7 +59,7 @@ def maximize_win(win):
         win.geometry("1280x800")
 import numpy as np
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, colorchooser
+from tkinter import ttk, messagebox, filedialog, colorchooser, simpledialog
 from tkinter.scrolledtext import ScrolledText
 import tkinter.font as tkfont
 from itertools import combinations
@@ -14394,7 +14394,12 @@ class HomogeneousPlotWindow:
         self.gs = dict(gs) if gs else {}
         self._result = None
         self._map_fig = None
-        self.rows_n = 10; self.cols_n = 100
+        self.row_lengths = []   # довжина (к-сть рослин) кожного ряду — окремо для кожного
+        self.rows_n = 0
+        self.entries = []
+        self.row_labels = []
+        self.pos_labels = []
+        self._table_built = False
         self._build()
 
     # ─────────────────────────────────────────────────────
@@ -14425,6 +14430,9 @@ class HomogeneousPlotWindow:
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white", font=rf,
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
+        self._resize_btn = tk.Button(top, text="🔧 Змінити розміри таблиці", font=rf,
+                                     command=self._reset_table_size)
+        # ще не запакована — з'явиться лише після побудови таблиці
 
         # ── параметри ────────────────────────────────────
         pf = tk.LabelFrame(self.win, text="Параметри", font=("Times New Roman",11,"bold"),
@@ -14433,14 +14441,14 @@ class HomogeneousPlotWindow:
 
         self._v = {}
         row_defs = [
-            ("Показник:",                       "trait_name", "діаметр штамбу", 12),
-            ("Одиниця:",                        "trait_unit", "см", 5),
-            ("Поріг CV, %:",                     "cv_thr",     "10", 5),
-            ("Повторність, рослин:",             "plot_size",  "5", 5),
-            ("Захисна край ряду (1-3):",         "edge_guard", "2", 4),
-            ("Захисна між повтор.:",             "rep_guard",  "1", 4),
-            ("Варіантів:",                       "n_var",      "5", 4),
-            ("Повторень:",                       "n_rep",      "4", 4),
+            ("Показник:",                       "trait_name", "", 12),
+            ("Одиниця:",                        "trait_unit", "", 5),
+            ("Поріг CV, %:",                     "cv_thr",     "", 5),
+            ("Повторність, рослин:",             "plot_size",  "", 5),
+            ("Захисна край ряду (1-3):",         "edge_guard", "", 4),
+            ("Захисна між повтор.:",             "rep_guard",  "", 4),
+            ("Варіантів:",                       "n_var",      "", 4),
+            ("Повторень:",                       "n_rep",      "", 4),
             ("Макс. ітерацій:",                  "max_it",     "20", 5),
         ]
         PER_ROW = 4   # скільки пар "підпис+поле" вміщується в один рядок без переповнення
@@ -14477,11 +14485,38 @@ class HomogeneousPlotWindow:
                        variable=self._poll_guard, font=rf
                        ).grid(row=next_row, column=4, columnspan=4, sticky="w", pady=(3,0))
 
+        next_row += 1
+        self._variant_names = []
+        tk.Button(pf, text="📝 Задати назви варіантів", font=rf,
+                  command=self._edit_variant_names
+                  ).grid(row=next_row, column=0, columnspan=3, sticky="w", pady=(8,0))
+        self._varnames_status = tk.Label(pf, text="(назви не задано — на карті буде В1, В2…)",
+                                         font=("Times New Roman",9), fg="#888")
+        self._varnames_status.grid(row=next_row, column=3, columnspan=5, sticky="w", pady=(8,0))
+
         # ── таблиця даних — на всю ширину вікна ────────────
         tbl_lbl_frm = tk.Frame(self.win); tbl_lbl_frm.pack(fill=tk.X, padx=8)
         tk.Label(tbl_lbl_frm, text='Таблиця "ряд × позиція"  (число / "-" / "+")',
                  font=("Times New Roman",10,"bold")).pack(anchor="w")
 
+        # ── Крок 1: розміри таблиці — довжина КОЖНОГО ряду окремо ──
+        self._setup_frame = tk.LabelFrame(self.win,
+            text="Розміри таблиці — вкажіть, скільки рослин у кожному ряду",
+            font=("Times New Roman",11,"bold"), padx=10, pady=8)
+        self._setup_frame.pack(fill=tk.X, padx=8, pady=(0,4))
+
+        setup_top = tk.Frame(self._setup_frame); setup_top.pack(fill=tk.X)
+        tk.Label(setup_top, text="Кількість рядів саду:", font=rf).pack(side=tk.LEFT)
+        self._n_rows_setup_var = tk.StringVar(value="")
+        tk.Entry(setup_top, textvariable=self._n_rows_setup_var, width=6, font=rf
+                 ).pack(side=tk.LEFT, padx=6)
+        tk.Button(setup_top, text="Задати довжину кожного ряду →", font=rf,
+                  command=self._build_row_length_inputs).pack(side=tk.LEFT, padx=10)
+
+        self._rowlen_holder = tk.Frame(self._setup_frame)
+        self._rowlen_holder.pack(fill=tk.X, pady=(8,0))
+
+        # ── Область таблиці — заповнюється після кроку 1 ──────
         tbl_area = tk.Frame(self.win); tbl_area.pack(fill=tk.BOTH, expand=True, padx=8, pady=(2,4))
         self._canvas = tk.Canvas(tbl_area)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -14497,11 +14532,67 @@ class HomogeneousPlotWindow:
         self.win.bind("<MouseWheel>",
                       lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
+        self._status_lbl = tk.Label(self.win, text="", fg="#B71C1C",
+                                    font=("Times New Roman",10), wraplength=1360,
+                                    justify="left", anchor="w")
+        self._status_lbl.pack(fill=tk.X, padx=8, pady=(0,4))
+
+    def _build_row_length_inputs(self):
+        try:
+            n = int(self._n_rows_setup_var.get())
+            if n < 1: raise ValueError
+        except ValueError:
+            messagebox.showwarning("", "Вкажіть кількість рядів — ціле число ≥ 1."); return
+        if n > 60:
+            if not messagebox.askyesno("Багато рядів",
+                    f"{n} рядів — це багато, таблиця буде дуже довгою. Продовжити?"):
+                return
+        for w in self._rowlen_holder.winfo_children(): w.destroy()
+        self._rowlen_vars = []
+        grid_f = tk.Frame(self._rowlen_holder); grid_f.pack(fill=tk.X)
+        rf = ("Times New Roman",10)
+        PER_ROW = 8
+        for i in range(n):
+            r, c = divmod(i, PER_ROW)
+            tk.Label(grid_f, text=f"Ряд {i+1}:", font=rf).grid(
+                row=r, column=c*2, sticky="w", padx=(0 if c==0 else 10, 2), pady=2)
+            v = tk.StringVar(value="")
+            tk.Entry(grid_f, textvariable=v, width=5, font=rf).grid(
+                row=r, column=c*2+1, sticky="w", pady=2)
+            self._rowlen_vars.append(v)
+        btn_f = tk.Frame(self._rowlen_holder); btn_f.pack(fill=tk.X, pady=(10,0))
+        tk.Button(btn_f, text="✓ Побудувати таблицю", bg="#1a6b1a", fg="white",
+                  font=("Times New Roman",11), command=self._build_data_table
+                  ).pack(side=tk.LEFT)
+        tk.Label(btn_f, text="  Довжина ряду = кількість рослин у ньому "
+                             "(порожні клітинки в кінці ряду не потрібні — просто вкажіть "
+                             "реальну кількість)",
+                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=8)
+
+    def _build_data_table(self):
+        try:
+            lengths = [int(v.get()) for v in self._rowlen_vars]
+            if any(L < 1 for L in lengths): raise ValueError
+        except ValueError:
+            messagebox.showwarning("", "Вкажіть довжину (кількість рослин) для кожного "
+                                       "ряду — додатне ціле число, без порожніх полів."); return
+
+        if self._table_built and self.entries:
+            if not messagebox.askyesno("Перебудувати таблицю",
+                    "У таблиці вже є введені дані — перебудова розмірів видалить їх. "
+                    "Продовжити?"):
+                return
+
+        for w in self.inner.winfo_children(): w.destroy()
+        self.row_lengths = lengths
+        self.rows_n = len(lengths)
+        max_len = max(lengths)
+
         tk.Label(self.inner, text="Ряд \\ Поз.", width=9, relief=tk.RIDGE,
                  bg="#444444", fg="white", font=("Times New Roman",10,"bold")
                  ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
         self.pos_labels = []
-        for j in range(self.cols_n):
+        for j in range(max_len):
             lbl = tk.Label(self.inner, text=str(j+1), width=5, relief=tk.RIDGE,
                            bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
             lbl.grid(row=0, column=j+1, padx=1, pady=1, sticky="nsew")
@@ -14509,13 +14600,13 @@ class HomogeneousPlotWindow:
 
         self.row_labels = []
         self.entries = []
-        for i in range(self.rows_n):
+        for i, L in enumerate(lengths):
             rl = tk.Label(self.inner, text=f"Ряд {i+1}", width=9, relief=tk.RIDGE,
                          bg="#444444", fg="white", font=("Times New Roman",9,"bold"))
             rl.grid(row=i+1, column=0, padx=1, pady=1, sticky="nsew")
             self.row_labels.append(rl)
             row_e = []
-            for j in range(self.cols_n):
+            for j in range(L):
                 e = tk.Entry(self.inner, width=5, font=("Times New Roman",10))
                 e.grid(row=i+1, column=j+1, padx=1, pady=1)
                 row_e.append(e)
@@ -14523,10 +14614,46 @@ class HomogeneousPlotWindow:
         _bind_nav(self.entries, self.win)
         _bind_fill_handle(self.entries, self.win)
 
-        self._status_lbl = tk.Label(self.win, text="", fg="#B71C1C",
-                                    font=("Times New Roman",10), wraplength=1360,
-                                    justify="left", anchor="w")
-        self._status_lbl.pack(fill=tk.X, padx=8, pady=(0,4))
+        self._table_built = True
+        self._setup_frame.pack_forget()
+        self._resize_btn.pack(side=tk.LEFT, padx=4)
+
+    def _extend_row_to(self, ri, target_len):
+        """Дорощує конкретний ряд ri до target_len позицій (додає й заголовки
+        позицій, якщо потрібно — інші ряди на це не впливає)."""
+        while len(self.entries[ri]) < target_len:
+            j = len(self.entries[ri])
+            if j >= len(self.pos_labels):
+                lbl = tk.Label(self.inner, text=str(j+1), width=5, relief=tk.RIDGE,
+                               bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
+                lbl.grid(row=0, column=j+1, padx=1, pady=1, sticky="nsew")
+                self.pos_labels.append(lbl)
+            e = tk.Entry(self.inner, width=5, font=("Times New Roman",10))
+            e.grid(row=ri+1, column=j+1, padx=1, pady=1)
+            self.entries[ri].append(e)
+        if ri < len(self.row_lengths):
+            self.row_lengths[ri] = len(self.entries[ri])
+
+    def _add_row_silent(self, length=1):
+        """Додає новий ряд без діалогового вікна (для вставки з буфера/завантаження)."""
+        i = self.rows_n
+        rl = tk.Label(self.inner, text=f"Ряд {i+1}", width=9, relief=tk.RIDGE,
+                     bg="#444444", fg="white", font=("Times New Roman",9,"bold"))
+        rl.grid(row=i+1, column=0, padx=1, pady=1, sticky="nsew")
+        self.row_labels.append(rl)
+        self.entries.append([])
+        self.row_lengths.append(0)
+        self.rows_n += 1
+        self._extend_row_to(i, length)
+
+    def _reset_table_size(self):
+        if self.entries and not messagebox.askyesno("Змінити розміри таблиці",
+                "Це відкриє налаштування розмірів заново. Поточні дані таблиці "
+                "будуть втрачені при побудові нової. Продовжити?"):
+            return
+        self._resize_btn.pack_forget()
+        self._setup_frame.pack(fill=tk.X, padx=8, pady=(0,4), before=self._canvas.master)
+        self._n_rows_setup_var.set(str(self.rows_n) if self.rows_n else "")
 
     # ─────────────────────────────────────────────────────
     def _show_help(self):
@@ -14543,45 +14670,96 @@ class HomogeneousPlotWindow:
         tk.Button(win, text="Закрити", command=win.destroy,
                   font=("Times New Roman",11)).pack(pady=6)
 
+    def _edit_variant_names(self):
+        try:
+            n_var = int(self._v["n_var"].get())
+        except ValueError:
+            messagebox.showwarning("", "Спочатку вкажіть кількість варіантів (число) у полі "
+                                       "«Варіантів:» вище."); return
+        if n_var < 2:
+            messagebox.showwarning("", "Кількість варіантів має бути щонайменше 2."); return
+
+        dlg = tk.Toplevel(self.win)
+        dlg.title("Назви варіантів"); dlg.resizable(False, False)
+        set_icon(dlg); dlg.grab_set()
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+        tk.Label(frm,
+                 text="Введіть реальні назви варіантів досліду (наприклад, «Контроль»,\n"
+                      "«N60P60», «Сорт Айдаред»). На карті лишаться короткі позначення\n"
+                      "В1, В2… — а ці назви з'являться в легенді під картою й у списку\n"
+                      "облікових рослин, щоб не заплутатись у саду.",
+                 font=("Times New Roman",10), fg="#555", justify="left"
+                 ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,10))
+        existing = self._variant_names
+        name_vars = []
+        for i in range(n_var):
+            default = existing[i] if i < len(existing) else ""
+            tk.Label(frm, text=f"В{i+1} =", font=("Times New Roman",11)
+                     ).grid(row=i+1, column=0, sticky="w", pady=3)
+            v = tk.StringVar(value=default)
+            tk.Entry(frm, textvariable=v, width=32, font=("Times New Roman",11)
+                     ).grid(row=i+1, column=1, sticky="w", padx=8, pady=3)
+            name_vars.append(v)
+
+        def _save():
+            names = [v.get().strip() or f"Варіант {i+1}" for i, v in enumerate(name_vars)]
+            self._variant_names = names
+            self._varnames_status.configure(
+                text="✓ " + ", ".join(f"В{i+1}={n}" for i,n in enumerate(names)),
+                fg="#1a6b1a")
+            dlg.destroy()
+        bf = tk.Frame(frm); bf.grid(row=n_var+1, column=0, columnspan=2, pady=(12,0))
+        tk.Button(bf, text="Зберегти", bg="#1a6b1a", fg="white",
+                  font=("Times New Roman",11), command=_save).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=("Times New Roman",11),
+                  command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
     # ── управління таблицею ──────────────────────────────
     def _add_row(self):
-        i = self.rows_n
-        rl = tk.Label(self.inner, text=f"Ряд {i+1}", width=9, relief=tk.RIDGE,
-                     bg="#444444", fg="white", font=("Times New Roman",9,"bold"))
-        rl.grid(row=i+1, column=0, padx=1, pady=1, sticky="nsew")
-        self.row_labels.append(rl)
-        row_e = []
-        for j in range(self.cols_n):
-            e = tk.Entry(self.inner, width=5, font=("Times New Roman",10))
-            e.grid(row=i+1, column=j+1, padx=1, pady=1)
-            row_e.append(e)
-        self.entries.append(row_e); self.rows_n += 1
-        _bind_nav(self.entries, self.win)
-        _bind_fill_handle(self.entries, self.win)
+        if not self._table_built:
+            messagebox.showinfo("", "Спочатку побудуйте таблицю (крок 1 вгорі)."); return
+        default_len = self.row_lengths[-1] if self.row_lengths else 20
+        L = simpledialog.askinteger("Новий ряд", "Кількість рослин у новому ряду:",
+                                    parent=self.win, initialvalue=default_len, minvalue=1)
+        if not L: return
+        self._add_row_silent(L)
 
     def _del_row(self):
         if not self.entries: return
         for e in self.entries.pop(): e.destroy()
         self.row_labels.pop().destroy()
         self.rows_n -= 1
+        if self.row_lengths: self.row_lengths.pop()
 
     def _add_col(self):
-        ci = self.cols_n
-        lbl = tk.Label(self.inner, text=str(ci+1), width=5, relief=tk.RIDGE,
-                       bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
-        lbl.grid(row=0, column=ci+1, padx=1, pady=1, sticky="nsew")
-        self.pos_labels.append(lbl)
+        """Додає одну позицію в кінець того ряду, на клітинку якого зараз
+        встановлено фокус (кожен ряд має свою довжину, тому глобального
+        «додати стовпець одразу всім» більше немає сенсу)."""
+        w = self.win.focus_get()
+        ri = None
         for i, row_e in enumerate(self.entries):
-            e = tk.Entry(self.inner, width=5, font=("Times New Roman",10))
-            e.grid(row=i+1, column=ci+1, padx=1, pady=1)
-            row_e.append(e)
-        self.cols_n += 1
+            if w in row_e: ri = i; break
+        if ri is None:
+            messagebox.showinfo("Оберіть ряд",
+                "Клацніть спочатку на будь-яку клітинку потрібного ряду — "
+                "позицію буде додано саме до нього."); return
+        self._extend_row_to(ri, len(self.entries[ri])+1)
+        _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _del_col(self):
-        if self.cols_n <= 2: return
-        self.pos_labels.pop().destroy()
-        for row_e in self.entries: row_e.pop().destroy()
-        self.cols_n -= 1
+        """Видаляє останню позицію того ряду, де зараз фокус."""
+        w = self.win.focus_get()
+        ri = None
+        for i, row_e in enumerate(self.entries):
+            if w in row_e: ri = i; break
+        if ri is None:
+            messagebox.showinfo("Оберіть ряд",
+                "Клацніть спочатку на будь-яку клітинку потрібного ряду."); return
+        if len(self.entries[ri]) <= 1: return
+        self.entries[ri].pop().destroy()
+        self.row_lengths[ri] -= 1
 
     def _clear_table(self):
         if not messagebox.askyesno("Очистити", "Видалити всі дані таблиці?"): return
@@ -14590,21 +14768,42 @@ class HomogeneousPlotWindow:
 
     def _save_proj(self):
         generic_save_project(self.win, "homogeneous_plot", None, self.entries,
-                             extra={"trait_name": self._trait_var.get() if hasattr(self, "_trait_var") else ""})
+                             extra={"trait_name": self._v["trait_name"].get()
+                                    if hasattr(self, "_v") and "trait_name" in self._v else "",
+                                   "variant_names": self._variant_names})
 
     def _load_proj(self):
         d = generic_load_project(self.win)
         if d is None: return
         rd = d.get("rows_data", [])
-        while len(self.entries) < len(rd): self._add_row()
-        max_cols = max((len(rv) for rv in rd), default=0)
-        while self.cols_n < max_cols: self._add_col()
+        if not self._table_built:
+            # Таблиці ще нема — створюємо одразу під розмір даних із файлу
+            for w in self.inner.winfo_children(): w.destroy()
+            self.entries = []; self.row_labels = []; self.pos_labels = []
+            self.rows_n = 0; self.row_lengths = []
+            tk.Label(self.inner, text="Ряд \\ Поз.", width=9, relief=tk.RIDGE,
+                     bg="#444444", fg="white", font=("Times New Roman",10,"bold")
+                     ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+            self._table_built = True
+            self._setup_frame.pack_forget()
+            self._resize_btn.pack(side=tk.LEFT, padx=4)
+        while len(self.entries) < len(rd): self._add_row_silent(1)
         for i, rv in enumerate(rd):
+            self._extend_row_to(i, len(rv))
             for j, v in enumerate(rv):
-                if i < len(self.entries) and j < len(self.entries[i]):
-                    self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
+                self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
+        vnames = d.get("variant_names")
+        if vnames:
+            self._variant_names = vnames
+            self._varnames_status.configure(
+                text="✓ " + ", ".join(f"В{i+1}={n}" for i,n in enumerate(vnames)),
+                fg="#1a6b1a")
+        _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     def _paste(self):
+        if not self._table_built:
+            messagebox.showinfo("", "Спочатку побудуйте таблицю (крок 1 вгорі)."); return
         try: data = self.win.clipboard_get()
         except Exception:
             messagebox.showwarning("Буфер порожній",
@@ -14618,18 +14817,32 @@ class HomogeneousPlotWindow:
         r0, c0 = pos
         for ir, line in enumerate(data.splitlines()):
             if line == "" and not line.strip(): continue
-            while r0+ir >= len(self.entries): self._add_row()
-            for jc, val in enumerate(line.split("\t")):
+            ri = r0 + ir
+            while ri >= len(self.entries): self._add_row_silent(1)
+            vals = line.split("\t")
+            self._extend_row_to(ri, c0 + len(vals))
+            for jc, val in enumerate(vals):
                 cc = c0+jc
-                while cc >= self.cols_n: self._add_col()
-                self.entries[r0+ir][cc].delete(0, tk.END)
-                self.entries[r0+ir][cc].insert(0, val.strip())
+                self.entries[ri][cc].delete(0, tk.END)
+                self.entries[ri][cc].insert(0, val.strip())
+        _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
 
     # ── побудова схеми ────────────────────────────────────
     def _run(self):
+        if not self._table_built or not self.entries:
+            messagebox.showwarning("Таблиця не побудована",
+                "Спочатку задайте розміри таблиці (крок 1 вгорі) і заповніть дані."); return
+        trait_name = self._v["trait_name"].get().strip()
+        if not trait_name:
+            messagebox.showwarning("Не вказано показник",
+                "Вкажіть назву показника, за яким оцінюється однорідність\n"
+                "(наприклад: діаметр штамбу, об'єм крони, урожайність минулого року)."); return
+        trait_unit = self._v["trait_unit"].get().strip()
+        if not trait_unit:
+            messagebox.showwarning("Не вказано одиницю виміру",
+                "Вкажіть одиницю виміру показника (наприклад: см, кг, шт)."); return
         try:
-            trait_name  = self._v["trait_name"].get().strip() or "показник"
-            trait_unit  = self._v["trait_unit"].get().strip()
             cv_thr      = float(self._v["cv_thr"].get())
             plot_size   = int(self._v["plot_size"].get())
             edge_guard  = int(self._v["edge_guard"].get())
@@ -14639,7 +14852,16 @@ class HomogeneousPlotWindow:
             max_it      = int(self._v["max_it"].get())
             seed        = int(self._v["seed"].get())
         except ValueError:
-            messagebox.showwarning("", "Перевірте числові параметри."); return
+            messagebox.showwarning("Не заповнено параметри",
+                "Заповніть усі параметри досліду (поріг CV%, повторність, захисні "
+                "зони, кількість варіантів і повторень) — жодне з них не може\n"
+                "лишатися порожнім чи нечисловим."); return
+        if n_var < 2:
+            messagebox.showwarning("Замало варіантів",
+                "Кількість варіантів має бути щонайменше 2."); return
+        if n_rep < 1:
+            messagebox.showwarning("Замало повторень",
+                "Кількість повторень має бути щонайменше 1."); return
 
         design_key = HP_DESIGN_LABELS_REV.get(self._design_v.get(), "rcbd")
 
@@ -14800,6 +15022,16 @@ class HomogeneousPlotWindow:
                  anchor="w", justify="left", wraplength=1360
                  ).pack(fill=tk.X, pady=(4,0))
 
+        if self._variant_names:
+            legend2_f = tk.Frame(frame, bg="#eef3f8", padx=8, pady=6)
+            legend2_f.pack(fill=tk.X)
+            names_txt = "   •   ".join(f"В{i+1} = {nm}"
+                                       for i, nm in enumerate(self._variant_names))
+            tk.Label(legend2_f, text="Розшифрування варіантів:  " + names_txt,
+                     bg="#eef3f8", fg="#1a4b8c", font=("Times New Roman",10,"bold"),
+                     anchor="w", justify="left", wraplength=1360
+                     ).pack(fill=tk.X)
+
         map_outer = tk.Frame(frame); map_outer.pack(fill=tk.BOTH, expand=True)
         self._map_outer = map_outer
         self._draw_map()
@@ -14882,20 +15114,30 @@ class HomogeneousPlotWindow:
             key=lambda p: (p.variant or 0, p.replication or 0, p.row, p.position))
         cfg = self._cfg
         design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
+        vnames = self._variant_names
+        def _vname(v):
+            if v is None: return "-"
+            if vnames and 1 <= v <= len(vnames): return f"В{v} ({vnames[v-1]})"
+            return f"В{v}"
         lines = [
             f"Показник: {cfg['trait_name']} ({cfg['trait_unit'] or '—'})",
             f"Дизайн експерименту: {design_txt}",
             f"CV% фінальний: {self._result['final_cv_pct']:.2f}   "
             f"Повторностей: {self._result['plots_formed']}   "
             f"Ітерацій: {self._result['iterations_used']}",
-            "-"*70,
-            f"{'Варіант':<8}{'Повт.':<8}{'Ряд':<6}{'Позиція':<9}{cfg['trait_name']}",
-            "-"*70,
+        ]
+        if vnames:
+            lines.append("Варіанти: " + "  •  ".join(f"В{i+1}={n}" for i,n in enumerate(vnames)))
+        lines += [
+            "-"*90,
+            f"{'Варіант':<26}{'Повт.':<8}{'Ряд':<6}{'Позиція':<9}{cfg['trait_name']}",
+            "-"*90,
         ]
         for p in recorded:
-            lines.append(f"{p.variant or '-':<8}{p.replication or '-':<8}"
+            vn = _vname(p.variant)
+            lines.append(f"{vn:<26}{p.replication or '-':<8}"
                         f"{p.row:<6}{p.position:<9}{p.value:.2f}" if p.value is not None
-                        else f"{p.variant or '-':<8}{p.replication or '-':<8}{p.row:<6}{p.position:<9}—")
+                        else f"{vn:<26}{p.replication or '-':<8}{p.row:<6}{p.position:<9}—")
         self.list_txt.configure(state="normal")
         self.list_txt.delete("1.0", tk.END)
         self.list_txt.insert("1.0", "\n".join(lines))
