@@ -31,7 +31,7 @@ def _SADTk_new_init(self, root):
     root.minsize(1100, 680)
     root.configure(bg="#0f1117")
     root.title("S.A.D. — Статистичний аналіз даних")
-    set_icon(root)
+    set_icon(root) 
 
     # ── Кольорова схема ─────────────────────────────────────
     C = {
