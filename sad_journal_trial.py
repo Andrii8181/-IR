@@ -68,6 +68,7 @@ class FieldJournalWindow:
         self.plants = []           # список HPPlant з завантаженої схеми
         self.cfg = {}
         self.variant_names = []
+        self.factor_defs = []      # [{"name":...,"levels":[...]}, ...] — для багатофакторних схем
         self.records = {}          # {"Урожайність 2024": {"unit":..., "values": {"r:p": val}}}
         self.current_record = None
         self._journal_path = None
@@ -148,11 +149,11 @@ class FieldJournalWindow:
             messagebox.showerror("Помилка відкриття", str(ex)); return
 
         ftype = d.get("type")
-        if ftype not in ("homogeneous_plot_scheme", "field_journal"):
+        if ftype not in ("homogeneous_plot_scheme", "multi_factor_scheme", "field_journal"):
             messagebox.showwarning("Не той тип файлу",
                 "Цей файл не є ані схемою досліду, ані журналом обліків.\n"
                 "Оберіть файл, збережений через «💾 Зберегти схема» в модулі "
-                "планування, або раніше збережений журнал."); return
+                "планування чи конструкторі схеми, або раніше збережений журнал."); return
 
         plants = []
         for pd in d.get("plants", []):
@@ -161,10 +162,12 @@ class FieldJournalWindow:
             p.plot_id = pd.get("plot_id")
             p.variant = pd.get("variant")
             p.replication = pd.get("replication")
+            p.factors = pd.get("factors", {})
             plants.append(p)
         self.plants = plants
         self.cfg = d.get("cfg", {})
         self.variant_names = d.get("variant_names", [])
+        self.factor_defs = d.get("factor_defs", [])   # [{"name":"Обробка ґрунту","levels":["Оранка","Без оранки"]}, ...]
         self.records = d.get("records", {}) if ftype == "field_journal" else {}
         self._journal_path = path if ftype == "field_journal" else None
 
@@ -338,10 +341,12 @@ class FieldJournalWindow:
                 "row": p.row, "position": p.position, "value": p.value,
                 "status": p.status, "role": p.role, "plot_id": p.plot_id,
                 "variant": p.variant, "replication": p.replication,
+                "factors": p.factors,
             })
         d = {
             "type": "field_journal", "version": APP_VER,
             "cfg": self.cfg, "variant_names": self.variant_names,
+            "factor_defs": self.factor_defs,
             "plants": plants_data, "records": self.records,
         }
         default_name = os.path.basename(self._journal_path) if self._journal_path else \
@@ -513,25 +518,42 @@ class FieldJournalWindow:
         однієї повторності усереднюються в одне число. Це методично
         правильно: облікові рослини всередині повторності — субпроби
         однієї дослідної одиниці, а не незалежні повторення, тож пряме
-        підставлення кожної окремо в ANOVA спричинило б псевдоповторність."""
+        підставлення кожної окремо в ANOVA спричинило б псевдоповторність.
+
+        Підтримує і однофакторні схеми (self.variant), і багатофакторні
+        (p.factors — окремий рівень для кожного фактора одночасно)."""
+        is_multi = bool(self.factor_defs) and any(p.factors for p in self.plants)
         groups = {}
         for p in self.plants:
             if p.role != HP_ROLE_RECORDED: continue
-            key = (p.variant, p.replication)
+            if is_multi:
+                key = (tuple(sorted(p.factors.items())), p.replication)
+            else:
+                key = (p.variant, p.replication)
             groups.setdefault(key, []).append(p)
 
         rows = []
-        for (v, r) in sorted(groups.keys(), key=lambda k: (k[0] or 0, k[1] or 0)):
-            plist = groups[(v, r)]
-            vname = (self.variant_names[v-1] if self.variant_names and v and
-                     1 <= v <= len(self.variant_names) else f"В{v}")
-            row = {"variant": v, "variant_name": vname, "replication": r, "n_subsamples": len(plist)}
+        for key in sorted(groups.keys(), key=lambda k: (str(k[0]), k[1] or 0)):
+            plist = groups[key]
+            row = {"replication": key[1], "n_subsamples": len(plist)}
+            if is_multi:
+                factor_levels = dict(key[0])
+                for fdef in self.factor_defs:
+                    fname = fdef["name"]; lv = factor_levels.get(fname)
+                    lvl_name = (fdef["levels"][lv-1] if lv and 1 <= lv <= len(fdef["levels"])
+                               else f"Рівень {lv}")
+                    row[fname] = lvl_name
+            else:
+                v = key[0]
+                vname = (self.variant_names[v-1] if self.variant_names and v and
+                         1 <= v <= len(self.variant_names) else f"В{v}")
+                row["variant_name"] = vname
             for rn in record_names:
                 vals_dict = self.records.get(rn, {}).get("values", {})
                 vals = []
                 for p in plist:
-                    key = f"{p.row}:{p.position}"
-                    raw = vals_dict.get(key)
+                    vkey = f"{p.row}:{p.position}"
+                    raw = vals_dict.get(vkey)
                     if raw is None or str(raw).strip() == "": continue
                     try: vals.append(float(str(raw).replace(",",".")))
                     except ValueError: pass
@@ -544,37 +566,55 @@ class FieldJournalWindow:
         if not rows:
             messagebox.showwarning("", "Немає жодної сформованої повторності "
                                        "(облікові рослини не визначені в схемі)."); return
+        is_multi = bool(self.factor_defs) and any(p.factors for p in self.plants)
+        factor_cols = [fdef["name"] for fdef in self.factor_defs] if is_multi else ["Варіант"]
 
         win = tk.Toplevel(self.win); win.title("Зведена таблиця для аналізу")
-        win.geometry("900x600"); set_icon(win)
+        win.geometry("980x600"); set_icon(win)
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
         tk.Button(tb, text="📋 Копіювати (для вставки в будь-який аналіз)",
                   font=("Times New Roman",11),
-                  command=lambda: self._copy_aggregate(win, record_names, rows)
+                  command=lambda: self._copy_aggregate(win, record_names, rows, factor_cols, is_multi)
                   ).pack(side=tk.LEFT, padx=4)
-        if len(record_names) >= 2:
+        if len(record_names) >= 2 and not is_multi:
             tk.Button(tb, text="➡ Відкрити в «Змішаний RM»", bg="#1a6b1a", fg="white",
                       font=("Times New Roman",11),
                       command=lambda: self._open_in_mixed_rm(record_names, rows)
                       ).pack(side=tk.LEFT, padx=4)
+        if len(record_names) == 1 and is_multi and len(factor_cols) <= 4:
+            tk.Button(tb, text="➡ Відкрити в головній ANOVA-таблиці", bg="#1a6b1a", fg="white",
+                      font=("Times New Roman",11),
+                      command=lambda: self._open_in_main_anova(record_names[0], rows, factor_cols)
+                      ).pack(side=tk.LEFT, padx=4)
 
-        tk.Label(win,
-                 text="Кожен рядок — ОДНА повторність (не одна облікова рослина): значення "
-                      "субпроб усередині повторності усереднено. Це коректний формат для "
-                      "дисперсійного аналізу — уникає псевдоповторності.",
-                 font=("Times New Roman",10), fg="#555", justify="left", wraplength=860,
-                 anchor="w").pack(fill=tk.X, padx=10, pady=(4,4))
+        note = ("Кожен рядок — ОДНА повторність (не одна облікова рослина): значення "
+                "субпроб усередині повторності усереднено. Це коректний формат для "
+                "дисперсійного аналізу — уникає псевдоповторності.")
+        if is_multi:
+            note += ("\nКожен фактор — окремим стовпцем: скопіюйте таблицю й вставте в "
+                      "головну багатофакторну ANOVA-таблицю програми (стовпці факторів "
+                      "уже готові для розпізнавання рівнів).")
+        tk.Label(win, text=note, font=("Times New Roman",10), fg="#555", justify="left",
+                 wraplength=940, anchor="w").pack(fill=tk.X, padx=10, pady=(4,4))
 
-        headers = ["Варіант","Повторність","К-сть субпроб"] + record_names
-        tbl_rows = [[r["variant_name"], r["replication"], r["n_subsamples"]] +
-                    [("" if r[rn] is None else r[rn]) for rn in record_names] for r in rows]
+        headers = factor_cols + ["Повторність","К-сть субпроб"] + record_names
+        if is_multi:
+            tbl_rows = [[r[fc] for fc in factor_cols] + [r["replication"], r["n_subsamples"]] +
+                        [("" if r[rn] is None else r[rn]) for rn in record_names] for r in rows]
+        else:
+            tbl_rows = [[r["variant_name"], r["replication"], r["n_subsamples"]] +
+                        [("" if r[rn] is None else r[rn]) for rn in record_names] for r in rows]
         frm, _ = make_tv(win, headers, tbl_rows)
         frm.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
 
-    def _copy_aggregate(self, win, record_names, rows):
-        lines = ["\t".join(["Варіант","Повторність"] + record_names)]
+    def _copy_aggregate(self, win, record_names, rows, factor_cols, is_multi):
+        lines = ["\t".join(factor_cols + ["Повторність"] + record_names)]
         for r in rows:
-            vals = [str(r["variant_name"]), str(r["replication"])]
+            if is_multi:
+                vals = [str(r[fc]) for fc in factor_cols]
+            else:
+                vals = [str(r["variant_name"])]
+            vals.append(str(r["replication"]))
             vals += ["" if r[rn] is None else str(r[rn]) for rn in record_names]
             lines.append("\t".join(vals))
         win.clipboard_clear(); win.clipboard_append("\n".join(lines))
@@ -603,6 +643,55 @@ class FieldJournalWindow:
         messagebox.showinfo("Дані перенесено",
             f"Дані з {len(record_names)} обліків перенесено у «Змішаний RM»\n"
             f"({len(rows)} повторностей). Перевірте таблицю і натисніть «▶ Аналіз».")
+
+    def _open_in_main_anova(self, record_name, rows, factor_cols):
+        """Відкриває головну багатофакторну ANOVA-таблицю програми (до 4
+        факторів) і одразу заповнює її: один рядок на кожну унікальну
+        комбінацію рівнів факторів, значення повторностей — у стовпці
+        Повт.1, Повт.2… (номер визначається порядком номерів повторності)."""
+        app = getattr(self._parent, "_sad_app", None)
+        if app is None:
+            messagebox.showerror("Не вдалося",
+                "Не знайдено головного вікна програми — відкрийте таблицю "
+                "вручну і скористайтесь «📋 Копіювати»."); return
+        fc = len(factor_cols)
+        if fc > 4:
+            messagebox.showwarning("", "Головна таблиця підтримує максимум "
+                                       "4 фактори одночасно."); return
+
+        by_combo = {}
+        for r in rows:
+            combo_key = tuple(r[fname] for fname in factor_cols)
+            by_combo.setdefault(combo_key, {})[r["replication"]] = r[record_name]
+        combos_sorted = sorted(by_combo.keys())
+        all_reps = sorted({rep for v in by_combo.values() for rep in v.keys()})
+        n_rep_cols = max(len(all_reps), 1)
+
+        app.open_table(fc)
+        for i, fname in enumerate(factor_cols):
+            key = app.factor_keys[i]
+            app._set_ftitle(key, fname)
+            app.header_labels[i].configure(text=app.ftitle(key))
+
+        while len(app.entries) < len(combos_sorted): app.add_row()
+        while (app.cols - fc) < n_rep_cols: app.add_column()
+
+        for i, combo in enumerate(combos_sorted):
+            for k, lvl_name in enumerate(combo):
+                app.entries[i][k].delete(0, tk.END)
+                app.entries[i][k].insert(0, str(lvl_name))
+            rep_vals = by_combo[combo]
+            for ci, rep_num in enumerate(all_reps):
+                col = fc + ci
+                if col >= app.cols: continue
+                v = rep_vals.get(rep_num)
+                app.entries[i][col].delete(0, tk.END)
+                if v is not None: app.entries[i][col].insert(0, str(v))
+
+        messagebox.showinfo("Дані перенесено",
+            f"Дані показника «{record_name}» перенесено в головну {fc}-факторну "
+            f"ANOVA-таблицю ({len(combos_sorted)} комбінацій × {n_rep_cols} повторень). "
+            "Перевірте таблицю і натисніть «▶ Аналіз».")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1859,7 +1948,3 @@ class TrialDesignWindow:
             open_file_cross(path)
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
-
-
-
-
