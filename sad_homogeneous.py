@@ -180,7 +180,7 @@ HP_DESIGN_LABELS_REV.update({lbl: key for lbl, key in HP_DESIGNS})
 
 class HPPlant:
     """Одна рослина сітки ряд×позиція для конструктора однорідних ділянок."""
-    __slots__ = ("row","position","value","status","role","plot_id","variant","replication")
+    __slots__ = ("row","position","value","status","role","plot_id","variant","replication","factors")
     def __init__(self, row, position, value, status="ok"):
         self.row = row; self.position = position
         self.value = value            # float або None (DEAD/POLLINIZER)
@@ -189,6 +189,8 @@ class HPPlant:
         self.plot_id = None
         self.variant = None
         self.replication = None
+        self.factors = {}             # {"A": 1, "B": 3, ...} — для багатофакторних схем;
+                                       # порожній словник = звичайна однофакторна схема (self.variant)
 
     @property
     def id(self):
