@@ -11,6 +11,7 @@ from sad_stability_ancova import StabilityWindow, AncovaWindow
 from sad_manova import ManovaWindow
 from sad_homogeneous import HelpWindow, HPPlant, HPPlotBuilder, HomogeneousPlotWindow
 from sad_journal_trial import FieldJournalWindow, TrialDesignWindow
+from sad_scheme_constructor import SchemeConstructorWindow
 
 def _SADTk_new_init(self, root):
     # Ініціалізуємо лише стан (без UI від orig_init)
@@ -31,7 +32,7 @@ def _SADTk_new_init(self, root):
     root.minsize(1100, 680)
     root.configure(bg="#0f1117")
     root.title("S.A.D. — Статистичний аналіз даних")
-    set_icon(root) 
+    set_icon(root)
 
     # ── Кольорова схема ─────────────────────────────────────
     C = {
@@ -124,6 +125,9 @@ def _SADTk_new_init(self, root):
         ("homogplot","Однорідні ділянки саду","За CV% наявних рослин",
          C["olive"],HomogeneousPlotWindow,True,None,
          "однорідні ділянки cv діаметр штамб сад дерева вирівнювання рандомізація ітеративний"),
+        ("schemebuilder","Конструктор схеми досліду","Багатофакторна вільна схема",
+         C["olive"],SchemeConstructorWindow,True,None,
+         "конструктор схема багатофакторний фактор рівень комбінація рандомізація вільна таблиця"),
         ("fieldjournal","Польовий журнал обліків","Внесення даних у схему досліду",
          C["olive"],FieldJournalWindow,True,None,
          "польовий журнал облік схема внесення даних сезон рік урожайність вимірювання"),
@@ -880,4 +884,5 @@ if __name__ == "__main__":
     root = tk.Tk()
     set_icon(root)
     app = SADTk(root)
+    root._sad_app = app   # доступ для інших вікон (напр. журналу) до open_table() тощо
     root.mainloop()
