@@ -1,4 +1,3 @@
-
 # sad_scheme_constructor.py — Конструктор багатофакторної схеми досліду
 # -*- coding: utf-8 -*-
 from sad_common import *
@@ -84,6 +83,8 @@ class SchemeConstructorWindow:
         self.win.geometry("1400x820"); set_icon(self.win)
         self.gs = dict(gs) if gs else {}
         self.factor_defs = []      # [{"name":..., "levels":[...]}, ...]
+        self.fixed_factor_idx = None   # індекс фактора, вже зафіксованого в наявному саду (не рандомізується)
+        self.fixed_level_vars = []     # StringVar на кожен ряд — рівень зафіксованого фактора в цьому ряду
         self.row_lengths = []
         self.rows_n = 0
         self.entries = []
@@ -163,7 +164,7 @@ class SchemeConstructorWindow:
     # ── Крок 1: фактори ─────────────────────────────────────
     def _edit_factors(self):
         dlg = tk.Toplevel(self.win); dlg.title("Фактори досліду")
-        dlg.geometry("560x520"); set_icon(dlg); dlg.grab_set()
+        dlg.geometry("620x600"); set_icon(dlg); dlg.grab_set()
         rf = ("Times New Roman",11)
 
         top_f = tk.Frame(dlg, padx=14, pady=10); top_f.pack(fill=tk.X)
@@ -172,9 +173,20 @@ class SchemeConstructorWindow:
         tk.Spinbox(top_f, from_=1, to=len(FACTOR_LETTERS), textvariable=n_var,
                    width=4, font=rf).pack(side=tk.LEFT, padx=6)
 
+        tk.Label(dlg,
+                 text="Якщо дослід закладається у ВЖЕ ІСНУЮЧИЙ сад, де один фактор "
+                      "фізично закріплений за рядами і його не можна змінити "
+                      "(наприклад, сорти вже посаджені по окремих рядах) — позначте "
+                      "цей фактор нижче як «зафіксований». Такий фактор НЕ "
+                      "рандомізується — ви самі вкажете, який ряд якому рівню "
+                      "відповідає (крок 2). Рандомізуються лише інші фактори.",
+                 font=("Times New Roman",9), fg="#666", justify="left", wraplength=580
+                 ).pack(fill=tk.X, padx=14, pady=(0,8))
+
         body = tk.Frame(dlg); body.pack(fill=tk.BOTH, expand=True, padx=14)
         rows_holder = tk.Frame(body); rows_holder.pack(fill=tk.BOTH, expand=True)
         name_vars, level_vars = [], []
+        fixed_choice = tk.IntVar(value=self.fixed_factor_idx if self.fixed_factor_idx is not None else -1)
 
         def _rebuild_rows():
             for w in rows_holder.winfo_children(): w.destroy()
@@ -190,19 +202,28 @@ class SchemeConstructorWindow:
                 default_name = (self.factor_defs[i]["name"]
                                 if i < len(self.factor_defs) else "")
                 nv = tk.StringVar(value=default_name)
-                tk.Entry(fr, textvariable=nv, width=28, font=rf).grid(
+                tk.Entry(fr, textvariable=nv, width=24, font=rf).grid(
                     row=0, column=1, sticky="w", padx=6)
+                tk.Radiobutton(fr, text="🔒 Зафіксований у наявному саду",
+                              variable=fixed_choice, value=i, font=("Times New Roman",9)
+                              ).grid(row=0, column=2, sticky="w", padx=(14,0))
                 tk.Label(fr, text="Рівні (через кому):", font=rf).grid(
                     row=1, column=0, sticky="w", pady=(4,0))
                 default_levels = (", ".join(self.factor_defs[i]["levels"])
                                   if i < len(self.factor_defs) else "")
                 lv = tk.StringVar(value=default_levels)
                 tk.Entry(fr, textvariable=lv, width=40, font=rf).grid(
-                    row=1, column=1, sticky="w", padx=6, pady=(4,0))
+                    row=1, column=1, columnspan=2, sticky="w", padx=6, pady=(4,0))
                 name_vars.append(nv); level_vars.append(lv)
+            tk.Radiobutton(rows_holder, text="Жоден фактор не зафіксований (усі рандомізуються)",
+                          variable=fixed_choice, value=-1, font=("Times New Roman",10)
+                          ).pack(anchor="w", pady=(6,0))
 
         n_var.trace_add("write", lambda *a: _rebuild_rows())
         _rebuild_rows()
+
+        combos_lbl = tk.Label(dlg, text="", font=("Times New Roman",10,"bold"), fg="#1a4b8c")
+        combos_lbl.pack(pady=(4,0))
 
         def _save():
             defs = []
@@ -215,13 +236,26 @@ class SchemeConstructorWindow:
                         parent=dlg); return
                 defs.append({"name": nm, "levels": levels})
             self.factor_defs = defs
+            self.fixed_factor_idx = fixed_choice.get() if fixed_choice.get() >= 0 else None
             total_combos = 1
             for d in defs: total_combos *= len(d["levels"])
+            fixed_txt = ""
+            if self.fixed_factor_idx is not None:
+                fixed_txt = f"  |  🔒 зафіксовано: {FACTOR_LETTERS[self.fixed_factor_idx]}={defs[self.fixed_factor_idx]['name']}"
             self._factors_status.configure(
                 text=f"✓ {len(defs)} факт., {total_combos} комбінацій: " +
-                     "; ".join(f"{FACTOR_LETTERS[i]}={d['name']}" for i, d in enumerate(defs)),
+                     "; ".join(f"{FACTOR_LETTERS[i]}={d['name']}" for i, d in enumerate(defs)) +
+                     fixed_txt,
                 fg="#1a6b1a")
             self._build_legend()
+            n_reps_suggested = 3
+            needed = total_combos * n_reps_suggested
+            messagebox.showinfo("Фактори збережено",
+                f"Усього комбінацій факторів: {total_combos}.\n\n"
+                f"Для, наприклад, {n_reps_suggested} повторень знадобиться щонайменше "
+                f"{needed} дослідних одиниць (рослин/ділянок) — по {total_combos} на "
+                f"кожну повторність. Врахуйте це на кроці 2, вказуючи розміри таблиці.",
+                parent=dlg)
             dlg.destroy()
 
         bf = tk.Frame(dlg); bf.pack(pady=10)
@@ -235,7 +269,8 @@ class SchemeConstructorWindow:
         if not self.factor_defs: return
         for i, d in enumerate(self.factor_defs):
             letter = FACTOR_LETTERS[i]
-            txt = f"{letter} = {d['name']}:  " + "  ".join(
+            lock = "  🔒 (зафіксовано в саду)" if i == self.fixed_factor_idx else ""
+            txt = f"{letter} = {d['name']}{lock}:  " + "  ".join(
                 f"{letter}{j+1}={lvl}" for j, lvl in enumerate(d["levels"]))
             tk.Label(self._legend_f, text=txt, bg="#eef3f8", fg="#1a4b8c",
                      font=("Times New Roman",10), anchor="w", justify="left"
@@ -286,6 +321,8 @@ class SchemeConstructorWindow:
         self.row_lengths = lengths
         self.rows_n = len(lengths)
         max_len = max(lengths)
+        has_fixed = self.fixed_factor_idx is not None
+        pos_col0 = 3 if has_fixed else 2
 
         tk.Label(self.inner, text="Ряд \\ Поз.", width=9, relief=tk.RIDGE,
                  bg="#444444", fg="white", font=("Times New Roman",10,"bold")
@@ -293,16 +330,23 @@ class SchemeConstructorWindow:
         tk.Label(self.inner, text="Повт.", width=6, relief=tk.RIDGE,
                  bg="#6b4a1a", fg="white", font=("Times New Roman",9,"bold")
                  ).grid(row=0, column=1, padx=1, pady=1, sticky="nsew")
+        if has_fixed:
+            fname = self.factor_defs[self.fixed_factor_idx]["name"]
+            tk.Label(self.inner, text=f"🔒 {fname}", width=14, relief=tk.RIDGE,
+                     bg="#8c1a4a", fg="white", font=("Times New Roman",9,"bold")
+                     ).grid(row=0, column=2, padx=1, pady=1, sticky="nsew")
         self.pos_labels = []
         for j in range(max_len):
             lbl = tk.Label(self.inner, text=str(j+1), width=6, relief=tk.RIDGE,
                            bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
-            lbl.grid(row=0, column=j+2, padx=1, pady=1, sticky="nsew")
+            lbl.grid(row=0, column=pos_col0+j, padx=1, pady=1, sticky="nsew")
             self.pos_labels.append(lbl)
 
         self.row_labels = []
         self.entries = []
         self.rep_vars = []
+        self.fixed_level_vars = []
+        fixed_levels = self.factor_defs[self.fixed_factor_idx]["levels"] if has_fixed else []
         for i, L in enumerate(lengths):
             rl = tk.Label(self.inner, text=f"Ряд {i+1}", width=9, relief=tk.RIDGE,
                          bg="#444444", fg="white", font=("Times New Roman",9,"bold"))
@@ -313,11 +357,17 @@ class SchemeConstructorWindow:
                     justify="center", bg="#fff3c4").grid(
                     row=i+1, column=1, padx=1, pady=1)
             self.rep_vars.append(rv)
+            if has_fixed:
+                fv = tk.StringVar(value=fixed_levels[i % len(fixed_levels)])
+                ttk.Combobox(self.inner, textvariable=fv, values=fixed_levels,
+                            state="readonly", width=13, font=("Times New Roman",9)
+                            ).grid(row=i+1, column=2, padx=1, pady=1)
+                self.fixed_level_vars.append(fv)
             row_e = []
             for j in range(L):
                 e = tk.Entry(self.inner, width=6, font=("Times New Roman",10),
                             justify="center")
-                e.grid(row=i+1, column=j+2, padx=1, pady=1)
+                e.grid(row=i+1, column=pos_col0+j, padx=1, pady=1)
                 row_e.append(e)
             self.entries.append(row_e)
         _bind_nav(self.entries, self.win)
@@ -326,6 +376,12 @@ class SchemeConstructorWindow:
         self._table_built = True
         self._setup_frame.pack_forget()
         self._resize_btn.pack(side=tk.LEFT, padx=4)
+        if has_fixed:
+            messagebox.showinfo("Зафіксований фактор",
+                f"Для кожного ряду вкажіть у стовпці «🔒 {fname}», який рівень "
+                f"фактора там фізично росте (за замовчуванням підставлено по черзі — "
+                f"обов'язково перевірте й виправте відповідно до реального саду). "
+                f"Рандомізація потім розкидає лише РЕШТУ факторів у межах кожного ряду.")
 
     def _reset_table_size(self):
         if self.entries and not messagebox.askyesno("Змінити розміри таблиці",
@@ -336,15 +392,16 @@ class SchemeConstructorWindow:
         self._n_rows_setup_var.set(str(self.rows_n) if self.rows_n else "")
 
     def _extend_row_to(self, ri, target_len):
+        pos_col0 = 3 if self.fixed_factor_idx is not None else 2
         while len(self.entries[ri]) < target_len:
             j = len(self.entries[ri])
             if j >= len(self.pos_labels):
                 lbl = tk.Label(self.inner, text=str(j+1), width=6, relief=tk.RIDGE,
                                bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold"))
-                lbl.grid(row=0, column=j+2, padx=1, pady=1, sticky="nsew")
+                lbl.grid(row=0, column=pos_col0+j, padx=1, pady=1, sticky="nsew")
                 self.pos_labels.append(lbl)
             e = tk.Entry(self.inner, width=6, font=("Times New Roman",10), justify="center")
-            e.grid(row=ri+1, column=j+2, padx=1, pady=1)
+            e.grid(row=ri+1, column=pos_col0+j, padx=1, pady=1)
             self.entries[ri].append(e)
         if ri < len(self.row_lengths): self.row_lengths[ri] = len(self.entries[ri])
 
@@ -385,6 +442,22 @@ class SchemeConstructorWindow:
 
         total_combos = 1
         for d in self.factor_defs: total_combos *= len(d["levels"])
+
+        if self.fixed_factor_idx is not None:
+            fname = self.factor_defs[self.fixed_factor_idx]["name"]
+            n_sub = 1
+            for i, d in enumerate(self.factor_defs):
+                if i != self.fixed_factor_idx: n_sub *= len(d["levels"])
+            if not messagebox.askyesno("Рандомізація з урахуванням фіксованого фактора",
+                    f"Фактор «{fname}» уже зафіксовано по рядах (стовпець «🔒 {fname}») "
+                    f"і НЕ буде рандомізовано.\n\n"
+                    f"Решта факторів ({n_sub} комбінацій) будуть рандомізовані ОКРЕМО "
+                    f"в межах кожного ряду, узгоджено з рівнем «{fname}», який ви "
+                    f"вказали для цього ряду.\n\n"
+                    f"Продовжити?"):
+                return
+            self._randomize_with_fixed_factor()
+            return
 
         dlg = tk.Toplevel(self.win); dlg.title("Рандомізація"); dlg.resizable(False, False)
         set_icon(dlg); dlg.grab_set()
@@ -593,6 +666,48 @@ class SchemeConstructorWindow:
             f"Латинський квадрат {n}×{n} розміщено з ряду {r0+1}, позиції {c0+1}. "
             "Кожна комбінація зустрічається рівно раз у кожному ряду й стовпці "
             "квадрата. Клітинки залишаються повністю редагованими.")
+
+    def _randomize_with_fixed_factor(self):
+        """Фактор self.fixed_factor_idx НЕ рандомізується — його рівень для
+        кожного ряду береться зі стовпця «🔒» (вже вказано користувачем,
+        відповідно до реального розташування в наявному саду). Рандомізації
+        підлягають лише РЕШТА факторів, окремо в межах кожного ряду —
+        аналогічно до підділянки в split-plot, тільки «головна ділянка»
+        тут задана не алгоритмом, а фізичною реальністю."""
+        import random
+        fixed_idx = self.fixed_factor_idx
+        fixed_levels = self.factor_defs[fixed_idx]["levels"]
+        sub_idxs = [i for i in range(len(self.factor_defs)) if i != fixed_idx]
+        sub_combos = list(itertools.product(
+            *[range(1, len(self.factor_defs[i]["levels"])+1) for i in sub_idxs]))
+        n_sub = len(sub_combos)
+
+        def _code(fixed_lvl_num, sub_combo):
+            parts = {fixed_idx: fixed_lvl_num}
+            for idx, lvl in zip(sub_idxs, sub_combo): parts[idx] = lvl
+            return "".join(f"{FACTOR_LETTERS[i]}{parts[i]}" for i in range(len(self.factor_defs)))
+
+        skipped = []
+        for i, row in enumerate(self.entries):
+            fixed_lvl_name = self.fixed_level_vars[i].get()
+            try: fixed_lvl_num = fixed_levels.index(fixed_lvl_name) + 1
+            except ValueError: fixed_lvl_num = 1
+            eligible_j = [j for j in range(len(row)) if not self._is_guard_text(row[j].get())]
+            if len(eligible_j) < n_sub:
+                skipped.append(f"Ряд {i+1}"); continue
+            reps_needed = math.ceil(len(eligible_j) / n_sub)
+            pool = (sub_combos * reps_needed)[:len(eligible_j)]
+            random.shuffle(pool)
+            for j, sub_combo in zip(eligible_j, pool):
+                row[j].delete(0, tk.END)
+                row[j].insert(0, _code(fixed_lvl_num, sub_combo))
+
+        msg = ("Решту факторів рандомізовано в межах кожного ряду, узгоджено із "
+               "зафіксованим рівнем цього ряду. Клітинки залишаються повністю "
+               "редагованими — перевірте й підправте за потреби.")
+        if skipped:
+            msg += f"\n\n⚠ У рядах {', '.join(skipped)} забракло вільних клітинок."
+        messagebox.showinfo("Готово", msg)
 
     # ── Розбір коду клітинки на фактори ─────────────────────
     def _parse_code(self, text):
