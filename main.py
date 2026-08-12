@@ -543,7 +543,8 @@ Email: sad.stat.support@gmail.com
         ("Зв'язок змінних",  ["corr","reg","ancova"]),
         ("Багатовимірні",     ["manova","rm","mix"]),
         ("Багатовимірний ML", ["cluster","pca"]),
-        ("Спеціальні",        ["stab","trialdesign","homogplot"]),
+        ("Спеціальні",        ["stab","trialdesign","homogplot",
+                               "schemebuilder","fieldjournal"]),
     ]
     _ana_map = {a[0]: a for a in ANALYSES}
     _sb_btns = {}
