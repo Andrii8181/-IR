@@ -164,7 +164,8 @@ class SchemeConstructorWindow:
     # ── Крок 1: фактори ─────────────────────────────────────
     def _edit_factors(self):
         dlg = tk.Toplevel(self.win); dlg.title("Фактори досліду")
-        dlg.geometry("620x600"); set_icon(dlg); dlg.grab_set()
+        dlg.geometry("640x600"); dlg.minsize(560, 400)
+        dlg.resizable(True, True); set_icon(dlg); dlg.grab_set()
         rf = ("Times New Roman",11)
 
         top_f = tk.Frame(dlg, padx=14, pady=10); top_f.pack(fill=tk.X)
@@ -180,11 +181,26 @@ class SchemeConstructorWindow:
                       "цей фактор нижче як «зафіксований». Такий фактор НЕ "
                       "рандомізується — ви самі вкажете, який ряд якому рівню "
                       "відповідає (крок 2). Рандомізуються лише інші фактори.",
-                 font=("Times New Roman",9), fg="#666", justify="left", wraplength=580
+                 font=("Times New Roman",9), fg="#666", justify="left", wraplength=600
                  ).pack(fill=tk.X, padx=14, pady=(0,8))
 
-        body = tk.Frame(dlg); body.pack(fill=tk.BOTH, expand=True, padx=14)
-        rows_holder = tk.Frame(body); rows_holder.pack(fill=tk.BOTH, expand=True)
+        # ── Прокручувана область — Зберегти/Скасувати завжди видимі внизу,
+        # незалежно від того, скільки факторів (навіть усі 10) ─────
+        bf = tk.Frame(dlg); bf.pack(side=tk.BOTTOM, pady=10)
+
+        mid = tk.Frame(dlg); mid.pack(fill=tk.BOTH, expand=True, padx=14)
+        canvas = tk.Canvas(mid, highlightthickness=0)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.configure(yscrollcommand=vsb.set)
+        rows_holder = tk.Frame(canvas)
+        canvas_win = canvas.create_window((0,0), window=rows_holder, anchor="nw")
+        rows_holder.bind("<Configure>",
+                         lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_win, width=e.width))
+        dlg.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
         name_vars, level_vars = [], []
         fixed_choice = tk.IntVar(value=self.fixed_factor_idx if self.fixed_factor_idx is not None else -1)
 
@@ -222,9 +238,6 @@ class SchemeConstructorWindow:
         n_var.trace_add("write", lambda *a: _rebuild_rows())
         _rebuild_rows()
 
-        combos_lbl = tk.Label(dlg, text="", font=("Times New Roman",10,"bold"), fg="#1a4b8c")
-        combos_lbl.pack(pady=(4,0))
-
         def _save():
             defs = []
             for nv, lv in zip(name_vars, level_vars):
@@ -258,7 +271,6 @@ class SchemeConstructorWindow:
                 parent=dlg)
             dlg.destroy()
 
-        bf = tk.Frame(dlg); bf.pack(pady=10)
         tk.Button(bf, text="Зберегти", bg="#1a6b1a", fg="white", font=rf,
                   command=_save).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", font=rf, command=dlg.destroy).pack(side=tk.LEFT)
