@@ -1,8 +1,9 @@
 # sad_scheme_constructor.py — Конструктор багатофакторної схеми досліду
 # -*- coding: utf-8 -*-
 from sad_common import *
-from sad_homogeneous import (HPPlant, HP_ROLE_RECORDED, HP_ROLE_GUARD_EDGE,
-    HP_ROLE_GUARD_REP, HP_ROLE_UNASSIGNED)
+from sad_homogeneous import (HPPlant, HPPlotBuilder, hp_apply_design,
+    HP_ROLE_RECORDED, HP_ROLE_GUARD_EDGE, HP_ROLE_GUARD_REP,
+    HP_ROLE_UNASSIGNED, HP_ROLE_DEAD, HP_ROLE_POLLINIZER, HP_ROLE_EXTRA)
 import itertools, re
 
 # ═══════════════════════════════════════════════════════════════
@@ -83,8 +84,12 @@ class SchemeConstructorWindow:
         self.win.geometry("1400x820"); set_icon(self.win)
         self.gs = dict(gs) if gs else {}
         self.factor_defs = []      # [{"name":..., "levels":[...]}, ...]
+        self.plot_size = 1         # к-сть рослин на ОДНУ повторність кожної комбінації
         self.fixed_factor_idx = None   # індекс фактора, вже зафіксованого в наявному саду (не рандомізується)
         self.fixed_level_vars = []     # StringVar на кожен ряд — рівень зафіксованого фактора в цьому ряду
+        self._cell_replication = {}    # {(row,pos): rep_num} — перевизначає "Повт." рядка для
+                                        # клітинок, сформованих через "за однорідністю"
+                                        # (одна повторність може НЕ збігатися з фізичним рядом)
         self.row_lengths = []
         self.rows_n = 0
         self.entries = []
@@ -106,6 +111,8 @@ class SchemeConstructorWindow:
 
         tk.Button(top, text="🎲 Рандомізувати", bg="#8c5a1a", fg="white",
                   font=rf, command=self._open_randomize_dialog).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📊 Сформувати за однорідністю", bg="#1a6b8c", fg="white",
+                  font=rf, command=self._open_homogeneous_dialog).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="Вставити з буфера", font=rf,
                   command=self._paste).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="💾 Зберегти схему", bg="#1a6b1a", fg="white",
@@ -172,6 +179,10 @@ class SchemeConstructorWindow:
         tk.Label(top_f, text="Кількість факторів:", font=rf).pack(side=tk.LEFT)
         n_var = tk.StringVar(value=str(max(1, len(self.factor_defs))))
         tk.Spinbox(top_f, from_=1, to=len(FACTOR_LETTERS), textvariable=n_var,
+                   width=4, font=rf).pack(side=tk.LEFT, padx=6)
+        tk.Label(top_f, text="  Рослин на 1 повторність:", font=rf).pack(side=tk.LEFT, padx=(14,0))
+        plot_size_var = tk.StringVar(value=str(self.plot_size))
+        tk.Spinbox(top_f, from_=1, to=50, textvariable=plot_size_var,
                    width=4, font=rf).pack(side=tk.LEFT, padx=6)
 
         tk.Label(dlg,
@@ -249,6 +260,8 @@ class SchemeConstructorWindow:
                         parent=dlg); return
                 defs.append({"name": nm, "levels": levels})
             self.factor_defs = defs
+            try: self.plot_size = max(1, int(plot_size_var.get()))
+            except ValueError: self.plot_size = 1
             self.fixed_factor_idx = fixed_choice.get() if fixed_choice.get() >= 0 else None
             total_combos = 1
             for d in defs: total_combos *= len(d["levels"])
@@ -256,18 +269,21 @@ class SchemeConstructorWindow:
             if self.fixed_factor_idx is not None:
                 fixed_txt = f"  |  🔒 зафіксовано: {FACTOR_LETTERS[self.fixed_factor_idx]}={defs[self.fixed_factor_idx]['name']}"
             self._factors_status.configure(
-                text=f"✓ {len(defs)} факт., {total_combos} комбінацій: " +
+                text=f"✓ {len(defs)} факт., {total_combos} комбінацій × {self.plot_size} "
+                     f"рослин/повторність: " +
                      "; ".join(f"{FACTOR_LETTERS[i]}={d['name']}" for i, d in enumerate(defs)) +
                      fixed_txt,
                 fg="#1a6b1a")
             self._build_legend()
             n_reps_suggested = 3
-            needed = total_combos * n_reps_suggested
+            needed = total_combos * self.plot_size * n_reps_suggested
             messagebox.showinfo("Фактори збережено",
-                f"Усього комбінацій факторів: {total_combos}.\n\n"
-                f"Для, наприклад, {n_reps_suggested} повторень знадобиться щонайменше "
-                f"{needed} дослідних одиниць (рослин/ділянок) — по {total_combos} на "
-                f"кожну повторність. Врахуйте це на кроці 2, вказуючи розміри таблиці.",
+                f"Усього комбінацій факторів: {total_combos}. При {self.plot_size} "
+                f"рослинах на повторність — {total_combos * self.plot_size} рослин на "
+                f"одне повне повторення.\n\n"
+                f"Наприклад, для {n_reps_suggested} повторень знадобиться щонайменше "
+                f"{needed} дослідних одиниць (рослин/ділянок), не рахуючи захисних зон. "
+                f"Врахуйте це на кроці 2, вказуючи розміри таблиці.",
                 parent=dlg)
             dlg.destroy()
 
@@ -446,6 +462,145 @@ class SchemeConstructorWindow:
         _bind_fill_handle(self.entries, self.win)
 
     # ── Крок 4: рандомізація (підказка, не диктат) ──────────
+    def _open_homogeneous_dialog(self):
+        """Формує схему автоматично: пропускає випади/запилювачі, формує
+        захисні зони, і — якщо в клітинках є вихідні числові виміри —
+        відбирає облікові рослини за однорідністю (CV%), як у модулі
+        «Однорідні ділянки саду». Якщо вимірів нема — просто фізичний
+        відбір придатних позицій без CV-обмеження. Результат розкидує
+        комбінації факторів по відібраних повторностях за обраним
+        дизайном (RCBD/CRD/Латинський квадрат) — так само, як окремий
+        модуль планування, тільки тепер одразу під багатофакторний
+        дослід."""
+        if not self.factor_defs:
+            messagebox.showwarning("", "Спочатку задайте фактори."); return
+        if not self._table_built:
+            messagebox.showwarning("", "Спочатку побудуйте таблицю."); return
+
+        total_combos = 1
+        for d in self.factor_defs: total_combos *= len(d["levels"])
+
+        dlg = tk.Toplevel(self.win); dlg.title("Сформувати схему за однорідністю")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        rf = ("Times New Roman",11)
+        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
+
+        tk.Label(frm,
+                 text=f"Комбінацій: {total_combos}  ×  {self.plot_size} рослин/повторність "
+                      f"= {total_combos*self.plot_size} рослин на одне повне повторення.\n\n"
+                      "У таблиці (крок 2) можна було позначити «-» (випад), «+» "
+                      "(запилювач), або вписати вихідний вимір (число) для кожної "
+                      "позиції — усе це враховується тут автоматично. Порожні "
+                      "клітинки вважаються придатними без обмеження за однорідністю.",
+                 font=("Times New Roman",10), fg="#555", justify="left", wraplength=480
+                 ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,12))
+
+        rows_cfg = [
+            ("Захисна край ряду:", "eg", "1"),
+            ("Захисна між повторностями:", "rg", "1"),
+            ("Повторень (n_rep):", "nr", "3"),
+            ("Поріг CV, % (якщо є виміри):", "cv", "15"),
+        ]
+        vv = {}
+        for i, (lbl, key, dflt) in enumerate(rows_cfg):
+            tk.Label(frm, text=lbl, font=rf).grid(row=i+1, column=0, sticky="w", pady=3)
+            v = tk.StringVar(value=dflt)
+            tk.Entry(frm, textvariable=v, width=8, font=rf).grid(
+                row=i+1, column=1, sticky="w", padx=8, pady=3)
+            vv[key] = v
+
+        r0 = len(rows_cfg)+1
+        tk.Label(frm, text="Дизайн:", font=rf).grid(row=r0, column=0, sticky="w", pady=3)
+        design_map = {"RCBD (рекомендується)": "rcbd", "CRD": "crd",
+                     "Латинський квадрат": "latin"}
+        design_disp = tk.StringVar(value=list(design_map.keys())[0])
+        ttk.Combobox(frm, textvariable=design_disp, values=list(design_map.keys()),
+                     state="readonly", width=22).grid(row=r0, column=1, sticky="w", padx=8)
+
+        def _go():
+            try:
+                eg = int(vv["eg"].get()); rg = int(vv["rg"].get())
+                nr = int(vv["nr"].get()); cv = float(vv["cv"].get())
+            except ValueError:
+                messagebox.showwarning("", "Перевірте числові параметри.", parent=dlg); return
+            design = design_map[design_disp.get()]
+            dlg.destroy()
+            self._run_homogeneous_selection(eg, rg, nr, cv, design)
+
+        bf = tk.Frame(frm); bf.grid(row=r0+1, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="Сформувати", bg="#1a6b8c", fg="white", font=rf,
+                  command=_go).pack(side=tk.LEFT, padx=4)
+        tk.Button(bf, text="Скасувати", font=rf, command=dlg.destroy).pack(side=tk.LEFT)
+        center_win(dlg)
+
+    def _run_homogeneous_selection(self, edge_guard, rep_guard, num_reps, cv_thr, design):
+        total_combos = 1
+        for d in self.factor_defs: total_combos *= len(d["levels"])
+
+        plants = []
+        has_any_value = False
+        for i, row in enumerate(self.entries):
+            for j, e in enumerate(row):
+                txt = e.get().strip()
+                role, status, value, factors = self._parse_cell(txt)
+                if role is None:
+                    # нерозпізнане (напр. старий код факторів) — трактуємо як
+                    # придатну позицію без вихідного виміру
+                    status, value = "ok", None
+                p = HPPlant(i+1, j+1, value, status)
+                plants.append(p)
+                if value is not None: has_any_value = True
+
+        if not has_any_value:
+            for p in plants:
+                if p.status == "ok": p.value = 0.0
+            cv_thr = 10**9  # без обмеження за однорідністю — лише фізичний відбір
+
+        builder = HPPlotBuilder(plants, self.plot_size, edge_guard, rep_guard, cv_thr,
+                                max_iterations=20)
+        try:
+            result = builder.build()
+        except Exception as ex:
+            messagebox.showerror("Помилка формування", str(ex)); return
+
+        hp_apply_design(result, design, total_combos, num_reps, seed=None)
+
+        combos = list(itertools.product(
+            *[range(1, len(d["levels"])+1) for d in self.factor_defs]))
+        for p in result["plants"]:
+            if p.role == HP_ROLE_RECORDED and p.variant:
+                combo = combos[p.variant - 1]
+                p.factors = {self.factor_defs[k]["name"]: lvl
+                            for k, lvl in enumerate(combo)}
+
+        # Записуємо результат назад у клітинки — далі можна вручну підправити
+        role_txt = {HP_ROLE_GUARD_EDGE: "К", HP_ROLE_GUARD_REP: "П",
+                    HP_ROLE_DEAD: "-", HP_ROLE_POLLINIZER: "+", HP_ROLE_EXTRA: "×"}
+        self._cell_replication = {}
+        for p in result["plants"]:
+            e = self.entries[p.row-1][p.position-1]
+            e.delete(0, tk.END)
+            if p.role == HP_ROLE_RECORDED and p.factors:
+                code = "".join(f"{FACTOR_LETTERS[k]}{p.factors[d['name']]}"
+                               for k, d in enumerate(self.factor_defs))
+                e.insert(0, code)
+                # Повторність зберігаємо ОКРЕМО для цієї клітинки, а не для
+                # цілого рядка — одна повторність, сформована алгоритмом
+                # однорідності, не обов'язково збігається з фізичним рядом
+                # (у межах одного ряду може утворитись кілька повторностей).
+                if p.replication:
+                    self._cell_replication[(p.row, p.position)] = p.replication
+            elif p.role in role_txt:
+                e.insert(0, role_txt[p.role])
+
+        messagebox.showinfo("Готово",
+            f"Схему сформовано за однорідністю.\n"
+            f"CV% фінальний: {result['final_cv_pct']:.2f}   "
+            f"Повторностей сформовано: {result['plots_formed']}   "
+            f"Ітерацій: {result['iterations_used']}\n\n"
+            "Результат записано в таблицю — клітинки лишаються повністю "
+            "редагованими, перевірте й підправте за потреби.")
+
     def _open_randomize_dialog(self):
         if not self.factor_defs:
             messagebox.showwarning("", "Спочатку задайте фактори."); return
@@ -737,6 +892,32 @@ class SchemeConstructorWindow:
         return result if len(result) == len(self.factor_defs) else None
 
     # ── Зберегти / відкрити схему ───────────────────────────
+    def _parse_cell(self, txt):
+        """Розбирає вміст клітинки. Повертає (role, status, value, factors).
+        Підтримує: порожньо, К/П (захист), - (випад), + (запилювач),
+        число (вихідний вимір для однорідності), код факторів "A2B3"."""
+        txt = txt.strip()
+        if not txt:
+            return HP_ROLE_UNASSIGNED, "ok", None, {}
+        up = txt.upper()
+        if up in ("К","K"):
+            return HP_ROLE_GUARD_EDGE, "ok", None, {}
+        if up in ("П","P"):
+            return HP_ROLE_GUARD_REP, "ok", None, {}
+        if txt == "-":
+            return HP_ROLE_DEAD, "dead", None, {}
+        if txt == "+":
+            return HP_ROLE_POLLINIZER, "pollinizer", None, {}
+        try:
+            val = float(txt.replace(",", "."))
+            return HP_ROLE_UNASSIGNED, "ok", val, {}
+        except ValueError:
+            pass
+        factors = self._parse_code(txt)
+        if factors is not None:
+            return HP_ROLE_RECORDED, "ok", None, factors
+        return None, None, None, None   # нерозпізнано
+
     def _save_scheme(self):
         if not self.factor_defs:
             messagebox.showwarning("", "Спочатку задайте фактори."); return
@@ -751,22 +932,16 @@ class SchemeConstructorWindow:
             except ValueError: rep_num = i+1
             for j, e in enumerate(row):
                 txt = e.get().strip()
-                p = HPPlant(i+1, j+1, None, "ok")
-                if not txt:
+                role, status, value, factors = self._parse_cell(txt)
+                p = HPPlant(i+1, j+1, value, status or "ok")
+                if role is None:
+                    bad_cells.append(f"Ряд {i+1}, поз. {j+1}: «{txt}»")
                     p.role = HP_ROLE_UNASSIGNED
-                elif txt.upper() in ("К","K"):
-                    p.role = HP_ROLE_GUARD_EDGE
-                elif txt.upper() in ("П","P"):
-                    p.role = HP_ROLE_GUARD_REP
                 else:
-                    factors = self._parse_code(txt)
-                    if factors is None:
-                        bad_cells.append(f"Ряд {i+1}, поз. {j+1}: «{txt}»")
-                        p.role = HP_ROLE_UNASSIGNED
-                    else:
-                        p.role = HP_ROLE_RECORDED
-                        p.factors = factors
-                        p.replication = rep_num
+                    p.role = role
+                    p.factors = factors
+                    if role == HP_ROLE_RECORDED:
+                        p.replication = self._cell_replication.get((i+1, j+1), rep_num)
                 plants.append(p)
 
         if bad_cells:
@@ -774,8 +949,8 @@ class SchemeConstructorWindow:
             more = f"\n… і ще {len(bad_cells)-10}" if len(bad_cells) > 10 else ""
             if not messagebox.askyesno("Нерозпізнані клітинки",
                     f"Не вдалось розпізнати код у {len(bad_cells)} клітинках "
-                    f"(мають бути коди факторів на кшталт «A2B3», «К» чи «П», "
-                    f"або порожні):\n\n{preview}{more}\n\n"
+                    f"(мають бути коди факторів на кшталт «A2B3», «К», «П», "
+                    f"«-», «+», число, або порожні):\n\n{preview}{more}\n\n"
                     "Зберегти попри це (ці клітинки будуть позначені як "
                     "непризначені)?"):
                 return
