@@ -85,6 +85,7 @@ class SchemeConstructorWindow:
         self.gs = dict(gs) if gs else {}
         self.factor_defs = []      # [{"name":..., "levels":[...]}, ...]
         self.plot_size = 1         # к-сть рослин на ОДНУ повторність кожної комбінації
+        self.num_reps = 3          # к-сть повторень на кожну комбінацію
         self.fixed_factor_idx = None   # індекс фактора, вже зафіксованого в наявному саду (не рандомізується)
         self.fixed_level_vars = []     # StringVar на кожен ряд — рівень зафіксованого фактора в цьому ряду
         self._cell_replication = {}    # {(row,pos): rep_num} — перевизначає "Повт." рядка для
@@ -102,42 +103,79 @@ class SchemeConstructorWindow:
     # ─────────────────────────────────────────────────────
     def _build(self):
         rf = ("Times New Roman", 11)
-        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
-        tk.Button(top, text="📝 Задати фактори", bg="#1a4b8c", fg="white",
-                  font=rf, command=self._edit_factors).pack(side=tk.LEFT, padx=4)
-        self._factors_status = tk.Label(top, text="(фактори не задано)",
-                                        font=("Times New Roman",9), fg="#888")
-        self._factors_status.pack(side=tk.LEFT, padx=(0,12))
+        rb = ("Times New Roman", 11, "bold")
 
-        tk.Button(top, text="🎲 Рандомізувати", bg="#8c5a1a", fg="white",
-                  font=rf, command=self._open_randomize_dialog).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="📊 Сформувати за однорідністю", bg="#1a6b8c", fg="white",
-                  font=rf, command=self._open_homogeneous_dialog).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="Вставити з буфера", font=rf,
-                  command=self._paste).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="💾 Зберегти схему", bg="#1a6b1a", fg="white",
-                  font=rf, command=self._save_scheme).pack(side=tk.LEFT, padx=(12,4))
+        # ── Завжди доступні дії (не частина послідовності кроків) ──
+        top = tk.Frame(self.win, padx=8, pady=6); top.pack(fill=tk.X)
         tk.Button(top, text="📂 Відкрити схему", font=rf,
                   command=self._load_scheme).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white", font=rf,
-                  command=self._show_help).pack(side=tk.LEFT, padx=(12,4))
-        self._resize_btn = tk.Button(top, text="🔧 Змінити розміри таблиці", font=rf,
-                                     command=self._reset_table_size)
+                  command=self._show_help).pack(side=tk.LEFT, padx=4)
+        tk.Label(top, text="Виконуйте кроки по порядку зверху вниз — кожен наступний "
+                          "стає доступним після завершення попереднього.",
+                 font=("Times New Roman",9), fg="#666").pack(side=tk.LEFT, padx=12)
 
-        # ── Крок: розміри таблиці ──────────────────────────
-        self._setup_frame = tk.LabelFrame(self.win,
-            text="Розміри таблиці — вкажіть, скільки рослин/ділянок у кожному ряду",
-            font=("Times New Roman",11,"bold"), padx=10, pady=8)
-        self._setup_frame.pack(fill=tk.X, padx=8, pady=(0,4))
-        setup_top = tk.Frame(self._setup_frame); setup_top.pack(fill=tk.X)
+        # ── КРОК 1: Фактори ──────────────────────────────────
+        self._step1_frame = tk.LabelFrame(self.win, text="Крок 1 — Фактори досліду",
+                                          font=rb, padx=10, pady=8, fg="#1a4b8c")
+        self._step1_frame.pack(fill=tk.X, padx=8, pady=(4,2))
+        tk.Button(self._step1_frame, text="📝 Задати фактори", bg="#1a4b8c", fg="white",
+                  font=rf, command=self._edit_factors).pack(side=tk.LEFT, padx=4)
+        self._factors_status = tk.Label(self._step1_frame, text="(фактори не задано)",
+                                        font=("Times New Roman",9), fg="#888")
+        self._factors_status.pack(side=tk.LEFT, padx=(8,0))
+
+        # ── КРОК 2: Розміри таблиці (заблоковано до Кроку 1) ──
+        self._step2_frame = tk.LabelFrame(self.win,
+            text="Крок 2 — Розміри таблиці (спочатку виконайте Крок 1)",
+            font=rb, padx=10, pady=8, fg="#999")
+        self._step2_frame.pack(fill=tk.X, padx=8, pady=2)
+        setup_top = tk.Frame(self._step2_frame); setup_top.pack(fill=tk.X)
         tk.Label(setup_top, text="Кількість рядів:", font=rf).pack(side=tk.LEFT)
         self._n_rows_setup_var = tk.StringVar(value="")
-        tk.Entry(setup_top, textvariable=self._n_rows_setup_var, width=6, font=rf
-                 ).pack(side=tk.LEFT, padx=6)
-        tk.Button(setup_top, text="Задати довжину кожного ряду →", font=rf,
-                  command=self._build_row_length_inputs).pack(side=tk.LEFT, padx=10)
-        self._rowlen_holder = tk.Frame(self._setup_frame)
+        self._n_rows_entry = tk.Entry(setup_top, textvariable=self._n_rows_setup_var,
+                                      width=6, font=rf)
+        self._n_rows_entry.pack(side=tk.LEFT, padx=6)
+        self._rowlen_btn = tk.Button(setup_top, text="Задати довжину кожного ряду →",
+                                     font=rf, command=self._build_row_length_inputs)
+        self._rowlen_btn.pack(side=tk.LEFT, padx=10)
+        self._resize_btn = tk.Button(setup_top, text="🔧 Змінити розміри", font=rf,
+                                     command=self._reset_table_size)
+        self._rowlen_holder = tk.Frame(self._step2_frame)
         self._rowlen_holder.pack(fill=tk.X, pady=(8,0))
+        self._set_step_enabled(self._step2_frame, False)
+
+        # ── КРОК 3: Заповнення таблиці (заблоковано до Кроку 2) ──
+        self._step3_frame = tk.LabelFrame(self.win,
+            text="Крок 3 — Заповнення таблиці (спочатку виконайте Крок 2)",
+            font=rb, padx=10, pady=8, fg="#999")
+        self._step3_frame.pack(fill=tk.X, padx=8, pady=2)
+        tk.Label(self._step3_frame,
+                 text="У клітинках таблиці нижче можна вручну позначити «-» (випад), "
+                      "«+» (запилювач) чи вписати вихідний вимір (число) — це "
+                      "враховується автоматично при заповненні комбінацій.",
+                 font=("Times New Roman",9), fg="#666", justify="left", wraplength=1000
+                 ).pack(anchor="w")
+        fill_row = tk.Frame(self._step3_frame); fill_row.pack(fill=tk.X, pady=(6,0))
+        self._fill_btn = tk.Button(fill_row, text="➡ Заповнити комбінації факторів",
+                                   bg="#8c5a1a", fg="white", font=rf,
+                                   command=self._open_fill_dialog)
+        self._fill_btn.pack(side=tk.LEFT, padx=4)
+        self._paste_btn = tk.Button(fill_row, text="Вставити з буфера", font=rf,
+                                    command=self._paste)
+        self._paste_btn.pack(side=tk.LEFT, padx=4)
+        self._set_step_enabled(self._step3_frame, False)
+
+        # ── КРОК 4: Зберегти (заблоковано до Кроку 3) ──────────
+        self._step4_frame = tk.LabelFrame(self.win,
+            text="Крок 4 — Зберегти схему (спочатку виконайте Крок 3)",
+            font=rb, padx=10, pady=8, fg="#999")
+        self._step4_frame.pack(fill=tk.X, padx=8, pady=(2,4))
+        self._save_btn = tk.Button(self._step4_frame, text="💾 Зберегти схему",
+                                   bg="#1a6b1a", fg="white", font=rf,
+                                   command=self._save_scheme)
+        self._save_btn.pack(side=tk.LEFT, padx=4)
+        self._set_step_enabled(self._step4_frame, False)
 
         # ── Легенда факторів ────────────────────────────────
         self._legend_f = tk.Frame(self.win, bg="#eef3f8", padx=8, pady=6)
@@ -159,6 +197,77 @@ class SchemeConstructorWindow:
         self.win.bind("<MouseWheel>",
                       lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
+    def _set_step_enabled(self, frame, enabled):
+        """Вмикає/вимикає всі інтерактивні віджети всередині кроку-рамки
+        і візуально притемнює її заголовок, коли крок ще недоступний."""
+        state = tk.NORMAL if enabled else tk.DISABLED
+        def _walk(w):
+            for c in w.winfo_children():
+                if isinstance(c, (tk.Button, tk.Entry, tk.Spinbox, ttk.Combobox)):
+                    try: c.configure(state=state)
+                    except tk.TclError: pass
+                _walk(c)
+        _walk(frame)
+        frame.configure(fg="#1a4b8c" if enabled else "#999")
+
+    def _unlock_step2(self):
+        base_txt = "Крок 2 — Розміри таблиці"
+        self._step2_frame.configure(text=base_txt)
+        self._set_step_enabled(self._step2_frame, True)
+
+    def _unlock_step3(self):
+        base_txt = "Крок 3 — Заповнення таблиці"
+        self._step3_frame.configure(text=base_txt)
+        self._set_step_enabled(self._step3_frame, True)
+        self._unlock_step4()
+
+    def _unlock_step4(self):
+        base_txt = "Крок 4 — Зберегти схему"
+        self._step4_frame.configure(text=base_txt)
+        self._set_step_enabled(self._step4_frame, True)
+
+    def _open_fill_dialog(self):
+        """Крок 3, головна дія — один-єдиний вибір способу заповнення
+        замість кількох окремих кнопок, які раніше висіли одночасно."""
+        dlg = tk.Toplevel(self.win); dlg.title("Заповнити комбінації факторів")
+        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        rf = ("Times New Roman",11)
+        frm = tk.Frame(dlg, padx=18, pady=16); frm.pack()
+        tk.Label(frm, text="Як заповнити таблицю комбінаціями факторів?",
+                 font=("Times New Roman",12,"bold")).pack(anchor="w", pady=(0,12))
+
+        def _pick_manual():
+            dlg.destroy()
+            messagebox.showinfo("Вручну",
+                "Впишіть код комбінації (наприклад, «A2B3») у потрібні клітинки "
+                "таблиці нижче. Протягніть за кут комірки мишею, щоб швидко "
+                "скопіювати значення на сусідні клітинки — так само, як в Excel.")
+
+        def _pick_random():
+            dlg.destroy(); self._open_randomize_dialog()
+
+        def _pick_homog():
+            dlg.destroy(); self._open_homogeneous_dialog()
+
+        opts = [
+            ("✍ Вручну", "Самостійно вписуєте код кожної комбінації й "
+             "протягуєте комірки мишею.", _pick_manual, "#555"),
+            ("🎲 Рандомізувати", "Автоматично розкидає комбінації за обраним "
+             "дизайном (CRD/RCBD/Split-plot/Латинський квадрат). Результат "
+             "можна підправити вручну.", _pick_random, "#8c5a1a"),
+            ("📊 За однорідністю", "Враховує позначені «-»/«+» та вихідні виміри "
+             "в таблиці — формує захисні зони й (за наявності вимірів) відбирає "
+             "облікові рослини за CV%.", _pick_homog, "#1a6b8c"),
+        ]
+        for label, desc, cmd, color in opts:
+            row = tk.Frame(frm); row.pack(fill=tk.X, pady=5)
+            tk.Button(row, text=label, bg=color, fg="white", font=("Times New Roman",11,"bold"),
+                      width=18, command=cmd).pack(side=tk.LEFT)
+            tk.Label(row, text=desc, font=("Times New Roman",9), fg="#666",
+                     justify="left", wraplength=340, anchor="w").pack(side=tk.LEFT, padx=10)
+        tk.Button(frm, text="Скасувати", font=rf, command=dlg.destroy).pack(pady=(10,0))
+        center_win(dlg)
+
     def _show_help(self):
         win = tk.Toplevel(self.win); win.title("Довідка — Конструктор схеми")
         win.geometry("720x680"); set_icon(win)
@@ -176,14 +285,20 @@ class SchemeConstructorWindow:
         rf = ("Times New Roman",11)
 
         top_f = tk.Frame(dlg, padx=14, pady=10); top_f.pack(fill=tk.X)
-        tk.Label(top_f, text="Кількість факторів:", font=rf).pack(side=tk.LEFT)
+        tk.Label(top_f, text="Кількість факторів:", font=rf).grid(row=0, column=0, sticky="w")
         n_var = tk.StringVar(value=str(max(1, len(self.factor_defs))))
         tk.Spinbox(top_f, from_=1, to=len(FACTOR_LETTERS), textvariable=n_var,
-                   width=4, font=rf).pack(side=tk.LEFT, padx=6)
-        tk.Label(top_f, text="  Рослин на 1 повторність:", font=rf).pack(side=tk.LEFT, padx=(14,0))
+                   width=4, font=rf).grid(row=0, column=1, sticky="w", padx=6)
+        tk.Label(top_f, text="Рослин на 1 повторність:", font=rf).grid(
+            row=1, column=0, sticky="w", pady=(6,0))
         plot_size_var = tk.StringVar(value=str(self.plot_size))
         tk.Spinbox(top_f, from_=1, to=50, textvariable=plot_size_var,
-                   width=4, font=rf).pack(side=tk.LEFT, padx=6)
+                   width=4, font=rf).grid(row=1, column=1, sticky="w", padx=6, pady=(6,0))
+        tk.Label(top_f, text="Повторень на кожну комбінацію:", font=rf).grid(
+            row=2, column=0, sticky="w", pady=(6,0))
+        num_reps_var = tk.StringVar(value=str(getattr(self, "num_reps", 3)))
+        tk.Spinbox(top_f, from_=2, to=50, textvariable=num_reps_var,
+                   width=4, font=rf).grid(row=2, column=1, sticky="w", padx=6, pady=(6,0))
 
         tk.Label(dlg,
                  text="Якщо дослід закладається у ВЖЕ ІСНУЮЧИЙ сад, де один фактор "
@@ -262,6 +377,8 @@ class SchemeConstructorWindow:
             self.factor_defs = defs
             try: self.plot_size = max(1, int(plot_size_var.get()))
             except ValueError: self.plot_size = 1
+            try: self.num_reps = max(2, int(num_reps_var.get()))
+            except ValueError: self.num_reps = 3
             self.fixed_factor_idx = fixed_choice.get() if fixed_choice.get() >= 0 else None
             total_combos = 1
             for d in defs: total_combos *= len(d["levels"])
@@ -269,23 +386,23 @@ class SchemeConstructorWindow:
             if self.fixed_factor_idx is not None:
                 fixed_txt = f"  |  🔒 зафіксовано: {FACTOR_LETTERS[self.fixed_factor_idx]}={defs[self.fixed_factor_idx]['name']}"
             self._factors_status.configure(
-                text=f"✓ {len(defs)} факт., {total_combos} комбінацій × {self.plot_size} "
-                     f"рослин/повторність: " +
+                text=f"✓ {len(defs)} факт. × {total_combos} комб. × {self.plot_size} "
+                     f"росл./повт. × {self.num_reps} повт. = "
+                     f"{total_combos*self.plot_size*self.num_reps} рослин: " +
                      "; ".join(f"{FACTOR_LETTERS[i]}={d['name']}" for i, d in enumerate(defs)) +
                      fixed_txt,
                 fg="#1a6b1a")
             self._build_legend()
-            n_reps_suggested = 3
-            needed = total_combos * self.plot_size * n_reps_suggested
-            messagebox.showinfo("Фактори збережено",
+            needed = total_combos * self.plot_size * self.num_reps
+            messagebox.showinfo("Крок 1 завершено",
                 f"Усього комбінацій факторів: {total_combos}. При {self.plot_size} "
-                f"рослинах на повторність — {total_combos * self.plot_size} рослин на "
-                f"одне повне повторення.\n\n"
-                f"Наприклад, для {n_reps_suggested} повторень знадобиться щонайменше "
-                f"{needed} дослідних одиниць (рослин/ділянок), не рахуючи захисних зон. "
-                f"Врахуйте це на кроці 2, вказуючи розміри таблиці.",
+                f"рослинах на повторність і {self.num_reps} повтореннях — "
+                f"знадобиться щонайменше {needed} дослідних одиниць "
+                f"(рослин/ділянок), не рахуючи захисних зон.\n\n"
+                f"Тепер доступний Крок 2 — вкажіть розміри таблиці нижче.",
                 parent=dlg)
             dlg.destroy()
+            self._unlock_step2()
 
         tk.Button(bf, text="Зберегти", bg="#1a6b1a", fg="white", font=rf,
                   command=_save).pack(side=tk.LEFT, padx=4)
@@ -402,8 +519,12 @@ class SchemeConstructorWindow:
         _bind_fill_handle(self.entries, self.win)
 
         self._table_built = True
-        self._setup_frame.pack_forget()
-        self._resize_btn.pack(side=tk.LEFT, padx=4)
+        self._n_rows_entry.pack_forget()
+        self._rowlen_btn.pack_forget()
+        for w in self._rowlen_holder.winfo_children(): w.destroy()
+        self._resize_btn.pack(side=tk.LEFT, padx=10)
+        self._step2_frame.configure(text="Крок 2 — Розміри таблиці ✓ завершено")
+        self._unlock_step3()
         if has_fixed:
             messagebox.showinfo("Зафіксований фактор",
                 f"Для кожного ряду вкажіть у стовпці «🔒 {fname}», який рівень "
@@ -416,8 +537,10 @@ class SchemeConstructorWindow:
                 "Поточні дані таблиці буде втрачено при перебудові. Продовжити?"):
             return
         self._resize_btn.pack_forget()
-        self._setup_frame.pack(fill=tk.X, padx=8, pady=(0,4), before=self._legend_f)
+        self._n_rows_entry.pack(side=tk.LEFT, padx=6)
+        self._rowlen_btn.pack(side=tk.LEFT, padx=10)
         self._n_rows_setup_var.set(str(self.rows_n) if self.rows_n else "")
+        self._step2_frame.configure(text="Крок 2 — Розміри таблиці")
 
     def _extend_row_to(self, ri, target_len):
         pos_col0 = 3 if self.fixed_factor_idx is not None else 2
@@ -498,7 +621,7 @@ class SchemeConstructorWindow:
         rows_cfg = [
             ("Захисна край ряду:", "eg", "1"),
             ("Захисна між повторностями:", "rg", "1"),
-            ("Повторень (n_rep):", "nr", "3"),
+            ("Повторень (n_rep):", "nr", str(self.num_reps)),
             ("Поріг CV, % (якщо є виміри):", "cv", "15"),
         ]
         vv = {}
@@ -1002,6 +1125,7 @@ class SchemeConstructorWindow:
             text=f"✓ {len(self.factor_defs)} факт., {total_combos} комбінацій",
             fg="#1a6b1a")
         self._build_legend()
+        self._unlock_step2()
 
         plants_by_row = {}
         for pd in d.get("plants", []):
