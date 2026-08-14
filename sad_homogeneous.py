@@ -481,7 +481,383 @@ def hp_apply_design(result, design, num_variants, num_reps, seed=None):
     return design, fell_back
 
 
-class HomogeneousPlotWindow:
+class HPResultsViewMixin:
+    """
+    Спільна логіка перегляду результату (карта саду, список облікових
+    рослин, друкований бланк, збереження PNG) — використовується і
+    «Плануванням за однорідністю» (однофакторне), і «Конструктором
+    схеми» (багатофакторне, через «📊 За однорідністю»). Обидва класи
+    викликають однаковий алгоритм відбору (HPPlotBuilder + hp_apply_design)
+    — тому й перегляд результату тепер один і той самий код, а не дві
+    окремі, потенційно розбіжні реалізації.
+
+    Класи, що використовують цей mixin, повинні:
+      • мати self._result, self._cfg (заповнюються після відбору)
+      • реалізувати _plant_map_label(p), _plant_list_label(p),
+        _plant_form_label(p), _map_legend_note_text(),
+        _map_legend_decode(frame), _list_extra_header_lines()
+    """
+
+    def _show_results(self):
+        win = tk.Toplevel(self.win)
+        win.title("Планування досліду — Результати")
+        win.geometry("1300x860"); set_icon(win)
+        self._res_win = win
+
+        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
+        sidebar = tk.Frame(main, width=210, bg="#2c3e50")
+        sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
+        content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        tk.Label(sidebar, text="ПЛАН ДОСЛІДУ", bg="#2c3e50", fg="#ecf0f1",
+                 font=("Times New Roman",12,"bold"), pady=12).pack(fill=tk.X)
+
+        active = {"panel": None, "btn": None}
+        def _show_panel(frame, btn):
+            if active["panel"] is not None: active["panel"].pack_forget()
+            if active["btn"] is not None: active["btn"].configure(bg="#2c3e50", fg="#bdc3c7")
+            frame.pack(fill=tk.BOTH, expand=True)
+            active["panel"] = frame; active["btn"] = btn
+            btn.configure(bg="#c62828", fg="white")
+
+        def _sidebar_btn(text, tooltip):
+            fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
+            b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
+                          font=("Times New Roman",11), relief=tk.FLAT,
+                          anchor="w", padx=12, pady=6,
+                          activebackground="#c62828", activeforeground="white")
+            b.pack(fill=tk.X)
+            tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
+                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
+            tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
+            return b
+
+        map_frame  = tk.Frame(content)
+        list_frame = tk.Frame(content)
+        form_frame = tk.Frame(content)
+
+        b_map  = _sidebar_btn("🗺 Карта саду",              "Кольорова схема ділянок")
+        b_list = _sidebar_btn("📋 Список облікових рослин", "За варіантами й повтореннями")
+        b_form = _sidebar_btn("🖨 Бланк обліку",            "Друкована форма для запису в полі")
+
+        b_map.configure( command=lambda: _show_panel(map_frame, b_map))
+        b_list.configure(command=lambda: _show_panel(list_frame, b_list))
+        b_form.configure(command=lambda: _show_panel(form_frame, b_form))
+
+        self._build_map_panel(map_frame)
+        self._build_list_panel(list_frame)
+        self._build_form_panel(form_frame)
+
+        _show_panel(map_frame, b_map)
+
+    # ── панель: карта саду ───────────────────────────────
+    def _build_map_panel(self, frame):
+        for w in frame.winfo_children(): w.destroy()
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="💾 Зберегти PNG (друк)", font=("Times New Roman",11),
+                  command=lambda: self._save_png(self._map_fig, "Зберегти карту")
+                  ).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="💾 Зберегти схему", bg="#1a4b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._save_scheme).pack(side=tk.LEFT, padx=(12,4))
+        tk.Button(tb, text="📂 Відкрити схему", font=("Times New Roman",11),
+                  command=self._load_scheme).pack(side=tk.LEFT, padx=4)
+        cfg = self._cfg
+        design_txt = HP_DESIGN_LABELS.get(cfg.get("design_used"), cfg.get("design_used",""))
+        tk.Label(tb, text=f"Дизайн: {design_txt}", font=("Times New Roman",11),
+                 fg="#1a4b8c").pack(side=tk.LEFT, padx=12)
+
+        # ── Легенда кольорів + пояснення позначень (завжди повністю видимі) ──
+        legend_f = tk.Frame(frame, bg="#f7f7f7", padx=8, pady=6)
+        legend_f.pack(fill=tk.X)
+        row1 = tk.Frame(legend_f, bg="#f7f7f7"); row1.pack(fill=tk.X)
+        for role, color in HP_ROLE_COLORS.items():
+            sw = tk.Frame(row1, bg=color, width=16, height=16, relief=tk.RIDGE, bd=1)
+            sw.pack(side=tk.LEFT, padx=(0,4), pady=2); sw.pack_propagate(False)
+            tk.Label(row1, text=HP_ROLE_LABELS[role], bg="#f7f7f7",
+                     font=("Times New Roman",9)).pack(side=tk.LEFT, padx=(0,14))
+        tk.Label(legend_f, text=self._map_legend_note_text(),
+                 bg="#f7f7f7", fg="#444", font=("Times New Roman",9),
+                 anchor="w", justify="left", wraplength=1360
+                 ).pack(fill=tk.X, pady=(4,0))
+
+        self._map_legend_decode(frame)
+
+        map_outer = tk.Frame(frame); map_outer.pack(fill=tk.BOTH, expand=True)
+        self._map_outer = map_outer
+        self._draw_map()
+
+    # ── панель: список облікових рослин ──────────────────
+    def _build_list_panel(self, frame):
+        for w in frame.winfo_children(): w.destroy()
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="📋 Копіювати список", font=("Times New Roman",11),
+                  command=self._copy_list).pack(side=tk.LEFT, padx=4)
+
+        r_vsb = ttk.Scrollbar(frame, orient="vertical"); r_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.list_txt = tk.Text(frame, font=("Courier New",10),
+                                yscrollcommand=r_vsb.set, state="disabled", wrap="none")
+        self.list_txt.pack(fill=tk.BOTH, expand=True)
+        r_vsb.config(command=self.list_txt.yview)
+        self._fill_list()
+
+    def _copy_list(self):
+        self.list_txt.configure(state="normal")
+        text = self.list_txt.get("1.0", tk.END)
+        self.list_txt.configure(state="disabled")
+        self._res_win.clipboard_clear(); self._res_win.clipboard_append(text)
+        messagebox.showinfo("", "Список скопійовано у буфер обміну.")
+
+    # ── карта саду ────────────────────────────────────────
+    def _draw_map(self):
+        for w in self._map_outer.winfo_children(): w.destroy()
+        if not HAS_MPL or self._result is None: return
+        result = self._result; cfg = self._cfg
+        rows = sorted({p.row for p in result["plants"]})
+        max_pos = max((p.position for p in result["plants"]), default=1)
+
+        fig = Figure(figsize=(max(8, max_pos*0.4), max(4, len(rows)*0.55)), dpi=100)
+        ax = fig.add_subplot(111)
+        by_row = {}
+        for p in result["plants"]:
+            by_row.setdefault(p.row, {})[p.position] = p
+
+        for ri, row_num in enumerate(rows):
+            ax.text(-0.6, len(rows)-ri-0.5, f"Ряд {row_num}",
+                    ha="right", va="center", fontsize=8, fontfamily="Times New Roman")
+            for pos in range(1, max_pos+1):
+                p = by_row.get(row_num, {}).get(pos)
+                if p is None: continue
+                color = HP_ROLE_COLORS.get(p.role, "#FFFFFF")
+                rect = matplotlib.patches.FancyBboxPatch(
+                    (pos-0.95, len(rows)-ri-0.95), 0.9, 0.9,
+                    boxstyle="round,pad=0.02", facecolor=color, edgecolor="#666", linewidth=0.6)
+                ax.add_patch(rect)
+                label = self._plant_map_label(p)
+                if label:
+                    ax.text(pos-0.5, len(rows)-ri-0.5, label, ha="center", va="center",
+                            fontsize=7, fontfamily="Times New Roman")
+        ax.set_xlim(-1.2, max_pos+0.5); ax.set_ylim(-0.5, len(rows)+0.5)
+        ax.axis("off")
+        design_txt = HP_DESIGN_LABELS.get(cfg.get("design_used"), cfg.get("design_used",""))
+        trait_txt = f"{cfg.get('trait_name','')} ({cfg.get('trait_unit') or '—'})  |  " \
+                    if cfg.get('trait_name') else ""
+        ax.set_title(
+            f"{trait_txt}"
+            f"CV%={result['final_cv_pct']:.2f}  |  Повторностей: {result['plots_formed']}  |  "
+            f"Дизайн: {design_txt}  |  "
+            f"Ітерацій: {result['iterations_used']} "
+            f"({'збіжність' if result['converged'] else 'без збіжності'})",
+            fontsize=9, fontfamily="Times New Roman")
+
+        fig.tight_layout()
+        self._map_fig = fig
+        embed_figure(fig, self._map_outer)
+
+    def _fill_list(self):
+        if self._result is None: return
+        recorded = sorted(
+            [p for p in self._result["plants"] if p.role == HP_ROLE_RECORDED],
+            key=lambda p: (p.variant or 0, p.replication or 0, p.row, p.position))
+        cfg = self._cfg
+        design_txt = HP_DESIGN_LABELS.get(cfg.get("design_used"), cfg.get("design_used",""))
+        lines = []
+        if cfg.get("trait_name"):
+            lines.append(f"Показник: {cfg['trait_name']} ({cfg.get('trait_unit') or '—'})")
+        lines += [
+            f"Дизайн експерименту: {design_txt}",
+            f"CV% фінальний: {self._result['final_cv_pct']:.2f}   "
+            f"Повторностей: {self._result['plots_formed']}   "
+            f"Ітерацій: {self._result['iterations_used']}",
+        ]
+        lines.extend(self._list_extra_header_lines())
+        lines += [
+            "-"*90,
+            f"{'Варіант':<26}{'Повт.':<8}{'Ряд':<6}{'Позиція':<9}{cfg.get('trait_name','Значення')}",
+            "-"*90,
+        ]
+        for p in recorded:
+            vn = self._plant_list_label(p)
+            lines.append(f"{vn:<26}{p.replication or '-':<8}"
+                        f"{p.row:<6}{p.position:<9}{p.value:.2f}" if p.value is not None
+                        else f"{vn:<26}{p.replication or '-':<8}{p.row:<6}{p.position:<9}—")
+        self.list_txt.configure(state="normal")
+        self.list_txt.delete("1.0", tk.END)
+        self.list_txt.insert("1.0", "\n".join(lines))
+        self.list_txt.configure(state="disabled")
+
+    # ── панель: бланк обліку (для друку й заповнення в полі) ──
+    # Скільки позицій ряду і скільки рядів вміщується на одній сторінці,
+    # щоб комірки лишались достатньо великими для запису значень від руки.
+    FORM_POS_PER_PAGE = 14
+    FORM_ROWS_PER_PAGE = 4
+
+    def _build_form_panel(self, frame):
+        for w in frame.winfo_children(): w.destroy()
+        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
+        tk.Button(tb, text="💾 Зберегти PNG", font=("Times New Roman",11),
+                  command=self._save_form_page).pack(side=tk.LEFT, padx=4)
+
+        nav = tk.Frame(tb); nav.pack(side=tk.LEFT, padx=12)
+        tk.Button(nav, text="◀ Попередня", font=("Times New Roman",10),
+                  command=lambda: self._form_page_step(-1)).pack(side=tk.LEFT, padx=2)
+        self._form_page_lbl = tk.Label(nav, text="", font=("Times New Roman",11,"bold"))
+        self._form_page_lbl.pack(side=tk.LEFT, padx=8)
+        tk.Button(nav, text="Наступна ▶", font=("Times New Roman",10),
+                  command=lambda: self._form_page_step(1)).pack(side=tk.LEFT, padx=2)
+
+        tk.Label(tb, text="Роздрукуйте потрібні сторінки й носіть із собою в сад — "
+                          "впишіть виміряні значення прямо на бланк.",
+                 font=("Times New Roman",10), fg="#555").pack(side=tk.LEFT, padx=12)
+
+        form_outer = tk.Frame(frame); form_outer.pack(fill=tk.BOTH, expand=True)
+        self._form_outer = form_outer
+        self._form_pages = self._build_form_pages()
+        self._form_page_idx = 0
+        self._form_figs_cache = {}
+        self._draw_blank_form()
+
+    def _build_form_pages(self):
+        """Розбиває фізичну карту саду на сторінки: кожен ряд ділиться на
+        сегменти позицій довжиною не більше FORM_POS_PER_PAGE, а сегменти
+        групуються по FORM_ROWS_PER_PAGE на одну сторінку — так комірки
+        завжди лишаються великими й розбірливими для запису вручну."""
+        result = self._result
+        by_row = {}
+        for p in result["plants"]:
+            by_row.setdefault(p.row, {})[p.position] = p
+
+        segments = []  # (row_num, [positions...])
+        for row_num in sorted(by_row.keys()):
+            positions = sorted(by_row[row_num].keys())
+            for i in range(0, len(positions), self.FORM_POS_PER_PAGE):
+                segments.append((row_num, positions[i:i+self.FORM_POS_PER_PAGE]))
+
+        pages = []
+        for i in range(0, len(segments), self.FORM_ROWS_PER_PAGE):
+            pages.append(segments[i:i+self.FORM_ROWS_PER_PAGE])
+        return pages or [[]]
+
+    def _form_page_step(self, delta):
+        n = len(self._form_pages)
+        self._form_page_idx = max(0, min(n-1, self._form_page_idx + delta))
+        self._draw_blank_form()
+
+    def _draw_blank_form(self):
+        for w in self._form_outer.winfo_children(): w.destroy()
+        if not HAS_MPL or self._result is None: return
+        if self._form_page_idx in self._form_figs_cache:
+            fig = self._form_figs_cache[self._form_page_idx]
+        else:
+            fig = self._render_form_page(self._form_pages[self._form_page_idx])
+            self._form_figs_cache[self._form_page_idx] = fig
+        self._form_fig = fig
+        n = len(self._form_pages)
+        self._form_page_lbl.configure(text=f"Сторінка {self._form_page_idx+1} / {n}")
+        embed_figure(fig, self._form_outer)
+
+    def _render_form_page(self, segments):
+        result = self._result
+        by_row = {}
+        for p in result["plants"]:
+            by_row.setdefault(p.row, {})[p.position] = p
+
+        n_seg = max(1, len(segments))
+        max_len = max((len(pos_list) for _, pos_list in segments), default=1)
+        fig = Figure(figsize=(max(9, max_len*0.85), max(4.5, n_seg*2.3+1.2)), dpi=100)
+        ax = fig.add_subplot(111)
+
+        ROW_H = 2.1  # висота одного сегмента ряду (мітка+значення+відступ)
+        for si, (row_num, pos_list) in enumerate(segments):
+            y_top = n_seg*ROW_H - si*ROW_H
+            first_pos, last_pos = pos_list[0], pos_list[-1]
+            ax.text(-0.7, y_top-1.0,
+                    f"Ряд {row_num}\n(поз. {first_pos}-{last_pos})",
+                    ha="right", va="center", fontsize=9, fontfamily="Times New Roman",
+                    fontweight="bold")
+            for ci, pos in enumerate(pos_list):
+                p = by_row.get(row_num, {}).get(pos)
+                if p is None: continue
+                x = ci
+                # ── порядкова нумерація позицій (для орієнтації в саду) ──
+                ax.text(x+0.5, y_top+0.15, str(pos), ha="center", va="center",
+                        fontsize=8, fontfamily="Times New Roman", color="#555")
+                if p.role == HP_ROLE_RECORDED:
+                    # верхній квадрат — мітка варіанту й повторення
+                    top_r = matplotlib.patches.Rectangle(
+                        (x+0.03, y_top-0.72), 0.94, 0.55,
+                        facecolor="#EAF2FB", edgecolor="#333", linewidth=1.0)
+                    ax.add_patch(top_r)
+                    ax.text(x+0.5, y_top-0.44, self._plant_form_label(p),
+                            ha="center", va="center", fontsize=8,
+                            fontfamily="Times New Roman", color="#1a4b8c", fontweight="bold")
+                    # нижній квадрат — порожній, для запису значення
+                    bot_r = matplotlib.patches.Rectangle(
+                        (x+0.03, y_top-1.55), 0.94, 0.78,
+                        facecolor="white", edgecolor="#333", linewidth=1.2)
+                    ax.add_patch(bot_r)
+                elif p.role == HP_ROLE_EXTRA:
+                    rect = matplotlib.patches.Rectangle(
+                        (x+0.12, y_top-1.2), 0.76, 1.0,
+                        facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
+                    ax.add_patch(rect)
+                    ax.text(x+0.5, y_top-0.7, "x", ha="center", va="center",
+                            fontsize=9, color="#999")
+                else:
+                    label = {HP_ROLE_GUARD_EDGE:"K", HP_ROLE_GUARD_REP:"P",
+                             HP_ROLE_DEAD:"-", HP_ROLE_POLLINIZER:"+"}.get(p.role, "")
+                    rect = matplotlib.patches.Rectangle(
+                        (x+0.12, y_top-1.2), 0.76, 1.0,
+                        facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
+                    ax.add_patch(rect)
+                    if label:
+                        ax.text(x+0.5, y_top-0.7, label, ha="center", va="center",
+                                fontsize=8, color="#999", fontfamily="Times New Roman")
+
+        ax.set_xlim(-1.6, max_len+0.5); ax.set_ylim(0, n_seg*ROW_H+1.3)
+        ax.axis("off")
+        pg_i = self._form_page_idx+1 if hasattr(self, "_form_page_idx") else 1
+        pg_n = len(self._form_pages) if hasattr(self, "_form_pages") else 1
+        ax.set_title(
+            "БЛАНК ОБЛІКУ\n"
+            "Показник: _______________________   Одиниця: _________\n"
+            f"Дата: _______________     Виконав: _______________________     "
+            f"Сторінка {pg_i}/{pg_n}",
+            fontsize=10, fontfamily="Times New Roman", loc="left")
+        fig.subplots_adjust(top=0.82, bottom=0.03, left=0.1, right=0.98)
+        return fig
+
+    def _save_form_page(self):
+        if getattr(self, "_form_fig", None) is None:
+            messagebox.showwarning("","Спочатку згенеруйте план."); return
+        default_name = f"blank_form_page_{self._form_page_idx+1}.png"
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png", initialfile=default_name,
+            filetypes=[("PNG зображення","*.png")],
+            title=f"Зберегти сторінку {self._form_page_idx+1}")
+        if not path: return
+        try:
+            self._form_fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
+
+    # ── збереження ────────────────────────────────────────
+    def _save_png(self, fig=None, title="Зберегти зображення"):
+        fig = fig if fig is not None else self._map_fig
+        if self._result is None or fig is None:
+            messagebox.showwarning("","Спочатку згенеруйте план."); return
+        path = filedialog.asksaveasfilename(defaultextension=".png",
+                    filetypes=[("PNG зображення","*.png")], title=title)
+        if not path: return
+        try:
+            fig.savefig(path, dpi=150, bbox_inches="tight")
+            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
+        except Exception as ex:
+            messagebox.showerror("Помилка", str(ex))
+
+
+class HomogeneousPlotWindow(HPResultsViewMixin):
     """
     Планування досліду за однорідністю рослин.
 
@@ -1207,387 +1583,42 @@ class HomogeneousPlotWindow:
                   command=dlg.destroy).pack(pady=(14,0))
         dlg.update_idletasks(); center_win(dlg); dlg.grab_set()
 
-    # ── вікно результатів (як і в усіх інших видах аналізу) ─
-    def _show_results(self):
-        win = tk.Toplevel(self.win)
-        win.title("Планування досліду — Результати")
-        win.geometry("1300x860"); set_icon(win)
-        self._res_win = win
+    # ── Мітки рослин для карти/списку/бланку (hook-методи mixin) ──
+    def _plant_map_label(self, p):
+        if p.role == HP_ROLE_RECORDED: return f"V{p.variant}"
+        return {HP_ROLE_GUARD_EDGE:"К", HP_ROLE_GUARD_REP:"П", HP_ROLE_DEAD:"-",
+                HP_ROLE_POLLINIZER:"+", HP_ROLE_EXTRA:"×"}.get(p.role, "")
 
-        main = tk.Frame(win); main.pack(fill=tk.BOTH, expand=True)
-        sidebar = tk.Frame(main, width=210, bg="#2c3e50")
-        sidebar.pack(side=tk.LEFT, fill=tk.Y); sidebar.pack_propagate(False)
-        content = tk.Frame(main); content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        tk.Label(sidebar, text="ПЛАН ДОСЛІДУ", bg="#2c3e50", fg="#ecf0f1",
-                 font=("Times New Roman",12,"bold"), pady=12).pack(fill=tk.X)
-
-        active = {"panel": None, "btn": None}
-        def _show_panel(frame, btn):
-            if active["panel"] is not None: active["panel"].pack_forget()
-            if active["btn"] is not None: active["btn"].configure(bg="#2c3e50", fg="#bdc3c7")
-            frame.pack(fill=tk.BOTH, expand=True)
-            active["panel"] = frame; active["btn"] = btn
-            btn.configure(bg="#c62828", fg="white")
-
-        def _sidebar_btn(text, tooltip):
-            fr = tk.Frame(sidebar, bg="#2c3e50"); fr.pack(fill=tk.X)
-            b = tk.Button(fr, text=f"  {text}", bg="#2c3e50", fg="#bdc3c7",
-                          font=("Times New Roman",11), relief=tk.FLAT,
-                          anchor="w", padx=12, pady=6,
-                          activebackground="#c62828", activeforeground="white")
-            b.pack(fill=tk.X)
-            tk.Label(fr, text=f"    {tooltip}", bg="#2c3e50", fg="#7f8c8d",
-                     font=("Times New Roman",8), anchor="w").pack(fill=tk.X)
-            tk.Frame(sidebar, bg="#3d5166", height=1).pack(fill=tk.X)
-            return b
-
-        map_frame  = tk.Frame(content)
-        list_frame = tk.Frame(content)
-        form_frame = tk.Frame(content)
-
-        b_map  = _sidebar_btn("🗺 Карта саду",              "Кольорова схема ділянок")
-        b_list = _sidebar_btn("📋 Список облікових рослин", "За варіантами й повтореннями")
-        b_form = _sidebar_btn("🖨 Бланк обліку",            "Друкована форма для запису в полі")
-
-        b_map.configure( command=lambda: _show_panel(map_frame, b_map))
-        b_list.configure(command=lambda: _show_panel(list_frame, b_list))
-        b_form.configure(command=lambda: _show_panel(form_frame, b_form))
-
-        self._build_map_panel(map_frame)
-        self._build_list_panel(list_frame)
-        self._build_form_panel(form_frame)
-
-        _show_panel(map_frame, b_map)
-
-    # ── панель: карта саду ───────────────────────────────
-    def _build_map_panel(self, frame):
-        for w in frame.winfo_children(): w.destroy()
-        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="💾 Зберегти PNG (друк)", font=("Times New Roman",11),
-                  command=lambda: self._save_png(self._map_fig, "Зберегти карту")
-                  ).pack(side=tk.LEFT, padx=4)
-        tk.Button(tb, text="💾 Зберегти схему", bg="#1a4b8c", fg="white",
-                  font=("Times New Roman",11),
-                  command=self._save_scheme).pack(side=tk.LEFT, padx=(12,4))
-        tk.Button(tb, text="📂 Відкрити схему", font=("Times New Roman",11),
-                  command=self._load_scheme).pack(side=tk.LEFT, padx=4)
-        cfg = self._cfg
-        design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
-        tk.Label(tb, text=f"Дизайн: {design_txt}", font=("Times New Roman",11),
-                 fg="#1a4b8c").pack(side=tk.LEFT, padx=12)
-
-        # ── Легенда кольорів + пояснення позначень (завжди повністю видимі) ──
-        legend_f = tk.Frame(frame, bg="#f7f7f7", padx=8, pady=6)
-        legend_f.pack(fill=tk.X)
-        row1 = tk.Frame(legend_f, bg="#f7f7f7"); row1.pack(fill=tk.X)
-        for role, color in HP_ROLE_COLORS.items():
-            sw = tk.Frame(row1, bg=color, width=16, height=16, relief=tk.RIDGE, bd=1)
-            sw.pack(side=tk.LEFT, padx=(0,4), pady=2); sw.pack_propagate(False)
-            tk.Label(row1, text=HP_ROLE_LABELS[role], bg="#f7f7f7",
-                     font=("Times New Roman",9)).pack(side=tk.LEFT, padx=(0,14))
-        tk.Label(legend_f,
-                 text='Позначення на клітинках:  "V1", "V2"…  — номер ВАРІАНТУ (облікова рослина)  •  '
-                      '"К" — захисна зона, край ряду  •  "П" — захисна зона між повтореннями  •  '
-                      '"-" — випад/пошкоджена рослина  •  "+" — запилювач  •  '
-                      '"×" — сформована повторність поза дизайном (залишок, не увійшов у жоден '
-                      'повний блок — не бере участі в обліку)',
-                 bg="#f7f7f7", fg="#444", font=("Times New Roman",9),
-                 anchor="w", justify="left", wraplength=1360
-                 ).pack(fill=tk.X, pady=(4,0))
-
-        if self._variant_names:
-            legend2_f = tk.Frame(frame, bg="#eef3f8", padx=8, pady=6)
-            legend2_f.pack(fill=tk.X)
-            names_txt = "   •   ".join(f"В{i+1} = {nm}"
-                                       for i, nm in enumerate(self._variant_names))
-            tk.Label(legend2_f, text="Розшифрування варіантів:  " + names_txt,
-                     bg="#eef3f8", fg="#1a4b8c", font=("Times New Roman",10,"bold"),
-                     anchor="w", justify="left", wraplength=1360
-                     ).pack(fill=tk.X)
-
-        map_outer = tk.Frame(frame); map_outer.pack(fill=tk.BOTH, expand=True)
-        self._map_outer = map_outer
-        self._draw_map()
-
-    # ── панель: список облікових рослин ──────────────────
-    def _build_list_panel(self, frame):
-        for w in frame.winfo_children(): w.destroy()
-        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати список", font=("Times New Roman",11),
-                  command=self._copy_list).pack(side=tk.LEFT, padx=4)
-
-        r_vsb = ttk.Scrollbar(frame, orient="vertical"); r_vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.list_txt = tk.Text(frame, font=("Courier New",10),
-                                yscrollcommand=r_vsb.set, state="disabled", wrap="none")
-        self.list_txt.pack(fill=tk.BOTH, expand=True)
-        r_vsb.config(command=self.list_txt.yview)
-        self._fill_list()
-
-    def _copy_list(self):
-        self.list_txt.configure(state="normal")
-        text = self.list_txt.get("1.0", tk.END)
-        self.list_txt.configure(state="disabled")
-        self._res_win.clipboard_clear(); self._res_win.clipboard_append(text)
-        messagebox.showinfo("", "Список скопійовано у буфер обміну.")
-
-    # ── карта саду ────────────────────────────────────────
-    def _draw_map(self):
-        for w in self._map_outer.winfo_children(): w.destroy()
-        if not HAS_MPL or self._result is None: return
-        result = self._result; cfg = self._cfg
-        rows = sorted({p.row for p in result["plants"]})
-        max_pos = max((p.position for p in result["plants"]), default=1)
-
-        fig = Figure(figsize=(max(8, max_pos*0.4), max(4, len(rows)*0.55)), dpi=100)
-        ax = fig.add_subplot(111)
-        by_row = {}
-        for p in result["plants"]:
-            by_row.setdefault(p.row, {})[p.position] = p
-
-        for ri, row_num in enumerate(rows):
-            ax.text(-0.6, len(rows)-ri-0.5, f"Ряд {row_num}",
-                    ha="right", va="center", fontsize=8, fontfamily="Times New Roman")
-            for pos in range(1, max_pos+1):
-                p = by_row.get(row_num, {}).get(pos)
-                if p is None: continue
-                color = HP_ROLE_COLORS.get(p.role, "#FFFFFF")
-                rect = matplotlib.patches.FancyBboxPatch(
-                    (pos-0.95, len(rows)-ri-0.95), 0.9, 0.9,
-                    boxstyle="round,pad=0.02", facecolor=color, edgecolor="#666", linewidth=0.6)
-                ax.add_patch(rect)
-                label = ""
-                if p.role == HP_ROLE_RECORDED: label = f"V{p.variant}"
-                elif p.role == HP_ROLE_GUARD_EDGE: label = "К"
-                elif p.role == HP_ROLE_GUARD_REP: label = "П"
-                elif p.role == HP_ROLE_DEAD: label = "-"
-                elif p.role == HP_ROLE_POLLINIZER: label = "+"
-                elif p.role == HP_ROLE_EXTRA: label = "×"
-                if label:
-                    ax.text(pos-0.5, len(rows)-ri-0.5, label, ha="center", va="center",
-                            fontsize=7, fontfamily="Times New Roman")
-        ax.set_xlim(-1.2, max_pos+0.5); ax.set_ylim(-0.5, len(rows)+0.5)
-        ax.axis("off")
-        design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
-        ax.set_title(
-            f"{cfg['trait_name']} ({cfg['trait_unit'] or '—'})  |  "
-            f"CV%={result['final_cv_pct']:.2f}  |  Повторностей: {result['plots_formed']}  |  "
-            f"Дизайн: {design_txt}  |  "
-            f"Ітерацій: {result['iterations_used']} "
-            f"({'збіжність' if result['converged'] else 'без збіжності'})",
-            fontsize=9, fontfamily="Times New Roman")
-
-        fig.tight_layout()
-        self._map_fig = fig
-        embed_figure(fig, self._map_outer)
-
-    def _fill_list(self):
-        if self._result is None: return
-        recorded = sorted(
-            [p for p in self._result["plants"] if p.role == HP_ROLE_RECORDED],
-            key=lambda p: (p.variant or 0, p.replication or 0, p.row, p.position))
-        cfg = self._cfg
-        design_txt = HP_DESIGN_LABELS.get(cfg["design_used"], cfg["design_used"])
+    def _plant_list_label(self, p):
+        v = p.variant
+        if v is None: return "-"
         vnames = self._variant_names
-        def _vname(v):
-            if v is None: return "-"
-            if vnames and 1 <= v <= len(vnames): return f"В{v} ({vnames[v-1]})"
-            return f"В{v}"
-        lines = [
-            f"Показник: {cfg['trait_name']} ({cfg['trait_unit'] or '—'})",
-            f"Дизайн експерименту: {design_txt}",
-            f"CV% фінальний: {self._result['final_cv_pct']:.2f}   "
-            f"Повторностей: {self._result['plots_formed']}   "
-            f"Ітерацій: {self._result['iterations_used']}",
-        ]
+        if vnames and 1 <= v <= len(vnames): return f"В{v} ({vnames[v-1]})"
+        return f"В{v}"
+
+    def _plant_form_label(self, p):
+        return f"В{p.variant}-П{p.replication}"
+
+    def _map_legend_note_text(self):
+        return ('Позначення на клітинках:  "V1", "V2"…  — номер ВАРІАНТУ (облікова рослина)  •  '
+                '"К" — захисна зона, край ряду  •  "П" — захисна зона між повтореннями  •  '
+                '"-" — випад/пошкоджена рослина  •  "+" — запилювач  •  '
+                '"×" — сформована повторність поза дизайном (залишок, не увійшов у жоден '
+                'повний блок — не бере участі в обліку)')
+
+    def _map_legend_decode(self, frame):
+        if not self._variant_names: return
+        legend2_f = tk.Frame(frame, bg="#eef3f8", padx=8, pady=6)
+        legend2_f.pack(fill=tk.X)
+        names_txt = "   •   ".join(f"В{i+1} = {nm}"
+                                   for i, nm in enumerate(self._variant_names))
+        tk.Label(legend2_f, text="Розшифрування варіантів:  " + names_txt,
+                 bg="#eef3f8", fg="#1a4b8c", font=("Times New Roman",10,"bold"),
+                 anchor="w", justify="left", wraplength=1360
+                 ).pack(fill=tk.X)
+
+    def _list_extra_header_lines(self):
+        vnames = self._variant_names
         if vnames:
-            lines.append("Варіанти: " + "  •  ".join(f"В{i+1}={n}" for i,n in enumerate(vnames)))
-        lines += [
-            "-"*90,
-            f"{'Варіант':<26}{'Повт.':<8}{'Ряд':<6}{'Позиція':<9}{cfg['trait_name']}",
-            "-"*90,
-        ]
-        for p in recorded:
-            vn = _vname(p.variant)
-            lines.append(f"{vn:<26}{p.replication or '-':<8}"
-                        f"{p.row:<6}{p.position:<9}{p.value:.2f}" if p.value is not None
-                        else f"{vn:<26}{p.replication or '-':<8}{p.row:<6}{p.position:<9}—")
-        self.list_txt.configure(state="normal")
-        self.list_txt.delete("1.0", tk.END)
-        self.list_txt.insert("1.0", "\n".join(lines))
-        self.list_txt.configure(state="disabled")
-
-    # ── панель: бланк обліку (для друку й заповнення в полі) ──
-    # Скільки позицій ряду і скільки рядів вміщується на одній сторінці,
-    # щоб комірки лишались достатньо великими для запису значень від руки.
-    FORM_POS_PER_PAGE = 14
-    FORM_ROWS_PER_PAGE = 4
-
-    def _build_form_panel(self, frame):
-        for w in frame.winfo_children(): w.destroy()
-        tb = tk.Frame(frame, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="💾 Зберегти сторінку PNG (друк)", font=("Times New Roman",11),
-                  command=self._save_form_page).pack(side=tk.LEFT, padx=4)
-
-        nav = tk.Frame(tb); nav.pack(side=tk.LEFT, padx=16)
-        tk.Button(nav, text="◀ Попередня", font=("Times New Roman",10),
-                  command=lambda: self._form_page_step(-1)).pack(side=tk.LEFT, padx=2)
-        self._form_page_lbl = tk.Label(nav, text="", font=("Times New Roman",11,"bold"))
-        self._form_page_lbl.pack(side=tk.LEFT, padx=8)
-        tk.Button(nav, text="Наступна ▶", font=("Times New Roman",10),
-                  command=lambda: self._form_page_step(1)).pack(side=tk.LEFT, padx=2)
-
-        tk.Label(tb, text="Роздрукуйте потрібні сторінки й носіть із собою в сад — "
-                          "впишіть виміряні значення прямо на бланк.",
-                 font=("Times New Roman",10), fg="#555").pack(side=tk.LEFT, padx=12)
-
-        form_outer = tk.Frame(frame); form_outer.pack(fill=tk.BOTH, expand=True)
-        self._form_outer = form_outer
-        self._form_pages = self._build_form_pages()
-        self._form_page_idx = 0
-        self._form_figs_cache = {}
-        self._draw_blank_form()
-
-    def _build_form_pages(self):
-        """Розбиває фізичну карту саду на сторінки: кожен ряд ділиться на
-        сегменти позицій довжиною не більше FORM_POS_PER_PAGE, а сегменти
-        групуються по FORM_ROWS_PER_PAGE на одну сторінку — так комірки
-        завжди лишаються великими й розбірливими для запису вручну."""
-        result = self._result
-        by_row = {}
-        for p in result["plants"]:
-            by_row.setdefault(p.row, {})[p.position] = p
-
-        segments = []  # (row_num, [positions...])
-        for row_num in sorted(by_row.keys()):
-            positions = sorted(by_row[row_num].keys())
-            for i in range(0, len(positions), self.FORM_POS_PER_PAGE):
-                segments.append((row_num, positions[i:i+self.FORM_POS_PER_PAGE]))
-
-        pages = []
-        for i in range(0, len(segments), self.FORM_ROWS_PER_PAGE):
-            pages.append(segments[i:i+self.FORM_ROWS_PER_PAGE])
-        return pages or [[]]
-
-    def _form_page_step(self, delta):
-        n = len(self._form_pages)
-        self._form_page_idx = max(0, min(n-1, self._form_page_idx + delta))
-        self._draw_blank_form()
-
-    def _draw_blank_form(self):
-        for w in self._form_outer.winfo_children(): w.destroy()
-        if not HAS_MPL or self._result is None: return
-        if self._form_page_idx in self._form_figs_cache:
-            fig = self._form_figs_cache[self._form_page_idx]
-        else:
-            fig = self._render_form_page(self._form_pages[self._form_page_idx])
-            self._form_figs_cache[self._form_page_idx] = fig
-        self._form_fig = fig
-        n = len(self._form_pages)
-        self._form_page_lbl.configure(text=f"Сторінка {self._form_page_idx+1} / {n}")
-        embed_figure(fig, self._form_outer)
-
-    def _render_form_page(self, segments):
-        result = self._result
-        by_row = {}
-        for p in result["plants"]:
-            by_row.setdefault(p.row, {})[p.position] = p
-
-        n_seg = max(1, len(segments))
-        max_len = max((len(pos_list) for _, pos_list in segments), default=1)
-        fig = Figure(figsize=(max(9, max_len*0.85), max(4.5, n_seg*2.3+1.2)), dpi=100)
-        ax = fig.add_subplot(111)
-
-        ROW_H = 2.1  # висота одного сегмента ряду (мітка+значення+відступ)
-        for si, (row_num, pos_list) in enumerate(segments):
-            y_top = n_seg*ROW_H - si*ROW_H
-            first_pos, last_pos = pos_list[0], pos_list[-1]
-            ax.text(-0.7, y_top-1.0,
-                    f"Ряд {row_num}\n(поз. {first_pos}-{last_pos})",
-                    ha="right", va="center", fontsize=9, fontfamily="Times New Roman",
-                    fontweight="bold")
-            for ci, pos in enumerate(pos_list):
-                p = by_row.get(row_num, {}).get(pos)
-                if p is None: continue
-                x = ci
-                # ── порядкова нумерація позицій (для орієнтації в саду) ──
-                ax.text(x+0.5, y_top+0.15, str(pos), ha="center", va="center",
-                        fontsize=8, fontfamily="Times New Roman", color="#555")
-                if p.role == HP_ROLE_RECORDED:
-                    # верхній квадрат — мітка варіанту й повторення
-                    top_r = matplotlib.patches.Rectangle(
-                        (x+0.03, y_top-0.72), 0.94, 0.55,
-                        facecolor="#EAF2FB", edgecolor="#333", linewidth=1.0)
-                    ax.add_patch(top_r)
-                    ax.text(x+0.5, y_top-0.44, f"В{p.variant}-П{p.replication}",
-                            ha="center", va="center", fontsize=8,
-                            fontfamily="Times New Roman", color="#1a4b8c", fontweight="bold")
-                    # нижній квадрат — порожній, для запису значення
-                    bot_r = matplotlib.patches.Rectangle(
-                        (x+0.03, y_top-1.55), 0.94, 0.78,
-                        facecolor="white", edgecolor="#333", linewidth=1.2)
-                    ax.add_patch(bot_r)
-                elif p.role == HP_ROLE_EXTRA:
-                    rect = matplotlib.patches.Rectangle(
-                        (x+0.12, y_top-1.2), 0.76, 1.0,
-                        facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
-                    ax.add_patch(rect)
-                    ax.text(x+0.5, y_top-0.7, "x", ha="center", va="center",
-                            fontsize=9, color="#999")
-                else:
-                    label = {HP_ROLE_GUARD_EDGE:"K", HP_ROLE_GUARD_REP:"P",
-                             HP_ROLE_DEAD:"-", HP_ROLE_POLLINIZER:"+"}.get(p.role, "")
-                    rect = matplotlib.patches.Rectangle(
-                        (x+0.12, y_top-1.2), 0.76, 1.0,
-                        facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
-                    ax.add_patch(rect)
-                    if label:
-                        ax.text(x+0.5, y_top-0.7, label, ha="center", va="center",
-                                fontsize=8, color="#999", fontfamily="Times New Roman")
-
-        ax.set_xlim(-1.6, max_len+0.5); ax.set_ylim(0, n_seg*ROW_H+1.3)
-        ax.axis("off")
-        pg_i = self._form_page_idx+1 if hasattr(self, "_form_page_idx") else 1
-        pg_n = len(self._form_pages) if hasattr(self, "_form_pages") else 1
-        ax.set_title(
-            "БЛАНК ОБЛІКУ\n"
-            "Показник: _______________________   Одиниця: _________\n"
-            f"Дата: _______________     Виконав: _______________________     "
-            f"Сторінка {pg_i}/{pg_n}",
-            fontsize=10, fontfamily="Times New Roman", loc="left")
-        fig.subplots_adjust(top=0.82, bottom=0.03, left=0.1, right=0.98)
-        return fig
-
-    def _save_form_page(self):
-        if getattr(self, "_form_fig", None) is None:
-            messagebox.showwarning("","Спочатку згенеруйте план."); return
-        default_name = f"blank_form_page_{self._form_page_idx+1}.png"
-        path = filedialog.asksaveasfilename(
-            defaultextension=".png", initialfile=default_name,
-            filetypes=[("PNG зображення","*.png")],
-            title=f"Зберегти сторінку {self._form_page_idx+1}")
-        if not path: return
-        try:
-            self._form_fig.savefig(path, dpi=150, bbox_inches="tight")
-            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
-        except Exception as ex:
-            messagebox.showerror("Помилка", str(ex))
-
-    # ── збереження ────────────────────────────────────────
-    def _save_png(self, fig=None, title="Зберегти зображення"):
-        fig = fig if fig is not None else self._map_fig
-        if self._result is None or fig is None:
-            messagebox.showwarning("","Спочатку згенеруйте план."); return
-        path = filedialog.asksaveasfilename(defaultextension=".png",
-                    filetypes=[("PNG зображення","*.png")], title=title)
-        if not path: return
-        try:
-            fig.savefig(path, dpi=150, bbox_inches="tight")
-            messagebox.showinfo("Збережено", f"Збережено:\n{path}")
-        except Exception as ex:
-            messagebox.showerror("Помилка", str(ex))
-
-
-# ═══════════════════════════════════════════════════════════════
-# ПОЛЬОВИЙ ЖУРНАЛ ОБЛІКІВ — внесення фактичних вимірів у схему
-# ═══════════════════════════════════════════════════════════════
+            return ["Варіанти: " + "  •  ".join(f"В{i+1}={n}" for i,n in enumerate(vnames))]
+        return []
