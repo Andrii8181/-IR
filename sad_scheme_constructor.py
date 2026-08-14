@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from sad_common import *
 from sad_homogeneous import (HPPlant, HPPlotBuilder, hp_apply_design,
+    HPResultsViewMixin, HP_DESIGN_LABELS,
     HP_ROLE_RECORDED, HP_ROLE_GUARD_EDGE, HP_ROLE_GUARD_REP,
     HP_ROLE_UNASSIGNED, HP_ROLE_DEAD, HP_ROLE_POLLINIZER, HP_ROLE_EXTRA,
     HP_ROLE_EXCLUDED_CV)
@@ -12,7 +13,7 @@ import itertools, re
 # ═══════════════════════════════════════════════════════════════
 FACTOR_LETTERS = "ABCDEFGHIJ"
 
-class SchemeConstructorWindow:
+class SchemeConstructorWindow(HPResultsViewMixin):
     """
     Окремий інструмент від «Планування за однорідністю» — той алгоритм
     добре розв'язує ОДНОФАКТОРНЕ розміщення за вихідними даними рослин,
@@ -92,6 +93,8 @@ class SchemeConstructorWindow:
         self._cell_replication = {}    # {(row,pos): rep_num} — перевизначає "Повт." рядка для
                                         # клітинок, сформованих через "за однорідністю"
                                         # (одна повторність може НЕ збігатися з фізичним рядом)
+        self._result = None            # заповнюється після "За однорідністю" — для HPResultsViewMixin
+        self._cfg = {}
         self.row_lengths = []
         self.rows_n = 0
         self.entries = []
@@ -780,7 +783,65 @@ class SchemeConstructorWindow:
             f"Запилювачів: {counts['pollinizer']}\n"
             f"Поза дизайном (залишок): {counts['extra']}\n\n"
             "Результат записано в таблицю — клітинки лишаються повністю "
-            "редагованими, перевірте й підправте за потреби.")
+            "редагованими, перевірте й підправте за потреби.\n\n"
+            "Зараз відкриється повний перегляд (карта саду, список "
+            "облікових рослин, друкований бланк) — той самий, що й у "
+            "плануванні за однорідністю.")
+
+        self._result = result
+        self._cfg = {
+            "trait_name": getattr(self, "_trait_name", ""),
+            "trait_unit": getattr(self, "_trait_unit", ""),
+            "design_requested": design, "design_used": design,
+        }
+        self._show_results()
+
+    # ── Мітки рослин для карти/списку/бланку (hook-методи mixin) ──
+    def _plant_map_label(self, p):
+        if p.role == HP_ROLE_RECORDED and p.factors:
+            return "".join(f"{FACTOR_LETTERS[k]}{p.factors[d['name']]}"
+                           for k, d in enumerate(self.factor_defs))
+        return {HP_ROLE_GUARD_EDGE:"К", HP_ROLE_GUARD_REP:"П", HP_ROLE_DEAD:"-",
+                HP_ROLE_POLLINIZER:"+", HP_ROLE_EXTRA:"×"}.get(p.role, "")
+
+    def _plant_list_label(self, p):
+        if not p.factors: return "-"
+        code = "".join(f"{FACTOR_LETTERS[k]}{p.factors[d['name']]}"
+                       for k, d in enumerate(self.factor_defs))
+        names = ", ".join(f"{d['name']}={d['levels'][p.factors[d['name']]-1]}"
+                          for d in self.factor_defs)
+        return f"{code} ({names})"
+
+    def _plant_form_label(self, p):
+        return f"{self._plant_map_label(p)}-П{p.replication}"
+
+    def _map_legend_note_text(self):
+        return ('Позначення на клітинках: код комбінації факторів (напр. "A2B3", '
+                'де кожна літера — окремий фактор)  •  '
+                '"К" — захисна зона, край ряду  •  "П" — захисна зона між повтореннями  •  '
+                '"-" — випад/пошкоджена рослина  •  "+" — запилювач  •  '
+                '"×" — сформована повторність поза дизайном (залишок, не увійшов у жоден '
+                'повний блок — не бере участі в обліку)')
+
+    def _map_legend_decode(self, frame):
+        if not self.factor_defs: return
+        legend2_f = tk.Frame(frame, bg="#eef3f8", padx=8, pady=6)
+        legend2_f.pack(fill=tk.X)
+        for i, d in enumerate(self.factor_defs):
+            letter = FACTOR_LETTERS[i]
+            txt = f"{letter} = {d['name']}:  " + "  ".join(
+                f"{letter}{j+1}={lvl}" for j, lvl in enumerate(d["levels"]))
+            tk.Label(legend2_f, text=txt, bg="#eef3f8", fg="#1a4b8c",
+                     font=("Times New Roman",10), anchor="w", justify="left"
+                     ).pack(fill=tk.X)
+
+    def _list_extra_header_lines(self):
+        lines = []
+        for i, d in enumerate(self.factor_defs):
+            letter = FACTOR_LETTERS[i]
+            lines.append(f"{letter} = {d['name']}: " + ", ".join(
+                f"{letter}{j+1}={lvl}" for j, lvl in enumerate(d["levels"])))
+        return lines
 
     def _open_randomize_dialog(self):
         if not self.factor_defs:
