@@ -3,7 +3,7 @@
 from sad_common import *
 from sad_homogeneous import (HPPlant, HP_ROLE_RECORDED, HP_ROLE_GUARD_EDGE,
     HP_ROLE_GUARD_REP, HP_ROLE_DEAD, HP_ROLE_POLLINIZER, HP_ROLE_UNASSIGNED,
-    HP_ROLE_EXTRA, HP_ROLE_COLORS, HP_ROLE_LABELS)
+    HP_ROLE_EXTRA, HP_ROLE_EXCLUDED_CV, HP_ROLE_COLORS, HP_ROLE_LABELS)
 from sad_repeated import MixedRepeatedWindow
 
 class FieldJournalWindow:
@@ -299,7 +299,7 @@ class FieldJournalWindow:
                 else:
                     label = {HP_ROLE_GUARD_EDGE:"К", HP_ROLE_GUARD_REP:"П",
                              HP_ROLE_DEAD:"-", HP_ROLE_POLLINIZER:"+",
-                             HP_ROLE_EXTRA:"×"}.get(p.role, "")
+                             HP_ROLE_EXTRA:"×", HP_ROLE_EXCLUDED_CV:"✕"}.get(p.role, "")
                     color = HP_ROLE_COLORS.get(p.role, "#eeeeee")
                     tk.Label(self.inner, text=label, width=6, relief=tk.RIDGE,
                              bg=color, font=("Times New Roman",9)
