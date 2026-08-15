@@ -148,19 +148,6 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         self._resize_btn = tk.Button(setup_top, text="🔧 Змінити розміри", font=rf,
                                      command=self._reset_table_size)
 
-        unit_row = tk.Frame(self._step2_frame); unit_row.pack(fill=tk.X, pady=(6,0))
-        tk.Label(unit_row, text="Що вважати обліковою одиницею ряду:", font=rf
-                 ).pack(side=tk.LEFT)
-        self.row_unit_var = tk.StringVar(value="plants")
-        self._unit_radios = []
-        for val, txt in [("plants","Окремі рослини (кожна — своя облікова одиниця)"),
-                         ("meters","Ділянки ряду (частина ряду в метрах — облікова "
-                                   "одиниця не одна рослина, а вся ділянка)")]:
-            rb_ = tk.Radiobutton(unit_row, text=txt, variable=self.row_unit_var,
-                                 value=val, font=("Times New Roman",9))
-            rb_.pack(side=tk.LEFT, padx=(6,0))
-            self._unit_radios.append(rb_)
-
         self._rowlen_holder = tk.Frame(self._step2_frame)
         self._rowlen_holder.pack(fill=tk.X, pady=(8,0))
         self._set_step_enabled(self._step2_frame, False)
@@ -184,6 +171,16 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         self._paste_btn = tk.Button(fill_row, text="Вставити з буфера", font=rf,
                                     command=self._paste)
         self._paste_btn.pack(side=tk.LEFT, padx=4)
+
+        self._pending_action = None
+        self._exec_row = tk.Frame(self._step3_frame)
+        self._exec_status_lbl = tk.Label(self._exec_row, text="", font=("Times New Roman",9),
+                                         fg="#8c5a1a", justify="left", wraplength=700)
+        self._exec_status_lbl.pack(side=tk.LEFT, padx=(0,10))
+        self._exec_btn = tk.Button(self._exec_row, text="▶ Виконати формування",
+                                   bg="#1a6b1a", fg="white", font=rf,
+                                   command=self._execute_pending_action)
+        self._exec_btn.pack(side=tk.LEFT)
         self._set_step_enabled(self._step3_frame, False)
 
         # ── КРОК 4: Зберегти (заблоковано до Кроку 3) ──────────
@@ -248,6 +245,46 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         self._step4_frame.configure(text=base_txt)
         self._set_step_enabled(self._step4_frame, True)
 
+    def _set_pending_action(self, action, status_text):
+        """Зберігає налаштовану дію (не виконуючи одразу) і показує кнопку
+        «▶ Виконати» — так вікно параметрів можна закрити й спокійно піти
+        позначати випади/запилювачі в таблиці, а не робити це наосліп під
+        модальним вікном."""
+        self._pending_action = action
+        self._exec_status_lbl.configure(
+            text=f"Готово до виконання: {status_text}\n"
+                 f"Позначте «-»/«+» в таблиці нижче (за потреби), тоді натисніть «▶ Виконати».")
+        self._exec_row.pack(fill=tk.X, pady=(8,0))
+
+    def _execute_pending_action(self):
+        if self._pending_action is None: return
+        action = self._pending_action
+        kind = action["type"]
+        if kind == "auto" and action.get("use_cv"):
+            n_values = 0
+            for row in self.entries:
+                for e in row:
+                    txt = e.get().strip()
+                    if txt and not self._is_guard_text(txt):
+                        try: float(txt.replace(",",".")); n_values += 1
+                        except ValueError: pass
+            if n_values == 0:
+                messagebox.showwarning("Немає вихідних вимірів",
+                    "Позначено «врахувати вихідні виміри», але в таблиці немає "
+                    "жодного числового виміру. Впишіть виміри в клітинки й "
+                    "натисніть «▶ Виконати» знову, або скасуйте.")
+                return  # налаштування лишаються збереженими, кнопка не ховається
+
+        self._pending_action = None
+        self._exec_row.pack_forget()
+        if kind == "auto":
+            self._run_homogeneous_selection(action["eg"], action["rg"], self.num_reps,
+                                            action["cv_thr"], action["design"])
+        elif kind == "split":
+            self._randomize_split_plot(action["main_idx"])
+        elif kind == "fixed":
+            self._randomize_with_fixed_factor()
+
     def _open_fill_dialog(self):
         """Крок 3, головна дія — один-єдиний вибір способу заповнення
         замість кількох окремих кнопок, які раніше висіли одночасно."""
@@ -256,7 +293,14 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         rf = ("Times New Roman",11)
         frm = tk.Frame(dlg, padx=18, pady=16); frm.pack()
         tk.Label(frm, text="Як заповнити таблицю комбінаціями факторів?",
-                 font=("Times New Roman",12,"bold")).pack(anchor="w", pady=(0,12))
+                 font=("Times New Roman",12,"bold")).pack(anchor="w", pady=(0,4))
+        if self.fixed_factor_idx is not None:
+            fname = self.factor_defs[self.fixed_factor_idx]["name"]
+            tk.Label(frm, text=f"На кроці 1 фактор «{fname}» позначено зафіксованим "
+                              f"у наявному саду — тому рекомендований варіант нижче "
+                              f"позначено окремо.",
+                     font=("Times New Roman",9), fg="#8c1a4a", justify="left", wraplength=440
+                     ).pack(anchor="w", pady=(0,8))
 
         def _pick_manual():
             dlg.destroy()
@@ -274,7 +318,13 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         def _pick_fixed():
             dlg.destroy(); self._run_fixed_factor_randomize()
 
-        opts = [
+        opts = []
+        if self.fixed_factor_idx is not None:
+            fname = self.factor_defs[self.fixed_factor_idx]["name"]
+            opts.append(("🔒 Існуючий сад", f"Рекомендовано: «{fname}» вже фізично "
+             f"закріплено по рядах (крок 2) і не рандомізується — рандомізується "
+             f"лише решта факторів.", _pick_fixed, "#8c1a4a"))
+        opts += [
             ("✍ Вручну", "Самостійно вписуєте код кожної комбінації й "
              "протягуєте комірки мишею.", _pick_manual, "#555"),
             ("🎲 Автоматично", "CRD/RCBD/Латинський квадрат — розміри захисних зон "
@@ -283,12 +333,10 @@ class SchemeConstructorWindow(HPResultsViewMixin):
              "однорідності (CV%).", _pick_auto, "#8c5a1a"),
         ]
         if len(self.factor_defs) >= 2:
-            opts.append(("⊞ Split-plot", "Один фактор — на великих ділянках у межах "
-             "кожного ряду, решта — всередині них.", _pick_split, "#6b4a8c"))
-        if self.fixed_factor_idx is not None:
-            opts.append(("🔒 Існуючий сад", "Зафіксований фактор не рандомізується — "
-             "рандомізується лише решта, узгоджено з рівнем, який ви вказали "
-             "для кожного ряду.", _pick_fixed, "#8c1a4a"))
+            opts.append(("⊞ Split-plot", "Головний фактор — на великих ділянках, "
+             "але його рівень ВСЕ ОДНО розподіляється випадково (на відміну від "
+             "«Існуючий сад», де рівень фіксований наперед).",
+             _pick_split, "#6b4a8c"))
 
         for label, desc, cmd, color in opts:
             row = tk.Frame(frm); row.pack(fill=tk.X, pady=5)
@@ -480,14 +528,22 @@ class SchemeConstructorWindow(HPResultsViewMixin):
             self._rowlen_entries.append(e)
 
         # Автоперехід у наступне поле по Enter чи стрілці вправо/вліво —
-        # прискорює введення довжин для великої кількості рядів
+        # прискорює введення довжин для великої кількості рядів. Enter на
+        # ОСТАННЬОМУ полі одразу "натискає" Побудувати таблицю.
         def _goto(idx):
             if 0 <= idx < len(self._rowlen_entries):
                 w = self._rowlen_entries[idx]
                 w.focus_set(); w.select_range(0, tk.END)
             return "break"
+        def _on_return(idx):
+            nxt = idx + 1
+            if nxt < len(self._rowlen_entries):
+                _goto(nxt)
+            else:
+                self._build_data_table()
+            return "break"
         for i, e in enumerate(self._rowlen_entries):
-            e.bind("<Return>", lambda ev, idx=i: _goto(idx+1))
+            e.bind("<Return>", lambda ev, idx=i: _on_return(idx))
             e.bind("<Right>",  lambda ev, idx=i: _goto(idx+1))
             e.bind("<Left>",   lambda ev, idx=i: _goto(idx-1))
         if self._rowlen_entries:
@@ -516,7 +572,7 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         max_len = max(lengths)
         has_fixed = self.fixed_factor_idx is not None
         pos_col0 = 2 if has_fixed else 1
-        unit_hdr = "Ряд \\ Ділянка" if self.row_unit_var.get() == "meters" else "Ряд \\ Рослина"
+        unit_hdr = "Ряд \\ Рослина"
 
         tk.Label(self.inner, text=unit_hdr, width=11, relief=tk.RIDGE,
                  bg="#444444", fg="white", font=("Times New Roman",10,"bold")
@@ -658,9 +714,10 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         захисних зон — просто «однорідність» додатково враховує вихідні
         виміри для відбору, а звичайна рандомізація — ні.
 
-        Порядок, як і має бути: спершу розміри захисних зон і спосіб
-        рандомізації (тут), ПОТІМ користувач позначає випади/запилювачі
-        в таблиці (крок 3 нижче), і лише тоді тисне «Сформувати»."""
+        Це вікно лише ЗБИРАЄ налаштування й закривається — саме виконання
+        відбувається окремою кнопкою «▶ Виконати формування» під таблицею,
+        після того як ви позначите випади/запилювачі (і, за потреби,
+        виміри) у самій таблиці."""
         if not self.factor_defs:
             messagebox.showwarning("", "Спочатку задайте фактори."); return
         if not self._table_built:
@@ -670,31 +727,45 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         for d in self.factor_defs: total_combos *= len(d["levels"])
 
         dlg = tk.Toplevel(self.win); dlg.title("Автоматичне формування схеми")
-        dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
+        dlg.geometry("580x480"); dlg.minsize(520,380)
+        dlg.resizable(True, True); set_icon(dlg); dlg.grab_set()
         rf = ("Times New Roman",11)
-        frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
 
-        tk.Label(frm,
-                 text=f"Комбінацій факторів: {total_combos} × {self.plot_size} "
-                      f"рослин/повторність = {total_combos*self.plot_size} рослин "
-                      f"на одне повне повторення.",
+        tk.Label(dlg,
+                 text=f"Комбінацій факторів: {total_combos}  ×  {self.plot_size} "
+                      f"рослин/повторність  ×  {self.num_reps} повторень (задано "
+                      f"на кроці 1)  =  {total_combos*self.plot_size*self.num_reps} "
+                      f"рослин на схему.",
                  font=("Times New Roman",10,"bold"), fg="#1a4b8c", justify="left",
-                 wraplength=480).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,10))
+                 wraplength=540).pack(fill=tk.X, padx=16, pady=(12,6))
+
+        bf = tk.Frame(dlg); bf.pack(side=tk.BOTTOM, pady=10)
+
+        mid = tk.Frame(dlg); mid.pack(fill=tk.BOTH, expand=True, padx=16)
+        canvas = tk.Canvas(mid, highlightthickness=0)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.configure(yscrollcommand=vsb.set)
+        frm = tk.Frame(canvas)
+        canvas_win = canvas.create_window((0,0), window=frm, anchor="nw")
+        frm.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_win, width=e.width))
+        dlg.bind("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
         rows_cfg = [
             ("Захисна зона на початку й кінці ряду:", "eg", "1"),
             ("Захисна зона між повторностями:", "rg", "1"),
-            ("Повторень (n_rep):", "nr", str(self.num_reps)),
         ]
         vv = {}
         for i, (lbl, key, dflt) in enumerate(rows_cfg):
-            tk.Label(frm, text=lbl, font=rf).grid(row=i+1, column=0, sticky="w", pady=3)
+            tk.Label(frm, text=lbl, font=rf).grid(row=i, column=0, sticky="w", pady=3)
             v = tk.StringVar(value=dflt)
             tk.Entry(frm, textvariable=v, width=8, font=rf).grid(
-                row=i+1, column=1, sticky="w", padx=8, pady=3)
+                row=i, column=1, sticky="w", padx=8, pady=3)
             vv[key] = v
 
-        r0 = len(rows_cfg)+1
+        r0 = len(rows_cfg)
         tk.Label(frm, text="Спосіб рандомізації:", font=rf).grid(row=r0, column=0, sticky="w", pady=3)
         design_map = {"RCBD (рекомендується)": "rcbd", "CRD": "crd",
                      "Латинський квадрат": "latin"}
@@ -723,64 +794,53 @@ class SchemeConstructorWindow(HPResultsViewMixin):
             tk.Label(cv_extra, text="Поріг CV, %:", font=rf).grid(row=2, column=0, sticky="w", pady=3)
             tk.Entry(cv_extra, textvariable=cv_thr_v, width=8, font=rf).grid(
                 row=2, column=1, sticky="w", padx=8, pady=3)
+            tk.Label(cv_extra, text="Вихідні виміри вписуються в таблицю ПІСЛЯ закриття\n"
+                                  "цього вікна, разом із позначенням випадів/запилювачів.",
+                     font=("Times New Roman",9), fg="#666", justify="left"
+                     ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4,0))
 
         tk.Checkbutton(frm, text="Врахувати вихідні виміри показника (відбір за CV%)",
                       variable=use_cv_v, font=rf, command=_build_cv_extra
                       ).grid(row=r0+2, column=0, columnspan=2, sticky="w")
-        tk.Label(frm, text="Якщо не позначено — комбінації факторів розкидаються повністю\n"
-                          "випадково (без порівняння рослин за вихідними вимірами). "
-                          "Якщо позначено — потрібно спочатку вписати виміри в таблицю.",
-                 font=("Times New Roman",9), fg="#666", justify="left"
-                 ).grid(row=r0+3, column=0, columnspan=2, sticky="w", pady=(2,4))
-        cv_extra.grid(row=r0+4, column=0, columnspan=2, sticky="w")
+        cv_extra.grid(row=r0+3, column=0, columnspan=2, sticky="w")
 
         tk.Label(frm,
-                 text="Наступний крок: позначте «-» (випад) і «+» (запилювач) у "
-                      "таблиці нижче для клітинок, що не беруть участі в досліді, "
-                      "і лише тоді натискайте «Сформувати».",
+                 text="Після «Далі» це вікно закриється — позначте «-»/«+» (і виміри, "
+                      "якщо потрібні) у таблиці, тоді натисніть «▶ Виконати формування» "
+                      "під таблицею.",
                  font=("Times New Roman",9), fg="#8c5a1a", justify="left", wraplength=480
-                 ).grid(row=r0+5, column=0, columnspan=2, sticky="w", pady=(6,0))
+                 ).grid(row=r0+4, column=0, columnspan=2, sticky="w", pady=(10,0))
 
         def _go():
             try:
                 eg = int(vv["eg"].get()); rg = int(vv["rg"].get())
-                nr = int(vv["nr"].get())
             except ValueError:
                 messagebox.showwarning("", "Перевірте числові параметри.", parent=dlg); return
             design = design_map[design_disp.get()]
 
-            if use_cv_v.get():
-                trait_name = trait_name_v.get().strip()
-                if not trait_name:
-                    messagebox.showwarning("", "Вкажіть назву показника.", parent=dlg); return
-                try: cv_thr = float(cv_thr_v.get())
-                except ValueError:
-                    messagebox.showwarning("", "Перевірте поріг CV.", parent=dlg); return
-                n_values = 0
-                for row in self.entries:
-                    for e in row:
-                        txt = e.get().strip()
-                        if txt and not self._is_guard_text(txt):
-                            try: float(txt.replace(",",".")); n_values += 1
-                            except ValueError: pass
-                if n_values == 0:
-                    messagebox.showwarning("Немає вихідних вимірів",
-                        "Позначено «врахувати вихідні виміри», але в таблиці немає "
-                        "жодного числового виміру. Впишіть виміри в клітинки, або "
-                        "зніміть позначку, щоб рандомізувати без них.",
-                        parent=dlg); return
-                self._trait_name = trait_name
-                self._trait_unit = trait_unit_v.get().strip()
-            else:
-                cv_thr = 10**9  # без обмеження за однорідністю
-                self._trait_name = ""
-                self._trait_unit = ""
+            use_cv = use_cv_v.get()
+            trait_name = trait_name_v.get().strip()
+            trait_unit = trait_unit_v.get().strip()
+            try: cv_thr = float(cv_thr_v.get()) if use_cv else 10**9
+            except ValueError:
+                messagebox.showwarning("", "Перевірте поріг CV.", parent=dlg); return
+            if use_cv and not trait_name:
+                messagebox.showwarning("", "Вкажіть назву показника.", parent=dlg); return
+
+            self._trait_name = trait_name if use_cv else ""
+            self._trait_unit = trait_unit if use_cv else ""
+
+            status = (f"«Автоматично» — {design_disp.get()}, захист {eg}/{rg}"
+                      + (f", за CV% показника «{trait_name}»" if use_cv
+                         else ", без обліку вихідних вимірів"))
 
             dlg.destroy()
-            self._run_homogeneous_selection(eg, rg, nr, cv_thr, design)
+            self._set_pending_action(
+                {"type":"auto", "eg":eg, "rg":rg, "design":design,
+                 "use_cv":use_cv, "cv_thr":cv_thr},
+                status)
 
-        bf = tk.Frame(frm); bf.grid(row=r0+6, column=0, columnspan=2, pady=(14,0))
-        tk.Button(bf, text="Сформувати", bg="#1a6b8c", fg="white", font=rf,
+        tk.Button(bf, text="Далі →", bg="#1a6b8c", fg="white", font=rf,
                   command=_go).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", font=rf, command=dlg.destroy).pack(side=tk.LEFT)
         center_win(dlg)
@@ -934,11 +994,13 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         set_icon(dlg); dlg.grab_set()
         rf = ("Times New Roman",11)
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        tk.Label(frm, text="Один фактор («головний», на великих суцільних ділянках "
-                          "у межах кожного ряду) розподіляється першим, решта "
-                          "факторів рандомізуються окремо всередині кожної такої "
-                          "ділянки.",
-                 font=("Times New Roman",10), fg="#555", justify="left", wraplength=420
+        tk.Label(frm, text="Головний фактор — на великих суцільних ділянках у межах "
+                          "кожного ряду; який САМЕ ряд/ділянка отримає який рівень "
+                          "головного фактора — визначається ВИПАДКОВО (це і "
+                          "відрізняє split-plot від «Існуючий сад»: там рівень "
+                          "фіксований наперед і не рандomізується взагалі). Решта "
+                          "факторів рандомізуються окремо всередині кожної ділянки.",
+                 font=("Times New Roman",10), fg="#555", justify="left", wraplength=440
                  ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,10))
         tk.Label(frm, text="Головний фактор (велика ділянка):", font=rf
                  ).grid(row=1, column=0, sticky="w")
@@ -946,13 +1008,20 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         letters = [FACTOR_LETTERS[i] for i in range(len(self.factor_defs))]
         ttk.Combobox(frm, textvariable=main_factor_v, values=letters,
                      state="readonly", width=6).grid(row=1, column=1, sticky="w", padx=8)
+        tk.Label(frm, text="Після «Далі» це вікно закриється — за потреби позначте "
+                          "«-»/«+» у таблиці, тоді натисніть «▶ Виконати формування».",
+                 font=("Times New Roman",9), fg="#8c5a1a", justify="left", wraplength=420
+                 ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10,0))
 
         def _go():
             idx = FACTOR_LETTERS.index(main_factor_v.get())
+            letter = FACTOR_LETTERS[idx]
+            fname = self.factor_defs[idx]["name"]
             dlg.destroy()
-            self._randomize_split_plot(idx)
-        bf = tk.Frame(frm); bf.grid(row=2, column=0, columnspan=2, pady=(14,0))
-        tk.Button(bf, text="Рандомізувати", bg="#8c5a1a", fg="white", font=rf,
+            self._set_pending_action({"type":"split", "main_idx": idx},
+                f"Split-plot — головний фактор {letter}={fname}")
+        bf = tk.Frame(frm); bf.grid(row=3, column=0, columnspan=2, pady=(14,0))
+        tk.Button(bf, text="Далі →", bg="#8c5a1a", fg="white", font=rf,
                   command=_go).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", font=rf, command=dlg.destroy).pack(side=tk.LEFT)
         center_win(dlg)
@@ -966,14 +1035,9 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         n_sub = 1
         for i, d in enumerate(self.factor_defs):
             if i != self.fixed_factor_idx: n_sub *= len(d["levels"])
-        if not messagebox.askyesno("Рандомізація з урахуванням фіксованого фактора",
-                f"Фактор «{fname}» уже зафіксовано по рядах (стовпець «🔒 {fname}») "
-                f"і НЕ буде рандомізовано.\n\n"
-                f"Решта факторів ({n_sub} комбінацій) будуть рандомізовані ОКРЕМО "
-                f"в межах кожного ряду, узгоджено з рівнем «{fname}», який ви "
-                f"вказали для цього ряду.\n\nПродовжити?"):
-            return
-        self._randomize_with_fixed_factor()
+        self._set_pending_action({"type":"fixed"},
+            f"Існуючий сад — «{fname}» не рандомізується (задано по рядах на "
+            f"кроці 2), решта факторів ({n_sub} комбінацій) — рандомізуються.")
 
     def _is_guard_text(self, txt):
         """Клітинки, які рандомізація НЕ повинна чіпати: захисні (К/П),
