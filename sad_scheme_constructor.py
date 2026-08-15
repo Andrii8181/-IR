@@ -100,7 +100,9 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         self.entries = []
         self.row_labels = []
         self.pos_labels = []
-        self.rep_vars = []         # StringVar на кожен ряд — номер повторності
+        # (номер повторності більше не окремий стовпець - визначається
+        # автоматично під час рандомізації/однорідності або виведенням
+        # з послідовних повних наборів комбінацій при збереженні)
         self._table_built = False
         self._build()
 
@@ -145,6 +147,20 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         self._rowlen_btn.pack(side=tk.LEFT, padx=10)
         self._resize_btn = tk.Button(setup_top, text="🔧 Змінити розміри", font=rf,
                                      command=self._reset_table_size)
+
+        unit_row = tk.Frame(self._step2_frame); unit_row.pack(fill=tk.X, pady=(6,0))
+        tk.Label(unit_row, text="Що вважати обліковою одиницею ряду:", font=rf
+                 ).pack(side=tk.LEFT)
+        self.row_unit_var = tk.StringVar(value="plants")
+        self._unit_radios = []
+        for val, txt in [("plants","Окремі рослини (кожна — своя облікова одиниця)"),
+                         ("meters","Ділянки ряду (частина ряду в метрах — облікова "
+                                   "одиниця не одна рослина, а вся ділянка)")]:
+            rb_ = tk.Radiobutton(unit_row, text=txt, variable=self.row_unit_var,
+                                 value=val, font=("Times New Roman",9))
+            rb_.pack(side=tk.LEFT, padx=(6,0))
+            self._unit_radios.append(rb_)
+
         self._rowlen_holder = tk.Frame(self._step2_frame)
         self._rowlen_holder.pack(fill=tk.X, pady=(8,0))
         self._set_step_enabled(self._step2_frame, False)
@@ -209,7 +225,7 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         state = tk.NORMAL if enabled else tk.DISABLED
         def _walk(w):
             for c in w.winfo_children():
-                if isinstance(c, (tk.Button, tk.Entry, tk.Spinbox, ttk.Combobox)):
+                if isinstance(c, (tk.Button, tk.Entry, tk.Spinbox, ttk.Combobox, tk.Radiobutton)):
                     try: c.configure(state=state)
                     except tk.TclError: pass
                 _walk(c)
@@ -249,26 +265,35 @@ class SchemeConstructorWindow(HPResultsViewMixin):
                 "таблиці нижче. Протягніть за кут комірки мишею, щоб швидко "
                 "скопіювати значення на сусідні клітинки — так само, як в Excel.")
 
-        def _pick_random():
-            dlg.destroy(); self._open_randomize_dialog()
+        def _pick_auto():
+            dlg.destroy(); self._open_auto_dialog()
 
-        def _pick_homog():
-            dlg.destroy(); self._open_homogeneous_dialog()
+        def _pick_split():
+            dlg.destroy(); self._open_split_plot_dialog()
+
+        def _pick_fixed():
+            dlg.destroy(); self._run_fixed_factor_randomize()
 
         opts = [
             ("✍ Вручну", "Самостійно вписуєте код кожної комбінації й "
              "протягуєте комірки мишею.", _pick_manual, "#555"),
-            ("🎲 Рандомізувати", "Автоматично розкидає комбінації за обраним "
-             "дизайном (CRD/RCBD/Split-plot/Латинський квадрат). Результат "
-             "можна підправити вручну.", _pick_random, "#8c5a1a"),
-            ("📊 За однорідністю", "Враховує позначені «-»/«+» та вихідні виміри "
-             "в таблиці — формує захисні зони й (за наявності вимірів) відбирає "
-             "облікові рослини за CV%.", _pick_homog, "#1a6b8c"),
+            ("🎲 Автоматично", "CRD/RCBD/Латинський квадрат — розміри захисних зон "
+             "і спосіб рандомізації задаєте одразу; повторності формуються "
+             "РАЗОМ із варіантами. За бажанням враховує вихідні виміри для "
+             "однорідності (CV%).", _pick_auto, "#8c5a1a"),
         ]
+        if len(self.factor_defs) >= 2:
+            opts.append(("⊞ Split-plot", "Один фактор — на великих ділянках у межах "
+             "кожного ряду, решта — всередині них.", _pick_split, "#6b4a8c"))
+        if self.fixed_factor_idx is not None:
+            opts.append(("🔒 Існуючий сад", "Зафіксований фактор не рандомізується — "
+             "рандомізується лише решта, узгоджено з рівнем, який ви вказали "
+             "для кожного ряду.", _pick_fixed, "#8c1a4a"))
+
         for label, desc, cmd, color in opts:
             row = tk.Frame(frm); row.pack(fill=tk.X, pady=5)
             tk.Button(row, text=label, bg=color, fg="white", font=("Times New Roman",11,"bold"),
-                      width=18, command=cmd).pack(side=tk.LEFT)
+                      width=14, command=cmd).pack(side=tk.LEFT)
             tk.Label(row, text=desc, font=("Times New Roman",9), fg="#666",
                      justify="left", wraplength=340, anchor="w").pack(side=tk.LEFT, padx=10)
         tk.Button(frm, text="Скасувати", font=rf, command=dlg.destroy).pack(pady=(10,0))
@@ -295,15 +320,15 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         n_var = tk.StringVar(value=str(max(1, len(self.factor_defs))))
         tk.Spinbox(top_f, from_=1, to=len(FACTOR_LETTERS), textvariable=n_var,
                    width=4, font=rf).grid(row=0, column=1, sticky="w", padx=6)
-        tk.Label(top_f, text="Рослин на 1 повторність:", font=rf).grid(
+        tk.Label(top_f, text="Кількість повторностей у варіанті:", font=rf).grid(
             row=1, column=0, sticky="w", pady=(6,0))
-        plot_size_var = tk.StringVar(value=str(self.plot_size))
-        tk.Spinbox(top_f, from_=1, to=50, textvariable=plot_size_var,
-                   width=4, font=rf).grid(row=1, column=1, sticky="w", padx=6, pady=(6,0))
-        tk.Label(top_f, text="Повторень на кожну комбінацію:", font=rf).grid(
-            row=2, column=0, sticky="w", pady=(6,0))
         num_reps_var = tk.StringVar(value=str(getattr(self, "num_reps", 3)))
         tk.Spinbox(top_f, from_=2, to=50, textvariable=num_reps_var,
+                   width=4, font=rf).grid(row=1, column=1, sticky="w", padx=6, pady=(6,0))
+        tk.Label(top_f, text="Кількість рослин у повторності:", font=rf).grid(
+            row=2, column=0, sticky="w", pady=(6,0))
+        plot_size_var = tk.StringVar(value=str(self.plot_size))
+        tk.Spinbox(top_f, from_=1, to=50, textvariable=plot_size_var,
                    width=4, font=rf).grid(row=2, column=1, sticky="w", padx=6, pady=(6,0))
 
         tk.Label(dlg,
@@ -440,6 +465,7 @@ class SchemeConstructorWindow(HPResultsViewMixin):
                 return
         for w in self._rowlen_holder.winfo_children(): w.destroy()
         self._rowlen_vars = []
+        self._rowlen_entries = []
         grid_f = tk.Frame(self._rowlen_holder); grid_f.pack(fill=tk.X)
         rf = ("Times New Roman",10)
         PER_ROW = 6
@@ -448,9 +474,25 @@ class SchemeConstructorWindow(HPResultsViewMixin):
             tk.Label(grid_f, text=f"Ряд {i+1}:", font=rf).grid(
                 row=r, column=c*2, sticky="w", padx=(0 if c==0 else 10, 2), pady=2)
             v = tk.StringVar(value="")
-            tk.Entry(grid_f, textvariable=v, width=5, font=rf).grid(
-                row=r, column=c*2+1, sticky="w", pady=2)
+            e = tk.Entry(grid_f, textvariable=v, width=5, font=rf)
+            e.grid(row=r, column=c*2+1, sticky="w", pady=2)
             self._rowlen_vars.append(v)
+            self._rowlen_entries.append(e)
+
+        # Автоперехід у наступне поле по Enter чи стрілці вправо/вліво —
+        # прискорює введення довжин для великої кількості рядів
+        def _goto(idx):
+            if 0 <= idx < len(self._rowlen_entries):
+                w = self._rowlen_entries[idx]
+                w.focus_set(); w.select_range(0, tk.END)
+            return "break"
+        for i, e in enumerate(self._rowlen_entries):
+            e.bind("<Return>", lambda ev, idx=i: _goto(idx+1))
+            e.bind("<Right>",  lambda ev, idx=i: _goto(idx+1))
+            e.bind("<Left>",   lambda ev, idx=i: _goto(idx-1))
+        if self._rowlen_entries:
+            self._rowlen_entries[0].focus_set()
+
         btn_f = tk.Frame(self._rowlen_holder); btn_f.pack(fill=tk.X, pady=(10,0))
         tk.Button(btn_f, text="✓ Побудувати таблицю", bg="#1a6b1a", fg="white",
                   font=("Times New Roman",11), command=self._build_data_table
@@ -473,19 +515,17 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         self.rows_n = len(lengths)
         max_len = max(lengths)
         has_fixed = self.fixed_factor_idx is not None
-        pos_col0 = 3 if has_fixed else 2
+        pos_col0 = 2 if has_fixed else 1
+        unit_hdr = "Ряд \\ Ділянка" if self.row_unit_var.get() == "meters" else "Ряд \\ Рослина"
 
-        tk.Label(self.inner, text="Ряд \\ Поз.", width=9, relief=tk.RIDGE,
+        tk.Label(self.inner, text=unit_hdr, width=11, relief=tk.RIDGE,
                  bg="#444444", fg="white", font=("Times New Roman",10,"bold")
                  ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
-        tk.Label(self.inner, text="Повт.", width=6, relief=tk.RIDGE,
-                 bg="#6b4a1a", fg="white", font=("Times New Roman",9,"bold")
-                 ).grid(row=0, column=1, padx=1, pady=1, sticky="nsew")
         if has_fixed:
             fname = self.factor_defs[self.fixed_factor_idx]["name"]
             tk.Label(self.inner, text=f"🔒 {fname}", width=14, relief=tk.RIDGE,
                      bg="#8c1a4a", fg="white", font=("Times New Roman",9,"bold")
-                     ).grid(row=0, column=2, padx=1, pady=1, sticky="nsew")
+                     ).grid(row=0, column=1, padx=1, pady=1, sticky="nsew")
         self.pos_labels = []
         for j in range(max_len):
             lbl = tk.Label(self.inner, text=str(j+1), width=6, relief=tk.RIDGE,
@@ -495,24 +535,18 @@ class SchemeConstructorWindow(HPResultsViewMixin):
 
         self.row_labels = []
         self.entries = []
-        self.rep_vars = []
         self.fixed_level_vars = []
         fixed_levels = self.factor_defs[self.fixed_factor_idx]["levels"] if has_fixed else []
         for i, L in enumerate(lengths):
-            rl = tk.Label(self.inner, text=f"Ряд {i+1}", width=9, relief=tk.RIDGE,
+            rl = tk.Label(self.inner, text=f"Ряд {i+1}", width=11, relief=tk.RIDGE,
                          bg="#444444", fg="white", font=("Times New Roman",9,"bold"))
             rl.grid(row=i+1, column=0, padx=1, pady=1, sticky="nsew")
             self.row_labels.append(rl)
-            rv = tk.StringVar(value=str(i+1))
-            tk.Entry(self.inner, textvariable=rv, width=6, font=("Times New Roman",9),
-                    justify="center", bg="#fff3c4").grid(
-                    row=i+1, column=1, padx=1, pady=1)
-            self.rep_vars.append(rv)
             if has_fixed:
                 fv = tk.StringVar(value=fixed_levels[i % len(fixed_levels)])
                 ttk.Combobox(self.inner, textvariable=fv, values=fixed_levels,
                             state="readonly", width=13, font=("Times New Roman",9)
-                            ).grid(row=i+1, column=2, padx=1, pady=1)
+                            ).grid(row=i+1, column=1, padx=1, pady=1)
                 self.fixed_level_vars.append(fv)
             row_e = []
             for j in range(L):
@@ -573,7 +607,7 @@ class SchemeConstructorWindow(HPResultsViewMixin):
             self._canvas.yview_moveto(min(1, (ey + eh + margin - view_h)) / total_h)
 
     def _extend_row_to(self, ri, target_len):
-        pos_col0 = 3 if self.fixed_factor_idx is not None else 2
+        pos_col0 = 2 if self.fixed_factor_idx is not None else 1
         while len(self.entries[ri]) < target_len:
             j = len(self.entries[ri])
             if j >= len(self.pos_labels):
@@ -616,99 +650,136 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         _bind_fill_handle(self.entries, self.win)
 
     # ── Крок 4: рандомізація (підказка, не диктат) ──────────
-    def _open_homogeneous_dialog(self):
-        """Формує схему за однорідністю — ПОРТ функціоналу з модуля
-        «Однорідні ділянки саду»: користувач вносить вихідний вимір
-        показника (напр. діаметр штамбу) у клітинки таблиці, а програма
-        відбирає облікові рослини за коефіцієнтом варіації (CV%),
-        пропускаючи випади/запилювачі й формуючи захисні зони. Комбінації
-        факторів розкидаються по ВЖЕ відібраних повторностях — це другий,
-        окремий крок, що виконується ПІСЛЯ відбору за однорідністю."""
+    def _open_auto_dialog(self):
+        """Об'єднаний діалог «Автоматично» — заміняє колишні окремі
+        «Рандомізувати» й «За однорідністю»: обидва насправді використо-
+        вують той самий механізм (HPPlotBuilder + hp_apply_design), що
+        одночасно формує ПОВТОРНОСТІ (не лише варіанти) з дотриманням
+        захисних зон — просто «однорідність» додатково враховує вихідні
+        виміри для відбору, а звичайна рандомізація — ні.
+
+        Порядок, як і має бути: спершу розміри захисних зон і спосіб
+        рандомізації (тут), ПОТІМ користувач позначає випади/запилювачі
+        в таблиці (крок 3 нижче), і лише тоді тисне «Сформувати»."""
         if not self.factor_defs:
             messagebox.showwarning("", "Спочатку задайте фактори."); return
         if not self._table_built:
             messagebox.showwarning("", "Спочатку побудуйте таблицю."); return
 
-        # Перевірка, що в таблиці справді Є вихідні виміри — інакше
-        # «однорідність» не має сенсу (без даних немає що порівнювати).
-        n_values = 0
-        for row in self.entries:
-            for e in row:
-                txt = e.get().strip()
-                if txt and self._is_guard_text(txt) is False:
-                    try: float(txt.replace(",",".")); n_values += 1
-                    except ValueError: pass
-        if n_values == 0:
-            messagebox.showwarning("Немає вихідних вимірів",
-                "У таблиці (Крок 3) не вписано жодного числового виміру "
-                "показника (наприклад, діаметра штамбу).\n\n"
-                "Відбір за однорідністю порівнює рослини САМЕ за такими "
-                "вимірами — без них немає що порівнювати. Впишіть виміри "
-                "в клітинки, або, якщо вимірів немає, скористайтесь "
-                "«🎲 Рандомізувати» замість цього."); return
-
         total_combos = 1
         for d in self.factor_defs: total_combos *= len(d["levels"])
 
-        dlg = tk.Toplevel(self.win); dlg.title("Сформувати схему за однорідністю")
+        dlg = tk.Toplevel(self.win); dlg.title("Автоматичне формування схеми")
         dlg.resizable(False, False); set_icon(dlg); dlg.grab_set()
         rf = ("Times New Roman",11)
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
 
         tk.Label(frm,
-                 text=f"Знайдено {n_values} вихідних вимірів у таблиці. Комбінацій "
-                      f"факторів: {total_combos} × {self.plot_size} рослин/повторність "
-                      f"= {total_combos*self.plot_size} рослин на одне повне повторення.",
-                 font=("Times New Roman",10), fg="#555", justify="left", wraplength=480
-                 ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,12))
-
-        tk.Label(frm, text="Показник:", font=rf).grid(row=1, column=0, sticky="w", pady=3)
-        trait_name_v = tk.StringVar(value=getattr(self, "_trait_name", ""))
-        tk.Entry(frm, textvariable=trait_name_v, width=22, font=rf).grid(
-            row=1, column=1, sticky="w", padx=8, pady=3)
-        tk.Label(frm, text="Одиниця:", font=rf).grid(row=2, column=0, sticky="w", pady=3)
-        trait_unit_v = tk.StringVar(value=getattr(self, "_trait_unit", ""))
-        tk.Entry(frm, textvariable=trait_unit_v, width=10, font=rf).grid(
-            row=2, column=1, sticky="w", padx=8, pady=3)
+                 text=f"Комбінацій факторів: {total_combos} × {self.plot_size} "
+                      f"рослин/повторність = {total_combos*self.plot_size} рослин "
+                      f"на одне повне повторення.",
+                 font=("Times New Roman",10,"bold"), fg="#1a4b8c", justify="left",
+                 wraplength=480).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,10))
 
         rows_cfg = [
-            ("Захисна край ряду:", "eg", "1"),
-            ("Захисна між повторностями:", "rg", "1"),
+            ("Захисна зона на початку й кінці ряду:", "eg", "1"),
+            ("Захисна зона між повторностями:", "rg", "1"),
             ("Повторень (n_rep):", "nr", str(self.num_reps)),
-            ("Поріг CV, %:", "cv", "15"),
         ]
         vv = {}
         for i, (lbl, key, dflt) in enumerate(rows_cfg):
-            tk.Label(frm, text=lbl, font=rf).grid(row=i+3, column=0, sticky="w", pady=3)
+            tk.Label(frm, text=lbl, font=rf).grid(row=i+1, column=0, sticky="w", pady=3)
             v = tk.StringVar(value=dflt)
             tk.Entry(frm, textvariable=v, width=8, font=rf).grid(
-                row=i+3, column=1, sticky="w", padx=8, pady=3)
+                row=i+1, column=1, sticky="w", padx=8, pady=3)
             vv[key] = v
 
-        r0 = len(rows_cfg)+3
-        tk.Label(frm, text="Дизайн:", font=rf).grid(row=r0, column=0, sticky="w", pady=3)
+        r0 = len(rows_cfg)+1
+        tk.Label(frm, text="Спосіб рандомізації:", font=rf).grid(row=r0, column=0, sticky="w", pady=3)
         design_map = {"RCBD (рекомендується)": "rcbd", "CRD": "crd",
                      "Латинський квадрат": "latin"}
         design_disp = tk.StringVar(value=list(design_map.keys())[0])
         ttk.Combobox(frm, textvariable=design_disp, values=list(design_map.keys()),
                      state="readonly", width=22).grid(row=r0, column=1, sticky="w", padx=8)
 
+        tk.Frame(frm, height=1, bg="#ccc").grid(row=r0+1, column=0, columnspan=2,
+                                                sticky="ew", pady=10)
+
+        use_cv_v = tk.BooleanVar(value=False)
+        cv_extra = tk.Frame(frm)
+        trait_name_v = tk.StringVar(value=getattr(self, "_trait_name", ""))
+        trait_unit_v = tk.StringVar(value=getattr(self, "_trait_unit", ""))
+        cv_thr_v = tk.StringVar(value="15")
+
+        def _build_cv_extra():
+            for w in cv_extra.winfo_children(): w.destroy()
+            if not use_cv_v.get(): return
+            tk.Label(cv_extra, text="Показник:", font=rf).grid(row=0, column=0, sticky="w", pady=3)
+            tk.Entry(cv_extra, textvariable=trait_name_v, width=20, font=rf).grid(
+                row=0, column=1, sticky="w", padx=8, pady=3)
+            tk.Label(cv_extra, text="Одиниця:", font=rf).grid(row=1, column=0, sticky="w", pady=3)
+            tk.Entry(cv_extra, textvariable=trait_unit_v, width=10, font=rf).grid(
+                row=1, column=1, sticky="w", padx=8, pady=3)
+            tk.Label(cv_extra, text="Поріг CV, %:", font=rf).grid(row=2, column=0, sticky="w", pady=3)
+            tk.Entry(cv_extra, textvariable=cv_thr_v, width=8, font=rf).grid(
+                row=2, column=1, sticky="w", padx=8, pady=3)
+
+        tk.Checkbutton(frm, text="Врахувати вихідні виміри показника (відбір за CV%)",
+                      variable=use_cv_v, font=rf, command=_build_cv_extra
+                      ).grid(row=r0+2, column=0, columnspan=2, sticky="w")
+        tk.Label(frm, text="Якщо не позначено — комбінації факторів розкидаються повністю\n"
+                          "випадково (без порівняння рослин за вихідними вимірами). "
+                          "Якщо позначено — потрібно спочатку вписати виміри в таблицю.",
+                 font=("Times New Roman",9), fg="#666", justify="left"
+                 ).grid(row=r0+3, column=0, columnspan=2, sticky="w", pady=(2,4))
+        cv_extra.grid(row=r0+4, column=0, columnspan=2, sticky="w")
+
+        tk.Label(frm,
+                 text="Наступний крок: позначте «-» (випад) і «+» (запилювач) у "
+                      "таблиці нижче для клітинок, що не беруть участі в досліді, "
+                      "і лише тоді натискайте «Сформувати».",
+                 font=("Times New Roman",9), fg="#8c5a1a", justify="left", wraplength=480
+                 ).grid(row=r0+5, column=0, columnspan=2, sticky="w", pady=(6,0))
+
         def _go():
-            trait_name = trait_name_v.get().strip()
-            if not trait_name:
-                messagebox.showwarning("", "Вкажіть назву показника.", parent=dlg); return
             try:
                 eg = int(vv["eg"].get()); rg = int(vv["rg"].get())
-                nr = int(vv["nr"].get()); cv = float(vv["cv"].get())
+                nr = int(vv["nr"].get())
             except ValueError:
                 messagebox.showwarning("", "Перевірте числові параметри.", parent=dlg); return
             design = design_map[design_disp.get()]
-            self._trait_name = trait_name
-            self._trait_unit = trait_unit_v.get().strip()
-            dlg.destroy()
-            self._run_homogeneous_selection(eg, rg, nr, cv, design)
 
-        bf = tk.Frame(frm); bf.grid(row=r0+1, column=0, columnspan=2, pady=(14,0))
+            if use_cv_v.get():
+                trait_name = trait_name_v.get().strip()
+                if not trait_name:
+                    messagebox.showwarning("", "Вкажіть назву показника.", parent=dlg); return
+                try: cv_thr = float(cv_thr_v.get())
+                except ValueError:
+                    messagebox.showwarning("", "Перевірте поріг CV.", parent=dlg); return
+                n_values = 0
+                for row in self.entries:
+                    for e in row:
+                        txt = e.get().strip()
+                        if txt and not self._is_guard_text(txt):
+                            try: float(txt.replace(",",".")); n_values += 1
+                            except ValueError: pass
+                if n_values == 0:
+                    messagebox.showwarning("Немає вихідних вимірів",
+                        "Позначено «врахувати вихідні виміри», але в таблиці немає "
+                        "жодного числового виміру. Впишіть виміри в клітинки, або "
+                        "зніміть позначку, щоб рандомізувати без них.",
+                        parent=dlg); return
+                self._trait_name = trait_name
+                self._trait_unit = trait_unit_v.get().strip()
+            else:
+                cv_thr = 10**9  # без обмеження за однорідністю
+                self._trait_name = ""
+                self._trait_unit = ""
+
+            dlg.destroy()
+            self._run_homogeneous_selection(eg, rg, nr, cv_thr, design)
+
+        bf = tk.Frame(frm); bf.grid(row=r0+6, column=0, columnspan=2, pady=(14,0))
         tk.Button(bf, text="Сформувати", bg="#1a6b8c", fg="white", font=rf,
                   command=_go).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", font=rf, command=dlg.destroy).pack(side=tk.LEFT)
@@ -727,6 +798,14 @@ class SchemeConstructorWindow(HPResultsViewMixin):
                     status, value = "ok", None
                 p = HPPlant(i+1, j+1, value, status)
                 plants.append(p)
+
+        # HPPlotBuilder завжди рахує CV% придатних рослин для звіту, навіть
+        # якщо сам поріг практично не обмежує (чиста рандомізація без
+        # вихідних вимірів) — тож "ok"-рослини без числового виміру
+        # потребують заповнювача 0.0, інакше обчислення впаде на None.
+        for p in plants:
+            if p.status == "ok" and p.value is None:
+                p.value = 0.0
 
         builder = HPPlotBuilder(plants, self.plot_size, edge_guard, rep_guard, cv_thr,
                                 max_iterations=20)
@@ -843,119 +922,58 @@ class SchemeConstructorWindow(HPResultsViewMixin):
                 f"{letter}{j+1}={lvl}" for j, lvl in enumerate(d["levels"])))
         return lines
 
-    def _open_randomize_dialog(self):
+    def _open_split_plot_dialog(self):
         if not self.factor_defs:
             messagebox.showwarning("", "Спочатку задайте фактори."); return
         if not self._table_built:
             messagebox.showwarning("", "Спочатку побудуйте таблицю."); return
+        if len(self.factor_defs) < 2:
+            messagebox.showwarning("", "Split-plot потребує щонайменше 2 фактори."); return
 
-        total_combos = 1
-        for d in self.factor_defs: total_combos *= len(d["levels"])
-
-        if self.fixed_factor_idx is not None:
-            fname = self.factor_defs[self.fixed_factor_idx]["name"]
-            n_sub = 1
-            for i, d in enumerate(self.factor_defs):
-                if i != self.fixed_factor_idx: n_sub *= len(d["levels"])
-            if not messagebox.askyesno("Рандомізація з урахуванням фіксованого фактора",
-                    f"Фактор «{fname}» уже зафіксовано по рядах (стовпець «🔒 {fname}») "
-                    f"і НЕ буде рандомізовано.\n\n"
-                    f"Решта факторів ({n_sub} комбінацій) будуть рандомізовані ОКРЕМО "
-                    f"в межах кожного ряду, узгоджено з рівнем «{fname}», який ви "
-                    f"вказали для цього ряду.\n\n"
-                    f"Продовжити?"):
-                return
-            self._randomize_with_fixed_factor()
-            return
-
-        dlg = tk.Toplevel(self.win); dlg.title("Рандомізація"); dlg.resizable(False, False)
+        dlg = tk.Toplevel(self.win); dlg.title("Split-plot"); dlg.resizable(False, False)
         set_icon(dlg); dlg.grab_set()
         rf = ("Times New Roman",11)
         frm = tk.Frame(dlg, padx=16, pady=14); frm.pack()
-        tk.Label(frm, text=f"Усього комбінацій факторів: {total_combos}",
-                 font=("Times New Roman",11,"bold")).grid(row=0, column=0, columnspan=2,
-                 sticky="w", pady=(0,10))
-
-        tk.Label(frm, text="Дизайн:", font=rf).grid(row=1, column=0, sticky="w")
-        design_map = {
-            "CRD — повністю випадково по всій сітці": "crd",
-            "RCBD — випадково в межах кожної повторності (рекомендується)": "rcbd",
-            "Split-plot — один фактор на великих ділянках, інші всередині": "split",
-            "Латинський квадрат — n×n, кожна комбінація раз у ряду й стовпці": "latin",
-        }
-        design_disp = tk.StringVar(value=list(design_map.keys())[1])
-        ttk.Combobox(frm, textvariable=design_disp, values=list(design_map.keys()),
-                     state="readonly", width=52).grid(row=1, column=1, sticky="w", padx=8)
-
-        note_lbl = tk.Label(frm, font=("Times New Roman",9), fg="#666", justify="left",
-                            wraplength=460)
-        note_lbl.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10,0))
-
-        extra_frame = tk.Frame(frm)
-        extra_frame.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8,0))
-
-        main_factor_v = tk.StringVar(value=FACTOR_LETTERS[0] if self.factor_defs else "A")
-        latin_row_v = tk.StringVar(value="1")
-        latin_col_v = tk.StringVar(value="1")
-
-        def _update_extra(*_):
-            for w in extra_frame.winfo_children(): w.destroy()
-            design = design_map[design_disp.get()]
-            if design in ("crd","rcbd"):
-                note_lbl.configure(text=
-                    "Клітинки, де вже вписано «К» чи «П» (захисні), не змінюються. "
-                    "RCBD: кожна повторність (стовпець «Повт.») отримує рівно один "
-                    "повний набір усіх комбінацій.")
-            elif design == "split":
-                note_lbl.configure(text=
-                    "Один фактор («головний», на великих суцільних ділянках) "
-                    "розподіляється по повторності, решта факторів рандомізуються "
-                    "ОКРЕМО всередині кожної такої ділянки.")
-                tk.Label(extra_frame, text="Головний фактор (велика ділянка):",
-                         font=rf).grid(row=0, column=0, sticky="w")
-                letters = [FACTOR_LETTERS[i] for i in range(len(self.factor_defs))]
-                ttk.Combobox(extra_frame, textvariable=main_factor_v, values=letters,
-                             state="readonly", width=6).grid(row=0, column=1, sticky="w", padx=8)
-            elif design == "latin":
-                n = total_combos
-                note_lbl.configure(text=
-                    f"Розміщує квадрат {n}×{n} (n = кількість комбінацій), де кожна "
-                    f"комбінація зустрічається рівно раз у кожному ряду й кожному "
-                    f"стовпці цього квадрата. Вкажіть, з якого ряду й позиції він "
-                    f"починається — потрібно {n} рядів поспіль, кожен щонайменше "
-                    f"{n} вільних позицій підряд від вказаної.")
-                tk.Label(extra_frame, text="Починаючи з ряду №:", font=rf).grid(
-                    row=0, column=0, sticky="w")
-                tk.Spinbox(extra_frame, from_=1, to=max(1,self.rows_n), textvariable=latin_row_v,
-                           width=5, font=rf).grid(row=0, column=1, sticky="w", padx=8)
-                tk.Label(extra_frame, text="Починаючи з позиції №:", font=rf).grid(
-                    row=1, column=0, sticky="w", pady=(4,0))
-                max_pos = max((len(r) for r in self.entries), default=1)
-                tk.Spinbox(extra_frame, from_=1, to=max_pos, textvariable=latin_col_v,
-                           width=5, font=rf).grid(row=1, column=1, sticky="w", padx=8, pady=(4,0))
-
-        design_disp.trace_add("write", _update_extra)
-        _update_extra()
+        tk.Label(frm, text="Один фактор («головний», на великих суцільних ділянках "
+                          "у межах кожного ряду) розподіляється першим, решта "
+                          "факторів рандомізуються окремо всередині кожної такої "
+                          "ділянки.",
+                 font=("Times New Roman",10), fg="#555", justify="left", wraplength=420
+                 ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,10))
+        tk.Label(frm, text="Головний фактор (велика ділянка):", font=rf
+                 ).grid(row=1, column=0, sticky="w")
+        main_factor_v = tk.StringVar(value=FACTOR_LETTERS[0])
+        letters = [FACTOR_LETTERS[i] for i in range(len(self.factor_defs))]
+        ttk.Combobox(frm, textvariable=main_factor_v, values=letters,
+                     state="readonly", width=6).grid(row=1, column=1, sticky="w", padx=8)
 
         def _go():
-            design = design_map[design_disp.get()]
-            if design in ("crd","rcbd"):
-                self._randomize(design)
-            elif design == "split":
-                idx = FACTOR_LETTERS.index(main_factor_v.get())
-                self._randomize_split_plot(idx)
-            elif design == "latin":
-                try:
-                    r0 = int(latin_row_v.get())-1; c0 = int(latin_col_v.get())-1
-                except ValueError:
-                    messagebox.showwarning("", "Некоректні координати.", parent=dlg); return
-                self._randomize_latin_square(r0, c0)
+            idx = FACTOR_LETTERS.index(main_factor_v.get())
             dlg.destroy()
-        bf = tk.Frame(frm); bf.grid(row=4, column=0, columnspan=2, pady=(14,0))
+            self._randomize_split_plot(idx)
+        bf = tk.Frame(frm); bf.grid(row=2, column=0, columnspan=2, pady=(14,0))
         tk.Button(bf, text="Рандомізувати", bg="#8c5a1a", fg="white", font=rf,
                   command=_go).pack(side=tk.LEFT, padx=4)
         tk.Button(bf, text="Скасувати", font=rf, command=dlg.destroy).pack(side=tk.LEFT)
         center_win(dlg)
+
+    def _run_fixed_factor_randomize(self):
+        if self.fixed_factor_idx is None:
+            messagebox.showwarning("", "Зафіксований фактор не задано (крок 1)."); return
+        if not self._table_built:
+            messagebox.showwarning("", "Спочатку побудуйте таблицю."); return
+        fname = self.factor_defs[self.fixed_factor_idx]["name"]
+        n_sub = 1
+        for i, d in enumerate(self.factor_defs):
+            if i != self.fixed_factor_idx: n_sub *= len(d["levels"])
+        if not messagebox.askyesno("Рандомізація з урахуванням фіксованого фактора",
+                f"Фактор «{fname}» уже зафіксовано по рядах (стовпець «🔒 {fname}») "
+                f"і НЕ буде рандомізовано.\n\n"
+                f"Решта факторів ({n_sub} комбінацій) будуть рандомізовані ОКРЕМО "
+                f"в межах кожного ряду, узгоджено з рівнем «{fname}», який ви "
+                f"вказали для цього ряду.\n\nПродовжити?"):
+            return
+        self._randomize_with_fixed_factor()
 
     def _is_guard_text(self, txt):
         """Клітинки, які рандомізація НЕ повинна чіпати: захисні (К/П),
@@ -964,45 +982,10 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         комбінацій, лише враховуються окремо в «За однорідністю»."""
         return txt.strip().upper() in ("К","K","П","P","-","+")
 
-    def _randomize(self, design):
-        import random
-        combos = list(itertools.product(*[range(1, len(d["levels"])+1) for d in self.factor_defs]))
-        n_combos = len(combos)
-
-        def _code(combo):
-            return "".join(f"{FACTOR_LETTERS[i]}{lvl}" for i, lvl in enumerate(combo))
-
-        if design == "crd":
-            eligible = [(i,j) for i, row in enumerate(self.entries) for j in range(len(row))
-                       if not self._is_guard_text(row[j].get())]
-            reps_needed = math.ceil(len(eligible) / n_combos) if eligible else 0
-            pool = (combos * reps_needed)[:len(eligible)]
-            random.shuffle(pool)
-            for (i,j), combo in zip(eligible, pool):
-                self.entries[i][j].delete(0, tk.END)
-                self.entries[i][j].insert(0, _code(combo))
-        else:  # rcbd
-            by_rep = {}
-            for i, row in enumerate(self.entries):
-                rep = self.rep_vars[i].get().strip() or str(i+1)
-                for j in range(len(row)):
-                    if self._is_guard_text(row[j].get()): continue
-                    by_rep.setdefault(rep, []).append((i,j))
-            for rep, cells in by_rep.items():
-                reps_needed = math.ceil(len(cells) / n_combos)
-                pool = (combos * reps_needed)[:len(cells)]
-                random.shuffle(pool)
-                for (i,j), combo in zip(cells, pool):
-                    self.entries[i][j].delete(0, tk.END)
-                    self.entries[i][j].insert(0, _code(combo))
-        messagebox.showinfo("Готово",
-            "Комбінації розкидано за обраним дизайном. Клітинки залишаються "
-            "повністю редагованими — перевірте й підправте за потреби.")
-
     def _randomize_split_plot(self, main_idx):
         """Головний фактор (main_idx) — на великих суцільних ділянках у межах
-        кожної повторності; решта факторів рандомізуються окремо всередині
-        кожної такої ділянки."""
+        КОЖНОГО РЯДУ (ряд = одна повторність для цілей split-plot); решта
+        факторів рандомізуються окремо всередині кожної такої ділянки."""
         import random
         n_main = len(self.factor_defs[main_idx]["levels"])
         sub_idxs = [i for i in range(len(self.factor_defs)) if i != main_idx]
@@ -1015,18 +998,11 @@ class SchemeConstructorWindow(HPResultsViewMixin):
             for idx, lvl in zip(sub_idxs, sub_combo): parts[idx] = lvl
             return "".join(f"{FACTOR_LETTERS[i]}{parts[i]}" for i in range(len(self.factor_defs)))
 
-        by_rep = {}
+        skipped_rows = []
         for i, row in enumerate(self.entries):
-            rep = self.rep_vars[i].get().strip() or str(i+1)
-            for j in range(len(row)):
-                if self._is_guard_text(row[j].get()): continue
-                by_rep.setdefault(rep, []).append((i,j))
-
-        skipped_reps = []
-        for rep, cells in by_rep.items():
-            needed = n_main * n_sub
+            cells = [(i,j) for j in range(len(row)) if not self._is_guard_text(row[j].get())]
             if len(cells) < n_sub:
-                skipped_reps.append(rep); continue
+                skipped_rows.append(f"Ряд {i+1}"); continue
             main_levels_order = list(range(1, n_main+1)); random.shuffle(main_levels_order)
             idx_cell = 0
             for seg_i in range(n_main):
@@ -1035,68 +1011,16 @@ class SchemeConstructorWindow(HPResultsViewMixin):
                 idx_cell += n_sub
                 main_lvl = main_levels_order[seg_i]
                 sub_pool = sub_combos.copy(); random.shuffle(sub_pool)
-                for (i,j), sub_combo in zip(seg_cells, sub_pool):
-                    self.entries[i][j].delete(0, tk.END)
-                    self.entries[i][j].insert(0, _code(main_lvl, sub_combo))
-        msg = ("Комбінації розкидано за схемою split-plot. Клітинки залишаються "
-               "повністю редагованими — перевірте й підправте за потреби.")
-        if skipped_reps:
-            msg += (f"\n\n⚠ У повторностях {', '.join(skipped_reps)} забракло вільних "
+                for (ri,rj), sub_combo in zip(seg_cells, sub_pool):
+                    self.entries[ri][rj].delete(0, tk.END)
+                    self.entries[ri][rj].insert(0, _code(main_lvl, sub_combo))
+        msg = ("Комбінації розкидано за схемою split-plot (кожен ряд — своя "
+               "повторність). Клітинки залишаються повністю редагованими — "
+               "перевірте й підправте за потреби.")
+        if skipped_rows:
+            msg += (f"\n\n⚠ У рядах {', '.join(skipped_rows)} забракло вільних "
                     f"клітинок для жодної повної підділянки — їх пропущено.")
         messagebox.showinfo("Готово", msg)
-
-    def _randomize_latin_square(self, r0, c0):
-        """Розміщує n×n латинський квадрат (n = кількість комбінацій),
-        починаючи з ряду r0 і позиції c0 (0-індексовані)."""
-        import random
-        combos = list(itertools.product(*[range(1, len(d["levels"])+1) for d in self.factor_defs]))
-        n = len(combos)
-
-        def _code(combo):
-            return "".join(f"{FACTOR_LETTERS[i]}{lvl}" for i, lvl in enumerate(combo))
-
-        if r0 < 0 or r0 + n > len(self.entries):
-            messagebox.showwarning("", f"Потрібно {n} рядів поспіль, починаючи з "
-                                       f"вказаного — у таблиці їх недостатньо."); return
-        for k in range(n):
-            if c0 + n > len(self.entries[r0+k]):
-                messagebox.showwarning("", f"Ряд {r0+k+1} має недостатньо позицій "
-                                           f"(потрібно {n} підряд від позиції {c0+1})."); return
-
-        occupied = []
-        for i in range(n):
-            for j in range(n):
-                txt = self.entries[r0+i][c0+j].get().strip()
-                if txt:
-                    occupied.append(f"Ряд {r0+i+1}, поз. {c0+j+1}: «{txt}»")
-        if occupied:
-            preview = "\n".join(occupied[:8])
-            more = f"\n… і ще {len(occupied)-8}" if len(occupied) > 8 else ""
-            if not messagebox.askyesno("Клітинки вже заповнені",
-                    f"У вибраному блоці {n}×{n} вже є заповнені клітинки — "
-                    f"латинський квадрат вимагає ПОВНОСТІЮ вільного блоку "
-                    f"(включно з захисними/випадами/запилювачами), інакше "
-                    f"структура «кожна комбінація раз у ряду й стовпці» "
-                    f"порушиться:\n\n{preview}{more}\n\n"
-                    "Перезаписати ці клітинки?"):
-                return
-
-        base = [[(i+j) % n for j in range(n)] for i in range(n)]
-        random.shuffle(base)
-        cols = list(range(n)); random.shuffle(cols)
-        base = [[row[c] for c in cols] for row in base]
-        symbols = list(range(n)); random.shuffle(symbols)
-        square = [[symbols[v] for v in row] for row in base]
-
-        for i in range(n):
-            for j in range(n):
-                e = self.entries[r0+i][c0+j]
-                e.delete(0, tk.END)
-                e.insert(0, _code(combos[square[i][j]]))
-        messagebox.showinfo("Готово",
-            f"Латинський квадрат {n}×{n} розміщено з ряду {r0+1}, позиції {c0+1}. "
-            "Кожна комбінація зустрічається рівно раз у кожному ряду й стовпці "
-            "квадрата. Клітинки залишаються повністю редагованими.")
 
     def _randomize_with_fixed_factor(self):
         """Фактор self.fixed_factor_idx НЕ рандомізується — його рівень для
@@ -1156,6 +1080,29 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         return result if len(result) == len(self.factor_defs) else None
 
     # ── Зберегти / відкрити схему ───────────────────────────
+    def _infer_replications(self):
+        """Визначає номер повторності для кожної облікової клітинки БЕЗ
+        окремого стовпця — рахує послідовні повні набори всіх комбінацій
+        факторів у порядку сканування таблиці (ряд за рядом, зліва
+        направо), не перетинаючи межу рядів. Кожен повний набір із
+        total_combos облікових клітинок — одна повторність."""
+        total_combos = 1
+        for d in self.factor_defs: total_combos *= len(d["levels"])
+        rep_map = {}
+        rep_counter = 0
+        for i, row in enumerate(self.entries):
+            count_in_block = 0
+            for j, e in enumerate(row):
+                role, status, value, factors = self._parse_cell(e.get().strip())
+                if role == HP_ROLE_RECORDED:
+                    if count_in_block == 0:
+                        rep_counter += 1
+                    rep_map[(i+1, j+1)] = rep_counter
+                    count_in_block += 1
+                    if count_in_block >= total_combos:
+                        count_in_block = 0
+        return rep_map
+
     def _parse_cell(self, txt):
         """Розбирає вміст клітинки. Повертає (role, status, value, factors).
         Підтримує: порожньо, К/П (захист), - (випад), + (запилювач),
@@ -1190,12 +1137,10 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         if not self._table_built:
             messagebox.showwarning("", "Спочатку побудуйте таблицю."); return
 
+        inferred_reps = self._infer_replications()
         plants = []
         bad_cells = []
         for i, row in enumerate(self.entries):
-            rep = self.rep_vars[i].get().strip() or str(i+1)
-            try: rep_num = int(rep)
-            except ValueError: rep_num = i+1
             for j, e in enumerate(row):
                 txt = e.get().strip()
                 role, status, value, factors = self._parse_cell(txt)
@@ -1207,7 +1152,8 @@ class SchemeConstructorWindow(HPResultsViewMixin):
                     p.role = role
                     p.factors = factors
                     if role == HP_ROLE_RECORDED:
-                        p.replication = self._cell_replication.get((i+1, j+1), rep_num)
+                        p.replication = self._cell_replication.get(
+                            (i+1, j+1), inferred_reps.get((i+1, j+1), 1))
                 plants.append(p)
 
         if bad_cells:
@@ -1281,17 +1227,18 @@ class SchemeConstructorWindow(HPResultsViewMixin):
         for w in self.inner.winfo_children(): w.destroy()
         self.row_lengths = []
         self.rows_n = 0
-        self.entries = []; self.row_labels = []; self.pos_labels = []; self.rep_vars = []
+        self.entries = []; self.row_labels = []; self.pos_labels = []
         self._rowlen_vars = [tk.StringVar(value=str(L)) for L in lengths]
         self._build_data_table()
 
+        self._cell_replication = {}
         for ri, r in enumerate(rows_sorted):
             pdlist = sorted(plants_by_row[r], key=lambda x: x["position"])
-            reps = {pd.get("replication") for pd in pdlist if pd.get("replication")}
-            if reps: self.rep_vars[ri].set(str(sorted(reps)[0]))
             for pd in pdlist:
                 j = pd["position"] - 1
                 if j >= len(self.entries[ri]): continue
+                if pd.get("replication"):
+                    self._cell_replication[(r, pd["position"])] = pd["replication"]
                 role = pd.get("role")
                 if role == HP_ROLE_GUARD_EDGE: txt = "К"
                 elif role == HP_ROLE_GUARD_REP: txt = "П"
