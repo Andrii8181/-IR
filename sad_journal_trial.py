@@ -375,12 +375,13 @@ class FieldJournalWindow:
             self.current_record = None
 
         n_rec = len(self.records)
+        extra_warn = ("   |   ⚠ Спочатку натисніть «➕ Новий облік»" if n_rec == 0 else "")
         self._info_lbl.configure(
             text=f"Завантажено: {os.path.basename(path)}   |   "
                  f"Показник схеми: {self.cfg.get('trait_name','—')}   |   "
                  f"Облікових рослин: {sum(1 for p in self.plants if p.role == HP_ROLE_RECORDED)}   |   "
-                 f"Обліків у журналі: {n_rec}",
-            fg="#1a6b1a")
+                 f"Обліків у журналі: {n_rec}{extra_warn}",
+            fg=("#c62828" if n_rec == 0 else "#1a6b1a"))
         self._build_legend()
         self._build_grid()
 
@@ -465,19 +466,33 @@ class FieldJournalWindow:
 
         vals = self.records.get(self.current_record, {}).get("values", {}) \
                if self.current_record else {}
+        no_record = self.current_record is None
+
+        if no_record:
+            tk.Label(self.inner,
+                     text="⚠ Спочатку створіть облік («➕ Новий облік») — доки його "
+                          "немає, клітинки недоступні для вводу, щоб уникнути втрати "
+                          "введених значень.",
+                     font=("Times New Roman",10,"bold"), fg="#c62828", bg="#fff3e0",
+                     anchor="w", padx=6, pady=4
+                     ).grid(row=0, column=0, columnspan=max(2,max_pos+1), sticky="ew")
+            header_row = 1
+        else:
+            header_row = 0
 
         tk.Label(self.inner, text="Ряд \\ Поз.", width=9, relief=tk.RIDGE,
                  bg="#444444", fg="white", font=("Times New Roman",10,"bold")
-                 ).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+                 ).grid(row=header_row, column=0, padx=1, pady=1, sticky="nsew")
         for j in range(1, max_pos+1):
             tk.Label(self.inner, text=str(j), width=6, relief=tk.RIDGE,
                      bg="#1a4b8c", fg="white", font=("Times New Roman",9,"bold")
-                     ).grid(row=0, column=j, padx=1, pady=1, sticky="nsew")
+                     ).grid(row=header_row, column=j, padx=1, pady=1, sticky="nsew")
 
         for ri, row_num in enumerate(rows):
+            grid_row = header_row + 1 + ri
             tk.Label(self.inner, text=f"Ряд {row_num}", width=9, relief=tk.RIDGE,
                      bg="#444444", fg="white", font=("Times New Roman",9,"bold")
-                     ).grid(row=ri+1, column=0, padx=1, pady=1, sticky="nsew")
+                     ).grid(row=grid_row, column=0, padx=1, pady=1, sticky="nsew")
             for pos in range(1, max_pos+1):
                 p = by_row.get(row_num, {}).get(pos)
                 if p is None:
@@ -485,11 +500,14 @@ class FieldJournalWindow:
                 if p.role == HP_ROLE_RECORDED:
                     key = f"{row_num}:{pos}"
                     e = tk.Entry(self.inner, width=6, font=("Times New Roman",9),
-                                bg="#e8f5e9", justify="center")
-                    e.grid(row=ri+1, column=pos, padx=1, pady=1)
-                    if key in vals: e.insert(0, str(vals[key]))
-                    e.bind("<FocusOut>", lambda ev, r=row_num, po=pos: self._on_cell_edit(r, po))
-                    self._entry_widgets[(row_num,pos)] = e
+                                bg=("#eeeeee" if no_record else "#e8f5e9"),
+                                justify="center",
+                                state=(tk.DISABLED if no_record else tk.NORMAL))
+                    e.grid(row=grid_row, column=pos, padx=1, pady=1)
+                    if not no_record:
+                        if key in vals: e.insert(0, str(vals[key]))
+                        e.bind("<FocusOut>", lambda ev, r=row_num, po=pos: self._on_cell_edit(r, po))
+                        self._entry_widgets[(row_num,pos)] = e
                 else:
                     label = {HP_ROLE_GUARD_EDGE:"К", HP_ROLE_GUARD_REP:"П",
                              HP_ROLE_DEAD:"-", HP_ROLE_POLLINIZER:"+",
@@ -497,8 +515,9 @@ class FieldJournalWindow:
                     color = HP_ROLE_COLORS.get(p.role, "#eeeeee")
                     tk.Label(self.inner, text=label, width=6, relief=tk.RIDGE,
                              bg=color, font=("Times New Roman",9)
-                             ).grid(row=ri+1, column=pos, padx=1, pady=1)
-        _bind_nav(self._grid_as_2d(rows, max_pos, by_row), self.win)
+                             ).grid(row=grid_row, column=pos, padx=1, pady=1)
+        if not no_record:
+            _bind_nav(self._grid_as_2d(rows, max_pos, by_row), self.win)
 
     def _grid_as_2d(self, rows, max_pos, by_row):
         """Формує 2D-масив лише з редагованих (облікових) клітинок —
@@ -722,6 +741,29 @@ class FieldJournalWindow:
             self.plants, self.factor_defs, self.variant_names, self.records, record_names)
         return rows
 
+    def _pivot_wide(self, record_name, rows, factor_cols):
+        """Перетворює довгий список (комбінація×повторність) на ШИРОКИЙ
+        формат — саме такий, як в таблиці вводу даних ANOVA: рядок на
+        унікальну комбінацію рівнів факторів (фактор А, фактор Б…),
+        стовпці Повт.1, Повт.2… Кожна облікова рослина вже закодована
+        в схемі своїм варіантом і повторністю, тож ця функція просто
+        розкладає вже усереднені (в межах повторності) значення по
+        правильних місцях таблиці."""
+        by_combo = {}
+        for r in rows:
+            combo_key = tuple(r[fc] for fc in factor_cols)
+            by_combo.setdefault(combo_key, {})[r["replication"]] = r[record_name]
+        combos_sorted = sorted(by_combo.keys())
+        all_reps = sorted({rep for v in by_combo.values() for rep in v.keys()})
+        headers = factor_cols + [f"Повт.{i+1}" for i in range(len(all_reps))]
+        tbl_rows = []
+        for combo in combos_sorted:
+            row = list(combo)
+            rep_vals = by_combo[combo]
+            row += ["" if rep_vals.get(rep) is None else rep_vals.get(rep) for rep in all_reps]
+            tbl_rows.append(row)
+        return headers, tbl_rows
+
     def _show_aggregate_result(self, record_names):
         rows = self._aggregate_for_analysis(record_names)
         if not rows:
@@ -733,76 +775,61 @@ class FieldJournalWindow:
         win = tk.Toplevel(self.win); win.title("Зведена таблиця для аналізу")
         win.geometry("980x600"); set_icon(win)
         tb = tk.Frame(win, padx=6, pady=5); tb.pack(fill=tk.X)
-        tk.Button(tb, text="📋 Копіювати (довгий формат)",
-                  font=("Times New Roman",11),
-                  command=lambda: self._copy_aggregate(win, record_names, rows, factor_cols)
-                  ).pack(side=tk.LEFT, padx=4)
-        if len(record_names) == 1:
-            tk.Button(tb, text="📋 Копіювати (формат ANOVA-таблиці)",
-                      font=("Times New Roman",11),
-                      command=lambda: self._copy_aggregate_wide(win, record_names[0], rows, factor_cols)
-                      ).pack(side=tk.LEFT, padx=4)
-        if len(record_names) >= 2 and not is_multi:
-            tk.Button(tb, text="➡ Відкрити в «Змішаний RM»", bg="#1a6b1a", fg="white",
-                      font=("Times New Roman",11),
-                      command=lambda: self._open_in_mixed_rm(record_names, rows)
-                      ).pack(side=tk.LEFT, padx=4)
-        if len(record_names) == 1 and len(factor_cols) <= 4:
-            tk.Button(tb, text="➡ Відкрити в головній ANOVA-таблиці", bg="#1a6b1a", fg="white",
-                      font=("Times New Roman",11),
-                      command=lambda: self._open_in_main_anova(record_names[0], rows, factor_cols)
-                      ).pack(side=tk.LEFT, padx=4)
 
-        note = ("Кожен рядок — ОДНА повторність (не одна облікова рослина): значення "
-                "субпроб усередині повторності усереднено. Це коректний формат для "
-                "дисперсійного аналізу — уникає псевдоповторності.")
-        if is_multi:
-            note += ("\nКожен фактор — окремим стовпцем.")
+        if len(record_names) == 1:
+            # ОДИН показник — одразу широкий формат: фактор А, фактор Б…,
+            # Повт.1, Повт.2… Кожна облікова рослина вже має в схемі свій
+            # варіант і повторність, тому дані одразу стають у потрібні
+            # клітинки без ручного перекладання.
+            headers, tbl_rows = self._pivot_wide(record_names[0], rows, factor_cols)
+            tk.Button(tb, text="📋 Копіювати таблицю", font=("Times New Roman",11),
+                      command=lambda: self._copy_table(win, headers, tbl_rows)
+                      ).pack(side=tk.LEFT, padx=4)
+            if len(factor_cols) <= 4:
+                tk.Button(tb, text="➡ Відкрити в головній ANOVA-таблиці", bg="#1a6b1a", fg="white",
+                          font=("Times New Roman",11),
+                          command=lambda: self._open_in_main_anova(record_names[0], rows, factor_cols)
+                          ).pack(side=tk.LEFT, padx=4)
+            note = ("Кожен рядок — унікальна комбінація " +
+                    ("рівнів факторів" if is_multi else "варіанту") +
+                    "; кожен стовпець «Повт.N» — середнє значення показника САМЕ в цій "
+                    "повторності (усереднено з облікових рослин у її межах — уникає "
+                    "псевдоповторності). Формат готовий для прямої вставки в ANOVA-таблицю.")
+        else:
+            # Кілька показників одночасно (напр. кілька років) — широкий
+            # формат тут природний для ІНШОЇ мети (Змішаний RM: варіант +
+            # повторність в рядку, показники — стовпцями), тож таблиця
+            # лишається довгою (рядок = комбінація × повторність).
+            headers = factor_cols + ["Повторність","К-сть субпроб"] + record_names
+            tbl_rows = [[r[fc] for fc in factor_cols] + [r["replication"], r["n_subsamples"]] +
+                        [("" if r[rn] is None else r[rn]) for rn in record_names] for r in rows]
+            tk.Button(tb, text="📋 Копіювати таблицю", font=("Times New Roman",11),
+                      command=lambda: self._copy_table(win, headers, tbl_rows)
+                      ).pack(side=tk.LEFT, padx=4)
+            if not is_multi:
+                tk.Button(tb, text="➡ Відкрити в «Змішаний RM»", bg="#1a6b1a", fg="white",
+                          font=("Times New Roman",11),
+                          command=lambda: self._open_in_mixed_rm(record_names, rows)
+                          ).pack(side=tk.LEFT, padx=4)
+            note = ("Кілька показників одночасно (напр. кілька років) показуються в "
+                    "довгому форматі — рядок на комбінацію × повторність, оскільки "
+                    "широкий формат по повторностях природний лише для ОДНОГО показника "
+                    "за раз.")
+
         tk.Label(win, text=note, font=("Times New Roman",10), fg="#555", justify="left",
                  wraplength=940, anchor="w").pack(fill=tk.X, padx=10, pady=(4,4))
-
-        headers = factor_cols + ["Повторність","К-сть субпроб"] + record_names
-        tbl_rows = [[r[fc] for fc in factor_cols] + [r["replication"], r["n_subsamples"]] +
-                    [("" if r[rn] is None else r[rn]) for rn in record_names] for r in rows]
         frm, _ = make_tv(win, headers, tbl_rows)
         frm.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
 
-    def _copy_aggregate(self, win, record_names, rows, factor_cols):
-        """Довгий формат: рядок на кожну (комбінація × повторність)."""
-        lines = ["\t".join(factor_cols + ["Повторність"] + record_names)]
-        for r in rows:
-            vals = [str(r[fc]) for fc in factor_cols]
-            vals.append(str(r["replication"]))
-            vals += ["" if r[rn] is None else str(r[rn]) for rn in record_names]
-            lines.append("\t".join(vals))
+    def _copy_table(self, win, headers, tbl_rows):
+        lines = ["\t".join(headers)]
+        for row in tbl_rows:
+            lines.append("\t".join(str(v) for v in row))
         win.clipboard_clear(); win.clipboard_append("\n".join(lines))
         messagebox.showinfo("Скопійовано",
-            "Таблицю скопійовано у буфер обміну (довгий формат).\n"
+            "Таблицю скопійовано у буфер обміну.\n"
             "Вставте (Ctrl+V) у таблицю потрібного аналізу — курсор поставте "
             "в перший стовпчик, перший рядок.")
-
-    def _copy_aggregate_wide(self, win, record_name, rows, factor_cols):
-        """Широкий формат — той самий, що й у таблиці вводу даних ANOVA:
-        один рядок на комбінацію рівнів факторів, стовпці Повт.1, Повт.2…"""
-        by_combo = {}
-        for r in rows:
-            combo_key = tuple(r[fc] for fc in factor_cols)
-            by_combo.setdefault(combo_key, {})[r["replication"]] = r[record_name]
-        combos_sorted = sorted(by_combo.keys())
-        all_reps = sorted({rep for v in by_combo.values() for rep in v.keys()})
-        headers = factor_cols + [f"Повт.{i+1}" for i in range(len(all_reps))]
-        lines = ["\t".join(headers)]
-        for combo in combos_sorted:
-            vals = [str(v) for v in combo]
-            rep_vals = by_combo[combo]
-            vals += ["" if rep_vals.get(rep) is None else str(rep_vals.get(rep))
-                     for rep in all_reps]
-            lines.append("\t".join(vals))
-        win.clipboard_clear(); win.clipboard_append("\n".join(lines))
-        messagebox.showinfo("Скопійовано",
-            "Таблицю скопійовано у буфер обміну (формат ANOVA-таблиці — "
-            "готово вставляти напряму).\nВставте (Ctrl+V) у таблицю аналізу — "
-            "курсор поставте в перший стовпчик, перший рядок.")
 
     def _open_in_mixed_rm(self, record_names, rows):
         """Відкриває Змішаний RM і одразу заповнює його таблицю зведеними
@@ -2129,7 +2156,3 @@ class TrialDesignWindow:
             open_file_cross(path)
         except Exception as ex:
             messagebox.showerror("Помилка", str(ex))
-
-
-
-
