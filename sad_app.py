@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from sad_common import *
 from sad_correlation import CorrelationWindow, GraphSettingsDlg
+from sad_journal_trial import open_indicator_for_anova
 
 # ═══════════════════════════════════════════════════════════════
 # GUI — SADTk
@@ -580,6 +581,10 @@ class SADTk:
         tk.Button(ctl, text="Вставити з буфера",
                   font=("Times New Roman", 11),
                   command=self._paste_from_focus).pack(side=tk.LEFT, padx=4)
+        tk.Button(ctl, text="📂 Відкрити показник", bg="#1a6b8c", fg="white",
+                  font=("Times New Roman", 11),
+                  command=lambda: self._open_indicator_from_journal(fc)
+                  ).pack(side=tk.LEFT, padx=4)
         tk.Button(ctl, text="📚 Довідка",
                   bg="#1a4b8c", fg="white",
                   font=("Times New Roman", 11),
@@ -630,6 +635,54 @@ class SADTk:
         tw.bind("<Control-v>", self._on_paste); tw.bind("<Control-V>", self._on_paste)
 
     # ── table editing ─────────────────────────────────────────
+    def _open_indicator_from_journal(self, fc):
+        """Завантажує показник із збереженого польового журналу і одразу
+        заповнює ПОТОЧНУ ANOVA-таблицю (той самий формат, що й ручне
+        заповнення: рядок на комбінацію рівнів факторів, стовпці Повт.N)."""
+        result = open_indicator_for_anova(self.root)
+        if result is None: return
+        factor_cols, rows, record_name = result
+        if len(factor_cols) != fc:
+            if not messagebox.askyesno("Кількість факторів не збігається",
+                    f"У журналі — {len(factor_cols)} фактор(и), а ця таблиця "
+                    f"{fc}-факторна. Дані все одно можна вставити (зайві "
+                    f"стовпчики факторів залишаться порожні, або значення "
+                    f"обріжуться) — продовжити?"):
+                return
+
+        by_combo = {}
+        for r in rows:
+            combo_key = tuple(r[fc_] for fc_ in factor_cols[:fc])
+            by_combo.setdefault(combo_key, {})[r["replication"]] = r[record_name]
+        combos_sorted = sorted(by_combo.keys())
+        all_reps = sorted({rep for v in by_combo.values() for rep in v.keys()})
+        n_rep_cols = max(len(all_reps), 1)
+
+        for i, fname in enumerate(factor_cols[:fc]):
+            key = self.factor_keys[i]
+            self._set_ftitle(key, fname)
+            self.header_labels[i].configure(text=self.ftitle(key))
+
+        while len(self.entries) < len(combos_sorted): self.add_row()
+        while (self.cols - fc) < n_rep_cols: self.add_column()
+
+        for i, combo in enumerate(combos_sorted):
+            for k, lvl_name in enumerate(combo):
+                self.entries[i][k].delete(0, tk.END)
+                self.entries[i][k].insert(0, str(lvl_name))
+            rep_vals = by_combo[combo]
+            for ci, rep_num in enumerate(all_reps):
+                col = fc + ci
+                if col >= self.cols: continue
+                v = rep_vals.get(rep_num)
+                self.entries[i][col].delete(0, tk.END)
+                if v is not None: self.entries[i][col].insert(0, str(v))
+
+        messagebox.showinfo("Дані перенесено",
+            f"Дані показника «{record_name}» перенесено в таблицю "
+            f"({len(combos_sorted)} комбінацій × {n_rep_cols} повторень). "
+            "Перевірте таблицю і натисніть «▶ Аналіз».")
+
     def add_row(self):
         i = len(self.entries); row_e = []
         for j in range(self.cols):

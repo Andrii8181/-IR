@@ -298,8 +298,14 @@ class HPPlotBuilder:
            з'єднується в один суцільний список У ПОРЯДКУ РЯДІВ і
            сканується БЕЗ огляду на межі рядів — якщо повторності не
            вистачає рослин до кінця ряду, вона продовжується на
-           початку наступного ряду, а не губиться."""
-        interior = []
+           початку наступного ряду, а не губиться.
+        3) Захисна зона МІЖ повторностями вставляється лише тоді, коли
+           наступна повторність фізично в ТОМУ САМОМУ ряду. Якщо
+           повторність щойно завершилась точно на межі переходу в
+           інший ряд — додаткова захисна зона там зайва: крайні захисні
+           зони обох рядів (кінець одного, початок іншого) уже
+           забезпечують розділення."""
+        interior = []; interior_rows = []
         for row_num in sorted(self.by_row.keys()):
             row_plants = self.by_row[row_num]
             n = len(row_plants)
@@ -311,6 +317,7 @@ class HPPlotBuilder:
             k, _ = self._take_guard(rev, 0, len(rev), self.edge_guard_size, HP_ROLE_GUARD_EDGE)
             interior_part = remaining[:len(remaining)-k] if k <= len(remaining) else []
             interior.extend(interior_part)
+            interior_rows.extend([row_num] * len(interior_part))
 
         recorded = []; plot_counter = 0
         i = 0; n = len(interior)
@@ -341,9 +348,17 @@ class HPPlotBuilder:
                 p.role = HP_ROLE_RECORDED; p.plot_id = plot_counter
             recorded.extend(plot_members)
 
-            # Захисна зона типу 2 — після КОЖНОЇ сформованої повторності,
-            # незалежно від того, у якому фізичному ряду вона опинилась.
-            i, _ = self._take_guard(interior, i, n, self.rep_guard_size, HP_ROLE_GUARD_REP)
+            # Захисна зона типу 2 — між повторностями, але ЛИШЕ якщо
+            # наступна позиція в тому самому ряду, і НЕ ПЕРЕТИНАЄ межу
+            # ряду навіть частково — інакше вона дублювала б уже наявні
+            # крайні захисні зони обох рядів на переході між ними.
+            crosses_row_boundary = i < n and interior_rows[i-1] != interior_rows[i]
+            if not crosses_row_boundary and i < n and self.rep_guard_size > 0:
+                current_row = interior_rows[i]
+                row_end = i
+                while row_end < n and interior_rows[row_end] == current_row:
+                    row_end += 1
+                i, _ = self._take_guard(interior, i, row_end, self.rep_guard_size, HP_ROLE_GUARD_REP)
         return recorded
 
     def build(self):

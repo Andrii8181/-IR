@@ -1,6 +1,7 @@
 # sad_cluster_pca.py — Кластерний аналіз, PCA
 # -*- coding: utf-8 -*-
 from sad_common import *
+from sad_journal_trial import open_indicators_for_variant_analysis
 
 class ClusterWindow:
     """Кластерний аналіз — ієрархічна кластеризація."""
@@ -172,6 +173,9 @@ class ClusterWindow:
         tk.Button(top, text="Вставити з буфера",
                   font=("Times New Roman",11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📂 Відкрити показники", bg="#1a6b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._open_indicators_from_journal).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
                   font=("Times New Roman",11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
@@ -300,6 +304,33 @@ class ClusterWindow:
                     self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
 
     # ── Вставка / Довідка ────────────────────────────────────
+    def _open_indicators_from_journal(self):
+        """Завантажує кілька показників із журналу, усереднених до рівня
+        варіанту (спершу в межах повторності, потім по повторностях) —
+        перший стовпчик отримує назву варіанту, решта — обрані показники."""
+        result = open_indicators_for_variant_analysis(self.win, multi_select=True)
+        if result is None: return
+        factor_cols, rows, record_names = result
+
+        needed_cols = 1 + len(record_names)
+        while self.cols_n < needed_cols: self._add_col()
+        while len(self.entries) < len(rows): self._add_row()
+        self.header_vars[0].set("Варіант")
+        for j, rn in enumerate(record_names):
+            self.header_vars[1+j].set(rn)
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+        for i, r in enumerate(rows):
+            obj_name = " / ".join(str(r[fc]) for fc in factor_cols)
+            self.entries[i][0].insert(0, obj_name)
+            for j, rn in enumerate(record_names):
+                v = r[rn]
+                if v is not None: self.entries[i][1+j].insert(0, str(v))
+        messagebox.showinfo("Дані перенесено",
+            f"Перенесено {len(record_names)} показники по {len(rows)} варіантах "
+            f"(середнє в межах повторності, потім по повторностях).")
+
     def _paste(self):
         try: data = self.win.clipboard_get()
         except Exception:
@@ -771,6 +802,9 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
         tk.Button(top, text="Вставити з буфера",
                   font=("Times New Roman",11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="📂 Відкрити показники", bg="#1a6b8c", fg="white",
+                  font=("Times New Roman",11),
+                  command=self._open_indicators_from_journal).pack(side=tk.LEFT, padx=4)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
                   font=("Times New Roman",11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
@@ -899,6 +933,33 @@ PCA — ПОКРОКОВА ІНСТРУКЦІЯ
                     self.entries[i][j].delete(0, tk.END); self.entries[i][j].insert(0, v)
 
     # ── Вставка / Довідка ────────────────────────────────────
+    def _open_indicators_from_journal(self):
+        """Завантажує кілька показників із журналу, усереднених до рівня
+        варіанту (спершу в межах повторності, потім по повторностях) —
+        перший стовпчик отримує назву варіанту, решта — обрані показники."""
+        result = open_indicators_for_variant_analysis(self.win, multi_select=True)
+        if result is None: return
+        factor_cols, rows, record_names = result
+
+        needed_cols = 1 + len(record_names)
+        while self.cols_n < needed_cols: self._add_col()
+        while len(self.entries) < len(rows): self._add_row()
+        self.header_vars[0].set("Варіант")
+        for j, rn in enumerate(record_names):
+            self.header_vars[1+j].set(rn)
+        for row in self.entries:
+            for e in row: e.delete(0, tk.END)
+
+        for i, r in enumerate(rows):
+            obj_name = " / ".join(str(r[fc]) for fc in factor_cols)
+            self.entries[i][0].insert(0, obj_name)
+            for j, rn in enumerate(record_names):
+                v = r[rn]
+                if v is not None: self.entries[i][1+j].insert(0, str(v))
+        messagebox.showinfo("Дані перенесено",
+            f"Перенесено {len(record_names)} показники по {len(rows)} варіантах "
+            f"(середнє в межах повторності, потім по повторностях).")
+
     def _paste(self):
         try: data = self.win.clipboard_get()
         except Exception:

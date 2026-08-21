@@ -1,6 +1,7 @@
 # sad_correlation.py — Кореляційний аналіз
 # -*- coding: utf-8 -*-
 from sad_common import *
+from sad_journal_trial import open_indicators_for_variant_analysis
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -513,6 +514,9 @@ class CorrelationWindow:
         tk.Button(tb, text="Вставити з буфера",
                   font=("Times New Roman", 11),
                   command=self._paste).pack(side=tk.LEFT, padx=4)
+        tk.Button(tb, text="📂 Відкрити показники", bg="#1a6b8c", fg="white",
+                  font=("Times New Roman", 11),
+                  command=self._open_indicators_from_journal).pack(side=tk.LEFT, padx=4)
         tk.Button(tb, text="📚 Довідка", bg="#1a4b8c", fg="white",
                   font=("Times New Roman", 11),
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
@@ -652,6 +656,37 @@ class CorrelationWindow:
         return "break"
 
     # ── Вставка, збереження, завантаження ────────────────────
+    def _open_indicators_from_journal(self):
+        """Завантажує кілька показників із журналу, усереднених до рівня
+        варіанту (спершу в межах повторності, потім по повторностях) —
+        кожен показник стає стовпцем, кожен варіант — рядком."""
+        result = open_indicators_for_variant_analysis(self.win, multi_select=True)
+        if result is None: return
+        factor_cols, rows, record_names = result
+
+        for w in self.header_labels: w.destroy()
+        for row_ in self.entries:
+            for e in row_: e.destroy()
+        self.header_labels = []; self.header_vars = []; self.entries = []
+        self.cols = len(record_names); self.rows = len(rows)
+        self._build_headers()
+        for rn_idx, rn in enumerate(record_names):
+            self.header_vars[rn_idx].set(rn)
+        for i in range(self.rows):
+            self._add_row_widgets(i)
+        for i, r in enumerate(rows):
+            for j, rn in enumerate(record_names):
+                v = r[rn]
+                if v is not None:
+                    self.entries[i][j].insert(0, str(v))
+        _bind_nav(self.entries, self.win)
+        _bind_fill_handle(self.entries, self.win)
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        messagebox.showinfo("Дані перенесено",
+            f"Перенесено {len(record_names)} показники по {len(rows)} варіантах "
+            f"(середнє в межах повторності, потім по повторностях). Рядок — "
+            f"варіант, стовпець — показник.")
+
     def _paste(self):
         """Вставити дані з буфера обміну.
         Якщо активна клітинка Entry — вставляємо з неї.

@@ -1,6 +1,7 @@
 # sad_regression.py — Регресія, розрахунок вибірки
 # -*- coding: utf-8 -*-
 from sad_common import *
+from sad_journal_trial import open_indicators_for_variant_analysis
 
 class RegressionWindow:
     MODELS = ["Лінійна:  y = a + bx",
@@ -150,6 +151,9 @@ class RegressionWindow:
         tk.Button(top, text="📋 Вставити",
                   font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                   command=self._paste).pack(side=tk.LEFT, padx=2)
+        tk.Button(top, text="📂 Відкрити показники", bg="#1a6b8c", fg="white",
+                  font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+                  command=self._open_indicators_from_journal).pack(side=tk.LEFT, padx=2)
         tk.Button(top, text="📚 Довідка", bg="#1a4b8c", fg="white",
                   font=rf, relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
                   command=self._show_help).pack(side=tk.LEFT, padx=4)
@@ -311,6 +315,25 @@ class RegressionWindow:
             messagebox.showerror("Помилка", str(ex))
 
     # ── Утиліти ──────────────────────────────────────────────
+    def _open_indicators_from_journal(self):
+        """Завантажує ДВА показники з журналу, усереднені до рівня варіанту
+        (спершу в межах повторності, потім по повторностях) — по одному
+        значенню X і Y на кожен варіант, зіставлені за тим самим варіантом."""
+        result = open_indicators_for_variant_analysis(self.win, multi_select=True, n_required=2)
+        if result is None: return
+        factor_cols, rows, record_names = result
+        x_name, y_name = record_names[0], record_names[1]
+        rows = [r for r in rows if r[x_name] is not None and r[y_name] is not None]
+        if not rows:
+            messagebox.showwarning("", "Немає жодного варіанту з обома показниками одночасно."); return
+
+        self.tx.delete("1.0", tk.END); self.ty.delete("1.0", tk.END)
+        self.tx.insert("1.0", "\n".join(str(r[x_name]) for r in rows))
+        self.ty.insert("1.0", "\n".join(str(r[y_name]) for r in rows))
+        messagebox.showinfo("Дані перенесено",
+            f"X = «{x_name}», Y = «{y_name}» — по {len(rows)} варіантах "
+            f"(середнє в межах повторності, потім по повторностях).")
+
     def _paste(self):
         try: data = self.win.clipboard_get()
         except Exception:

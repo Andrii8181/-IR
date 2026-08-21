@@ -1,3 +1,4 @@
+
 # sad_scheme_constructor.py — Конструктор багатофакторної схеми досліду
 # -*- coding: utf-8 -*-
 from sad_common import *
