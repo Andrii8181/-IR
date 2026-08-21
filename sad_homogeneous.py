@@ -287,66 +287,63 @@ class HPPlotBuilder:
         return i, taken_plants
 
     def _scan_once(self, allowed_range):
-        recorded = []; plot_counter = 0
+        """Двоетапний прохід:
+        1) У КОЖНОМУ ряду окремо резервуємо захисну зону на самому
+           початку і на самому кінці — рівно edge_guard_size рослин з
+           обох боків (якщо є стільки придатних), незалежно від того,
+           скільки лишиться на повторності. Це гарантує симетрію
+           «стільки ж на початку, скільки й в кінці», яку раніше могло
+           порушити недостатньо рослин, що лишались на кінець ряду.
+        2) Уся "внутрішня" частина всіх рядів (між захисними зонами)
+           з'єднується в один суцільний список У ПОРЯДКУ РЯДІВ і
+           сканується БЕЗ огляду на межі рядів — якщо повторності не
+           вистачає рослин до кінця ряду, вона продовжується на
+           початку наступного ряду, а не губиться."""
+        interior = []
         for row_num in sorted(self.by_row.keys()):
             row_plants = self.by_row[row_num]
-            i = 0; n = len(row_plants)
+            n = len(row_plants)
 
-            # Захисна зона типу 1 — початок ряду
-            i, _ = self._take_guard(row_plants, i, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
+            i, _ = self._take_guard(row_plants, 0, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
+            remaining = row_plants[i:]
 
-            last_rep_guard_plants = []
-            ended_naturally = True
-            while i < n:
-                plot_members = []
-                while i < n and len(plot_members) < self.plot_size:
-                    p = row_plants[i]
-                    eligible = (p.status == "ok" and
-                                (allowed_range is None or
-                                 allowed_range[0] <= p.value <= allowed_range[1]))
-                    if eligible:
-                        plot_members.append(p)
-                    elif p.status == "dead":
-                        p.role = HP_ROLE_DEAD
-                    elif p.status == "pollinizer":
-                        p.role = HP_ROLE_POLLINIZER
-                    i += 1
-                if len(plot_members) < self.plot_size:
-                    # Ряд закінчився без повної повторності. Лічильник i вже
-                    # пройшов повз ці рештки, тож звичайний виклик _take_guard
-                    # нижче їх більше не побачить (i == n) — без цього вони
-                    # губилися б без жодної ролі замість стати захисною зоною
-                    # кінця ряду. Останні edge_guard_size придатних рослин із
-                    # решток стають захисною зоною (тип 1), як і мало бути.
-                    tail = plot_members[-self.edge_guard_size:] if self.edge_guard_size > 0 else []
-                    for p in tail:
-                        p.role = HP_ROLE_GUARD_EDGE
-                    ended_naturally = False
-                    break  # неповна повторність відкидається
-                plot_counter += 1
+            rev = list(reversed(remaining))
+            k, _ = self._take_guard(rev, 0, len(rev), self.edge_guard_size, HP_ROLE_GUARD_EDGE)
+            interior_part = remaining[:len(remaining)-k] if k <= len(remaining) else []
+            interior.extend(interior_part)
+
+        recorded = []; plot_counter = 0
+        i = 0; n = len(interior)
+        while i < n:
+            plot_members = []
+            while i < n and len(plot_members) < self.plot_size:
+                p = interior[i]
+                eligible = (p.status == "ok" and
+                            (allowed_range is None or
+                             allowed_range[0] <= p.value <= allowed_range[1]))
+                if eligible:
+                    plot_members.append(p)
+                elif p.status == "dead":
+                    p.role = HP_ROLE_DEAD
+                elif p.status == "pollinizer":
+                    p.role = HP_ROLE_POLLINIZER
+                i += 1
+            if len(plot_members) < self.plot_size:
+                # Це вже не "кінець ряду" (для цього рештки могли б стати
+                # захисною зоною) — це кінець УСІХ даних, продовжувати
+                # нікуди. Такі рештки — поза дизайном (не увійшли в жодну
+                # повну повторність).
                 for p in plot_members:
-                    p.role = HP_ROLE_RECORDED; p.plot_id = plot_counter
-                recorded.extend(plot_members)
+                    p.role = HP_ROLE_EXTRA
+                break
+            plot_counter += 1
+            for p in plot_members:
+                p.role = HP_ROLE_RECORDED; p.plot_id = plot_counter
+            recorded.extend(plot_members)
 
-                # Захисна зона типу 2 — після КОЖНОЇ сформованої повторності
-                # (повторності розкидаються рандомізовано по варіантах пізніше,
-                # тож будь-які дві сусідні повторності потребують захисту між ними)
-                i, last_rep_guard_plants = self._take_guard(
-                    row_plants, i, n, self.rep_guard_size, HP_ROLE_GUARD_REP)
-
-            # Якщо ряд закінчився РІВНО на щойно взятій захисній зоні між
-            # повтореннями (без жодної рослини по тому) — вона фактично і Є
-            # захисною зоною кінця ряду, а не «між повтореннями» (адже
-            # наступного повторення там уже нема). Перекласифіковуємо для
-            # відповідності принципу «останні edge_guard_size рослин ряду —
-            # завжди захисна зона краю».
-            if ended_naturally and i >= n and last_rep_guard_plants:
-                for p in last_rep_guard_plants:
-                    p.role = HP_ROLE_GUARD_EDGE
-
-            # Захисна зона типу 1 — кінець ряду (додатково, якщо після break
-            # лишилось ще місце, або повторностей не було взагалі)
-            i, _ = self._take_guard(row_plants, i, n, self.edge_guard_size, HP_ROLE_GUARD_EDGE)
+            # Захисна зона типу 2 — після КОЖНОЇ сформованої повторності,
+            # незалежно від того, у якому фізичному ряду вона опинилась.
+            i, _ = self._take_guard(interior, i, n, self.rep_guard_size, HP_ROLE_GUARD_REP)
         return recorded
 
     def build(self):
@@ -618,6 +615,7 @@ class HPResultsViewMixin:
 
         fig = Figure(figsize=(max(8, max_pos*0.4), max(4, len(rows)*0.55)), dpi=100)
         ax = fig.add_subplot(111)
+        ax.set_aspect("equal", adjustable="box")  # клітинки завжди квадратні
         by_row = {}
         for p in result["plants"]:
             by_row.setdefault(p.row, {})[p.position] = p
@@ -629,14 +627,42 @@ class HPResultsViewMixin:
                 p = by_row.get(row_num, {}).get(pos)
                 if p is None: continue
                 color = HP_ROLE_COLORS.get(p.role, "#FFFFFF")
-                rect = matplotlib.patches.FancyBboxPatch(
+                rect = matplotlib.patches.Rectangle(
                     (pos-0.95, len(rows)-ri-0.95), 0.9, 0.9,
-                    boxstyle="round,pad=0.02", facecolor=color, edgecolor="#666", linewidth=0.6)
+                    facecolor=color, edgecolor="#666", linewidth=0.6)
                 ax.add_patch(rect)
                 label = self._plant_map_label(p)
                 if label:
                     ax.text(pos-0.5, len(rows)-ri-0.5, label, ha="center", va="center",
                             fontsize=7, fontfamily="Times New Roman")
+
+        # ── Межі кожної сформованої ділянки (варіант × повторність) —
+        # тонка рамка від першої до останньої облікової рослини цього
+        # plot_id у ряду, з підписом номера повторності. Один plot_id —
+        # це завжди одна ділянка (один варіант в одній повторності),
+        # тому рамка ще й наочно відділяє сусідні варіанти одне від
+        # одного, не лише повторності між собою.
+        plot_groups = {}
+        for p in result["plants"]:
+            if p.role == HP_ROLE_RECORDED and p.plot_id is not None:
+                plot_groups.setdefault((p.row, p.plot_id), []).append(p)
+        for (row_num, plot_id), plist in plot_groups.items():
+            if row_num not in rows: continue
+            ri = rows.index(row_num)
+            positions = [pp.position for pp in plist]
+            pmin, pmax = min(positions), max(positions)
+            x0, x1 = pmin-0.95, pmax-0.05
+            y0, y1 = len(rows)-ri-0.95, len(rows)-ri-0.05
+            box = matplotlib.patches.Rectangle(
+                (x0, y0), x1-x0, y1-y0,
+                fill=False, edgecolor="#1a4b8c", linewidth=1.3, zorder=5)
+            ax.add_patch(box)
+            rep = plist[0].replication
+            if rep:
+                ax.text((x0+x1)/2, y1+0.06, f"Повт.{rep}", ha="center", va="bottom",
+                        fontsize=5.5, color="#1a4b8c", fontweight="bold",
+                        fontfamily="Times New Roman", zorder=6)
+
         ax.set_xlim(-1.2, max_pos+0.5); ax.set_ylim(-0.5, len(rows)+0.5)
         ax.axis("off")
         design_txt = HP_DESIGN_LABELS.get(cfg.get("design_used"), cfg.get("design_used",""))
@@ -798,21 +824,24 @@ class HPResultsViewMixin:
                     ax.add_patch(bot_r)
                 elif p.role == HP_ROLE_EXTRA:
                     rect = matplotlib.patches.Rectangle(
-                        (x+0.12, y_top-1.2), 0.76, 1.0,
-                        facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
+                        (x+0.06, y_top-1.55), 0.88, 1.38,
+                        facecolor=HP_ROLE_COLORS[HP_ROLE_EXTRA],
+                        edgecolor="#333", linewidth=0.8)
                     ax.add_patch(rect)
-                    ax.text(x+0.5, y_top-0.7, "x", ha="center", va="center",
-                            fontsize=9, color="#999")
+                    ax.text(x+0.5, y_top-0.86, "поза\nдизайном", ha="center", va="center",
+                            fontsize=6.5, color="#333", fontfamily="Times New Roman")
                 else:
-                    label = {HP_ROLE_GUARD_EDGE:"K", HP_ROLE_GUARD_REP:"P",
-                             HP_ROLE_DEAD:"-", HP_ROLE_POLLINIZER:"+"}.get(p.role, "")
+                    label = {HP_ROLE_GUARD_EDGE:"Захисна\n(край)", HP_ROLE_GUARD_REP:"Захисна\n(між повт.)",
+                             HP_ROLE_DEAD:"Випад", HP_ROLE_POLLINIZER:"Запилювач"}.get(p.role, "")
+                    fill = HP_ROLE_COLORS.get(p.role, "#eeeeee")
+                    txt_color = "white" if p.role == HP_ROLE_DEAD else "#222"
                     rect = matplotlib.patches.Rectangle(
-                        (x+0.12, y_top-1.2), 0.76, 1.0,
-                        facecolor="#eeeeee", edgecolor="#bbb", linewidth=0.6)
+                        (x+0.06, y_top-1.55), 0.88, 1.38,
+                        facecolor=fill, edgecolor="#333", linewidth=0.8)
                     ax.add_patch(rect)
                     if label:
-                        ax.text(x+0.5, y_top-0.7, label, ha="center", va="center",
-                                fontsize=8, color="#999", fontfamily="Times New Roman")
+                        ax.text(x+0.5, y_top-0.86, label, ha="center", va="center",
+                                fontsize=6.5, color=txt_color, fontfamily="Times New Roman")
 
         ax.set_xlim(-1.6, max_len+0.5); ax.set_ylim(0, n_seg*ROW_H+1.3)
         ax.axis("off")
